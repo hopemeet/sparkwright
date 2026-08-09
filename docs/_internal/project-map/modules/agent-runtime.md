@@ -8,6 +8,16 @@ See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../m
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-08
+- Scope: Host Project Trust excludes untrusted project Agent profiles and
+  Workflows before Agent Runtime assembly. Task, worktree, workflow persistence,
+  and in-process child execution contracts are unchanged.
+- Read: Host profile/workflow resolvers, configured delegate and workflow
+  assembly, plus Agent Runtime boundaries.
+- Tests: focused Host trust/preparation tests and the Agent Runtime typecheck
+  boundary passed.
+
 - Status: Verified
 - Date: 2026-08-01
 - Scope: bounded terminal Agent action receipts retain the producer-authored

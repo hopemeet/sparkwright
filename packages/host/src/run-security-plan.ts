@@ -36,6 +36,7 @@ export async function prepareHostRunSecurityPlan(input: {
   requestConfidentialPaths?: readonly string[];
   requestConfidentialDefaults?: boolean;
   sandboxRuntime?: ShellSandboxRuntime;
+  includeProjectSkills?: boolean;
 }): Promise<HostRunSecurityPlan> {
   const workspaceRoot = resolve(input.workspaceRoot);
   const configPaths = Object.freeze(
@@ -45,6 +46,10 @@ export async function prepareHostRunSecurityPlan(input: {
     resolveSkillRootsForRuntime(
       workspaceRoot,
       input.loadedConfig.config.capabilities?.skills?.roots,
+      process.env,
+      input.includeProjectSkills !== undefined
+        ? { includeProject: input.includeProjectSkills }
+        : {},
     ).map((root) => Object.freeze({ ...root })),
   );
   const sandboxRuntime =

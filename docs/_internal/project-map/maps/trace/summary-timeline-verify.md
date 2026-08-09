@@ -11,6 +11,16 @@ See [raw-trace.md](raw-trace.md) for source data and [export-diagnostics.md](exp
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-08-08
+- Scope: Project Trust adds admission diagnostics but does not change trace
+  summary, timeline, report, verify, or run-assessment derivation. These views
+  continue to consume the canonical raw event log.
+- Read: CLI trust handling, Host protocol errors, Core events, and trace
+  diagnostic commands.
+- Tests: schema and focused trust coverage passed; trace derivation contracts
+  were unchanged.
+
+- Status: Read-only
 - Date: 2026-08-02
 - Scope: CLI Skill commands and Stats rendering changed, but trace summary,
   timeline, verify, run assessment, and CLI exit semantics are unchanged.

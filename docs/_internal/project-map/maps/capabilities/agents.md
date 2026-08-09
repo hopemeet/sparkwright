@@ -11,6 +11,27 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-08
+- Scope: project Agent profiles remain undiscoverable and unrunnable until the
+  Agent scope is trusted; configured delegation and Direct Core diagnostics
+  reuse the same admission decision. Changed profile content fails closed.
+- Read: Project Trust Agent manifest, profile resolution, Host child assembly,
+  configured delegate runner, and CLI Direct Core path.
+- Tests: focused Host trust and run-preparation coverage plus the real Host
+  trust regression passed.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: governed Extension tools participate in dynamic/configured child
+  catalogs only when the tool explicitly declares `delegation:"child"`.
+  Registration defaults remain `parent_only`; Extension registration does not
+  grant child authority or bypass profile/workflow/policy narrowing.
+- Read: Core Extension normalization, Host child catalog assembly, Agent run
+  preparation, and capability/tool orchestration maps.
+- Tests: Host Extension 4/4, full Host 566/566, and full
+  `npm run release:check` passed.
+
+- Status: Verified
 - Date: 2026-07-30
 - Scope: all built-in in-process children now finish with one natural report;
   no completion-only tool is injected. Zero-tool and tool-capable children use

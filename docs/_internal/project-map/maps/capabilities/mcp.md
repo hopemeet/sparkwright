@@ -10,6 +10,25 @@ See [../../modules/mcp-adapter.md](../../modules/mcp-adapter.md).
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-08
+- Scope: project MCP configuration is excluded from config merge and MCP
+  preparation until its config scope is trusted. Remote connections may
+  inspect the resulting trust snapshot but cannot mutate trust state.
+- Read: restricted project config merge, MCP capability preparation, trust
+  snapshot projection, connection authority, and focused tests.
+- Tests: focused Host capability/config/trust coverage passed within the 77/77
+  P5 suite; schema and real Host regressions passed.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: dependency security refresh only. The MCP client SDK and its locked
+  HTTP/server validation chain resolve patched releases without changing MCP
+  capability selection, transport policy, approval, or trace contracts.
+- Read: MCP adapter manifest, lockfile dependency graph, and capability owner.
+- Tests: MCP adapter 34/34, root/source-install/packed-release production
+  audits with zero vulnerabilities, and full `npm run release:check` passed.
+
+- Status: Verified
 - Date: 2026-07-26
 - Scope: route review for compact in-process Agent results. MCP remains absent
   from in-process child catalogs, and its discovery, transport, effects,

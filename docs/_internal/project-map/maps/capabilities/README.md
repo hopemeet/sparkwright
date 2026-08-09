@@ -2,10 +2,32 @@
 
 ## Purpose
 
-Capability maps explain how optional power enters a run: skills, MCP, agents,
-cron, shell/task tools, and capability inspection.
+Capability maps explain how optional power enters a run: extensions, skills,
+MCP, agents, cron, shell/task tools, and capability inspection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: executable project capability sources now cross one Host-owned trust
+  gate before discovery or preparation. Config, commands, Skills, Agents, and
+  Workflows have independent content pins so an unrelated scope change does
+  not silently activate or invalidate another capability.
+- Read: Project Trust manifests, capability/run preparation, source resolvers,
+  protocol snapshot, and CLI/TUI admission controls.
+- Tests: Host 578/578, SDK Core 13/13, TUI 552/552, the real
+  untrusted/grant/change regression, and full release gates passed.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: governed in-process Extension registrations now enter the Host through
+  runtime options, compile to ordinary context/tools, and expose separate
+  declared inventory and effective catalog diagnostics. No config-owned code
+  loader or parallel runtime was added.
+- Read: Core Extension preparation, Host run/inspection/catalog assembly,
+  Protocol snapshot, public reference, and integration tests.
+- Tests: Core Extension 8/8, Host Extension 4/4, Protocol 6/6, schema check,
+  and full `npm run release:check` passed.
 
 - Status: Verified
 - Date: 2026-08-02
@@ -265,6 +287,7 @@ cron, shell/task tools, and capability inspection.
 - `packages/host/src/runtime/run-preparation-operations.ts`
 - `packages/host/src/runtime/capability-runtime-operations.ts`
 - `packages/host/src/runtime/capability-assembly.ts`
+- `packages/core/src/extensions.ts`
 - `packages/host/src/active-rules.ts`
 - `packages/host/src/tool-catalog.ts`
 - `packages/host/src/tools.ts`
@@ -278,7 +301,8 @@ cron, shell/task tools, and capability inspection.
 ## Data Flow
 
 ```txt
-config + workspace capability roots
+trusted runtime registrations + config + workspace capability roots
+  -> Core Extension validation/governance preparation
   -> CapabilityRuntimeOperations configured inspection
   -> RunPreparationOperations generic live-run preparation
   -> host tool catalog
@@ -290,6 +314,9 @@ config + workspace capability roots
 ## Contracts
 
 - Capabilities affect model input, tool availability, policy, or side effects and must be trace-visible.
+- Extension inventory reports declared registration surfaces; the effective
+  tool list remains the filtered Host catalog. Inspection never loads
+  Extension run context.
 - Capability inspection is diagnostic; it does not replace run trace.
 - `CapabilityRuntimeOperations` is the sole Host owner of the last-run
   capability snapshot and configured/live merge. `capability-assembly.ts`

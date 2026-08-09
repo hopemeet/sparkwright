@@ -134,6 +134,8 @@ describe("@sparkwright/sdk-core Client", () => {
 
     const injected = client.injectRunMessage({
       runId: "run_1",
+      commandId: "command_1",
+      mode: "steer",
       content: "please include tests",
       metadata: { source: "telegram" },
     });
@@ -144,6 +146,8 @@ describe("@sparkwright/sdk-core Client", () => {
       kind: "run.inject_message",
       payload: {
         runId: "run_1",
+        commandId: "command_1",
+        mode: "steer",
         content: "please include tests",
         metadata: { source: "telegram" },
       },
@@ -154,10 +158,18 @@ describe("@sparkwright/sdk-core Client", () => {
       id: request.id,
       timestamp: "2026-05-24T00:00:00.000Z",
       ok: true,
-      result: {},
+      result: {
+        commandId: "command_1",
+        mode: "steer",
+        status: "queued",
+      },
     });
 
-    await expect(injected).resolves.toEqual({});
+    await expect(injected).resolves.toEqual({
+      commandId: "command_1",
+      mode: "steer",
+      status: "queued",
+    });
   });
 
   it("sends session.inspect requests", async () => {
@@ -228,6 +240,190 @@ describe("@sparkwright/sdk-core Client", () => {
       tools: [{ name: "read" }],
       agents: { profiles: [{ id: "main" }] },
     });
+  });
+
+  it("sends provider catalog and non-secret auth profile requests", async () => {
+    const transport = new FakeTransport();
+    const client = new Client({
+      transport,
+      client: { name: "test-client", version: "0.0.0" },
+    });
+
+    const listed = client.listProviders({ model: "openai/gpt-test" });
+    let request = transport.sent[0];
+    expect(request).toMatchObject({
+      envelope: "request",
+      kind: "provider.list",
+      payload: { model: "openai/gpt-test" },
+    });
+    transport.receive({
+      envelope: "response",
+      id: request.id,
+      timestamp: "2026-08-08T00:00:00.000Z",
+      ok: true,
+      result: { selectedModel: "openai/gpt-test", providers: [] },
+    });
+    await expect(listed).resolves.toEqual({
+      selectedModel: "openai/gpt-test",
+      providers: [],
+    });
+
+    const login = client.loginProvider({ profileId: "credential_1" });
+    request = transport.sent[1];
+    expect(request).toMatchObject({
+      envelope: "request",
+      kind: "provider.auth.login",
+      payload: { profileId: "credential_1" },
+    });
+    transport.receive({
+      envelope: "response",
+      id: request.id,
+      timestamp: "2026-08-08T00:00:00.000Z",
+      ok: true,
+      result: {
+        profile: {
+          id: "credential_1",
+          providerId: "openai",
+          status: "ready",
+          generation: 1,
+        },
+      },
+    });
+    await expect(login).resolves.toMatchObject({
+      profile: { id: "credential_1", status: "ready", generation: 1 },
+    });
+  });
+
+  it("forwards provider method, secret, and connection mutation requests", async () => {
+    const transport = new FakeTransport();
+    const client = new Client({
+      transport,
+      client: { name: "test-client", version: "0.0.0" },
+    });
+    const binding = {
+      providerId: "openai",
+      driverId: "ai-sdk-openai.v1",
+      endpoint: "https://api.openai.com/v1",
+      endpointFingerprint: "endpoint_hash",
+      authMethodId: "api_key",
+    };
+
+    const methods = client.listProviderAuthMethods({ providerId: "openai" });
+    let request = transport.sent[0]!;
+    expect(request).toMatchObject({
+      kind: "provider.auth.methods",
+      payload: { providerId: "openai" },
+    });
+    transport.receive({
+      envelope: "response",
+      id: request.id,
+      timestamp: "2026-08-09T00:00:00.000Z",
+      ok: true,
+      result: {
+        providerId: "openai",
+        binding,
+        methods: [{ id: "api_key", type: "api_key", label: "API key" }],
+      },
+    });
+    await expect(methods).resolves.toMatchObject({ providerId: "openai" });
+
+    const submitted = client.submitProviderSecret({
+      providerId: "openai",
+      methodId: "api_key",
+      secret: "sdk-secret-sentinel",
+      grantScope: "workspace",
+    });
+    request = transport.sent[1]!;
+    expect(request).toMatchObject({
+      kind: "provider.auth.submit_secret",
+      payload: {
+        providerId: "openai",
+        methodId: "api_key",
+        secret: "sdk-secret-sentinel",
+        grantScope: "workspace",
+      },
+    });
+    transport.receive({
+      envelope: "response",
+      id: request.id,
+      timestamp: "2026-08-09T00:00:00.000Z",
+      ok: true,
+      result: {
+        connection: {
+          id: "connection_1",
+          providerId: "openai",
+          status: "unverified",
+          source: "stored",
+          sourceLabel: "credential store",
+          binding,
+          selected: true,
+          grantScope: "workspace",
+          generation: 1,
+        },
+        revision: 1,
+      },
+    });
+    await expect(submitted).resolves.toMatchObject({
+      connection: { id: "connection_1" },
+      revision: 1,
+    });
+
+    const selected = client.selectProviderConnection({
+      connectionId: "connection_1",
+      grantScope: "user",
+    });
+    request = transport.sent[2]!;
+    expect(request).toMatchObject({
+      kind: "provider.connection.select",
+      payload: { connectionId: "connection_1", grantScope: "user" },
+    });
+    transport.receive({
+      envelope: "response",
+      id: request.id,
+      timestamp: "2026-08-09T00:00:00.000Z",
+      ok: true,
+      result: { connectionId: "connection_1", revision: 2 },
+    });
+    await expect(selected).resolves.toMatchObject({ revision: 2 });
+
+    const actions = [
+      [
+        "provider.connection.disconnect",
+        () =>
+          client.disconnectProviderConnection({
+            connectionId: "connection_1",
+          }),
+      ],
+      [
+        "provider.connection.logout",
+        () => client.logoutProviderConnection({ connectionId: "connection_1" }),
+      ],
+      [
+        "provider.connection.remove",
+        () => client.removeProviderConnection({ connectionId: "connection_1" }),
+      ],
+      [
+        "provider.connection.refresh",
+        () =>
+          client.refreshProviderConnection({ connectionId: "connection_1" }),
+      ],
+    ] as const;
+    for (const [kind, call] of actions) {
+      const pending = call();
+      request = transport.sent.at(-1)!;
+      expect(request).toMatchObject({
+        kind,
+        payload: { connectionId: "connection_1" },
+      });
+      transport.receive({
+        envelope: "response",
+        id: request.id,
+        timestamp: "2026-08-09T00:00:00.000Z",
+        ok: true,
+        result: { connectionId: "connection_1", revision: 3 },
+      });
+      await expect(pending).resolves.toMatchObject({ revision: 3 });
+    }
   });
 
   it("sends session.compact requests", async () => {
@@ -696,6 +892,84 @@ describe("@sparkwright/sdk-core Client", () => {
         message: "host failed",
       },
     });
+  });
+
+  it("sends project trust inspection and manifest-pinned mutation requests", async () => {
+    const transport = new FakeTransport();
+    const client = new Client({
+      transport,
+      client: { name: "test-client", version: "0.0.0" },
+    });
+    const snapshot = {
+      canonicalWorkspaceRoot: "/workspace/project",
+      workspaceId: "workspace_test",
+      status: "untrusted" as const,
+      manifestHash: "sha256:manifest",
+      scopes: [
+        {
+          scope: "commands" as const,
+          status: "untrusted" as const,
+          effects: ["process" as const],
+          fileCount: 1,
+          byteCount: 10,
+          manifestHash: "sha256:commands",
+        },
+      ],
+    };
+
+    const inspected = client.inspectProjectTrust();
+    const inspectRequest = transport.sent.at(-1)!;
+    expect(inspectRequest).toMatchObject({
+      envelope: "request",
+      kind: "project.trust.inspect",
+      payload: {},
+    });
+    transport.receive({
+      envelope: "response",
+      id: inspectRequest.id,
+      timestamp: "2026-08-08T00:00:00.000Z",
+      ok: true,
+      result: snapshot,
+    });
+    await expect(inspected).resolves.toEqual(snapshot);
+
+    const granted = client.grantProjectTrust({
+      expectedManifestHash: snapshot.manifestHash,
+      scopes: ["commands"],
+    });
+    const grantRequest = transport.sent.at(-1)!;
+    expect(grantRequest).toMatchObject({
+      envelope: "request",
+      kind: "project.trust.grant",
+      payload: {
+        expectedManifestHash: "sha256:manifest",
+        scopes: ["commands"],
+      },
+    });
+    transport.receive({
+      envelope: "response",
+      id: grantRequest.id,
+      timestamp: "2026-08-08T00:00:01.000Z",
+      ok: true,
+      result: snapshot,
+    });
+    await expect(granted).resolves.toEqual(snapshot);
+
+    const revoked = client.revokeProjectTrust({ scopes: ["commands"] });
+    const revokeRequest = transport.sent.at(-1)!;
+    expect(revokeRequest).toMatchObject({
+      envelope: "request",
+      kind: "project.trust.revoke",
+      payload: { scopes: ["commands"] },
+    });
+    transport.receive({
+      envelope: "response",
+      id: revokeRequest.id,
+      timestamp: "2026-08-08T00:00:02.000Z",
+      ok: true,
+      result: snapshot,
+    });
+    await expect(revoked).resolves.toEqual(snapshot);
   });
 });
 

@@ -6,6 +6,52 @@ major; breaking changes bump the major.
 
 ## Unreleased
 
+- Add P6.2 provider connections: `provider.auth.methods`, trusted-local-only
+  `provider.auth.submit_secret`, and
+  `provider.connection.select|disconnect|logout|remove|refresh`. Provider
+  catalog responses add non-secret connection binding/status/grant summaries
+  and a monotonic metadata revision. Authorities are split into
+  `provider_catalog.read`, `provider_connection.manage`, and
+  `provider_secret.submit`; remote transports cannot submit raw secrets.
+
+- Extend `provider.list` with optional `all`, `connected`, and `available`
+  projections plus catalog version and non-secret availability metadata.
+  Omission preserves the configured-provider compatibility view. Host model
+  inventory now comes from the composed ProviderRegistry, while non-empty
+  legacy model maps remain allowlists.
+- Add Host-owned project-source trust with per-scope content pins for project
+  config, commands, Skills, agents, and workflows. Add
+  `project.trust.inspect|grant|revoke`, `project_trust_required`,
+  `project_trust_changed`, the optional capability snapshot projection, and
+  SDK/CLI/TUI management surfaces. Grant/revoke require the explicit
+  `project_trust.manage` connection authority and manifest-pinned grant input.
+- Host ready capabilities now reflect explicit per-connection mutation
+  authorities. Provider auth mutation requires `provider_auth.manage`; project
+  trust mutation requires `project_trust.manage`. Read-only inspection remains
+  independently advertised.
+- Schema validation now locks the Host protocol version across source,
+  reference docs, and the Host message schema, and checks request/error enum
+  parity plus a payload mapping for every request kind.
+
+- Add `provider.list` plus local/trusted `provider.auth.login`,
+  `provider.auth.logout`, and `provider.auth.refresh`. Responses expose only
+  opaque profile identity, status, source label, and generation. Interactive
+  local clients may advertise `provider.auth.interactive` to wait for a
+  generation change and retry with a newly constructed adapter; other clients
+  fail fast.
+
+- Add optional `run.start.projectCommand = { name, rest? }`. Clients send only
+  the file-command identity; the Host rediscovers the command body, resolves
+  its prompt, and runs admitted shell interpolation through the Host's traced,
+  fail-closed, no-write sandbox path. `projectCommand` is not valid for
+  workflow jobs.
+
+- Add stable `session.fork.forkPoint = { runId, position }` request semantics
+  and `copiedRunCount`/`forkPoint` response fields. File-backed forks now
+  materialize complete branch snapshots. Deprecated `forkAtSequence`,
+  `copiedEventCount`, and `truncatedAtSequence` remain at the protocol-v2 wire
+  edge for compatibility.
+
 - Host protocol 2.0 removes the deprecated `run.failed.error` projection.
   `run.failed.failure` is the single terminal failure envelope, and clients no
   longer parse root error/message/reason fallbacks.

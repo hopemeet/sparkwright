@@ -10,6 +10,16 @@ See [../session/resume-replay.md](../session/resume-replay.md).
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-08
+- Scope: compaction resolves model/provider configuration through the same
+  Project Trust decision as ordinary runs. Untrusted project config cannot
+  change compaction execution; persisted summaries and budgeting are unchanged.
+- Read: Host session compaction, model/provider resolution, Project Trust
+  config admission, and the existing Core compaction boundary.
+- Tests: Host build/typecheck, focused trust/config coverage, and schema/real
+  Host regressions passed.
+
+- Status: Verified
 - Date: 2026-07-30
 - Scope: Agent observation and session compaction retain only blocker
   `code`/`message` evidence. Removed owner/kind/retry/requirement branches no

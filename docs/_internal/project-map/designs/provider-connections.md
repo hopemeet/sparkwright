@@ -1,8 +1,8 @@
 # Design: Provider Connections and Model Catalog
 
-> **Status: P6.0 design baseline; runtime implementation has not started.**
+> **Status: P6.1-P6.2 implemented; P6.3-P6.4 remain planned.**
 > This document locks the ownership, security, compatibility, migration, and
-> acceptance decisions for P6.1-P6.4. Active behavior remains defined by
+> acceptance decisions for P6. Active behavior remains defined by
 > [Host](../modules/host.md), [Protocol](../modules/protocol.md),
 > [TUI](../modules/tui.md), [CLI](../modules/cli.md), and
 > [Edge Packages](../modules/edge-packages.md) until each later phase lands.
@@ -772,7 +772,20 @@ Exit condition: a catalog model absent from YAML can be selected only when no
 legacy/new allowlist blocks it, and the selected adapter still comes from the
 single ProviderRegistry path.
 
+Implementation status (2026-08-09): complete. Host composes the bundled
+snapshot, configured providers, requested typed models, and legacy allowlists
+into ProviderRegistry definitions. Adapter construction resolves the selected
+model through that registry. `provider.list` supports explicit `all`,
+`connected`, and `available` projections while omission preserves the previous
+configured-provider view. Catalog metadata is applied only when the configured
+package and endpoint retain the bundled driver binding.
+
 ### P6.2: API-key vertical slice
+
+Implemented 2026-08-09. The active contract lives in the Host, Protocol, CLI,
+and TUI maps. The implementation keeps the API-key path inside the existing
+provider owner and model factory rather than adding a second login/runtime
+stack.
 
 - Add CredentialStore backends, metadata revisioning, cross-process lock/CAS,
   and change observation.
@@ -894,6 +907,18 @@ implementation:
 - provider fallback/routing based on price, latency, or availability.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-08-09
+- Scope: P6.1 registry and catalog compatibility is implemented. P6.2-P6.4
+  connection storage, API-key submission, OAuth, dynamic refresh, and product
+  polish remain planned rather than implied by the P6.1 types.
+- Read: bundled catalog/connection descriptors, Host Registry composition,
+  provider projections, model construction, Protocol/SDK/CLI compatibility,
+  schemas, reference docs, and A01-A04 regressions.
+- Tests: full `npm run release:check` passed, including Core 687/687, Host
+  585/585, CLI 173/173, TUI 552/552, Protocol 6/6, SDK Core 13/13, 16/16
+  regression-matrix cases, production audit, and both install smokes.
 
 - Status: Read-only
 - Date: 2026-08-09

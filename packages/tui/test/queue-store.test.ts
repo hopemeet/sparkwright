@@ -13,6 +13,25 @@ describe("QueueStore", () => {
     expect(q.size).toBe(0);
   });
 
+  it("preserves Host-resolved project command identity while rendering text", () => {
+    const q = new QueueStore();
+    q.enqueueSubmission({
+      goal: "/review src",
+      projectCommand: { name: "review", rest: "src" },
+    });
+
+    expect(q.getSnapshot()).toEqual([
+      {
+        goal: "/review src",
+        projectCommand: { name: "review", rest: "src" },
+      },
+    ]);
+    expect(q.dequeueSubmission()).toEqual({
+      goal: "/review src",
+      projectCommand: { name: "review", rest: "src" },
+    });
+  });
+
   it("ignores blank submissions", () => {
     const q = new QueueStore();
     q.enqueue("   ");
@@ -35,9 +54,23 @@ describe("QueueStore", () => {
     q.enqueue("b");
     q.enqueue("c");
     q.removeAt(1);
-    expect(q.getSnapshot()).toEqual(["a", "c"]);
+    expect(q.getSnapshot()).toEqual([{ goal: "a" }, { goal: "c" }]);
     q.removeAt(99); // no-op
-    expect(q.getSnapshot()).toEqual(["a", "c"]);
+    expect(q.getSnapshot()).toEqual([{ goal: "a" }, { goal: "c" }]);
+  });
+
+  it("keeps Host-managed follow-ups out of the local drain", () => {
+    const q = new QueueStore();
+    q.enqueueSubmission({
+      goal: "next hosted run",
+      commandId: "command_follow_up",
+    });
+    q.enqueue("local fallback");
+
+    expect(q.dequeueLocalSubmission()).toBeUndefined();
+    expect(q.removeByCommandId("command_follow_up")).toBe(true);
+    expect(q.dequeueLocalSubmission()).toEqual({ goal: "local fallback" });
+    expect(q.removeByCommandId("missing")).toBe(false);
   });
 
   it("returns a stable snapshot identity that only changes on mutation", () => {
@@ -47,7 +80,7 @@ describe("QueueStore", () => {
     q.enqueue("a");
     const afterAdd = q.getSnapshot();
     expect(afterAdd).not.toBe(empty);
-    expect(afterAdd).toEqual(["a"]);
+    expect(afterAdd).toEqual([{ goal: "a" }]);
   });
 
   it("notifies subscribers on change and stops after unsubscribe", () => {

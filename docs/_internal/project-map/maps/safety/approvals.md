@@ -9,6 +9,17 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-08-08
+- Scope: governed Extension tools reuse the ordinary tool approval gate.
+  Unknown effects default to external/risky/approval-required, while explicit
+  read-only replay-safe tools avoid accidental elevation. Read-only run policy
+  and workspace mutation leases remain downstream authority.
+- Read: Core Extension tool normalization, run approval gate, Host catalog and
+  runtime preparation, and focused Core/Host tests.
+- Tests: Core Extension approval/governance regressions 8/8, Host Extension
+  integration 4/4, and full `npm run release:check` passed.
+
 - Status: Read-only
 - Date: 2026-08-02
 - Scope: retired Skill proposal apply approvals with the self-evolution
@@ -258,6 +269,7 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 - `packages/core/src/run.ts`
 - `packages/core/src/approval.ts`
 - `packages/core/src/approval-policy.ts`
+- `packages/core/src/extensions.ts`
 - `packages/host/src/runtime.ts`
 - `packages/host/src/runtime/host-runtime.ts`
 - `packages/host/src/client-approval.ts`
@@ -283,6 +295,10 @@ policy requires approval
 
 ## Contracts
 
+- Extension registration cannot weaken risky side-effect classification:
+  write/network/external effects force risky approval, including values
+  returned by `policyForArgs()`. Missing effect metadata is treated as
+  external rather than safe.
 - `RuntimeContext.requestApproval()` is the run-owned bridge for a tool that
   must prepare an inspectable final effect before authorization. The initial
   Skill consumer uses action `skill.apply`, includes proposal id + revision +

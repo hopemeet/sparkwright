@@ -15,6 +15,8 @@ export interface ResolvedCapabilityDir {
 export interface ResolveCapabilityDirsOptions {
   cwd: string;
   env?: Record<string, string | undefined>;
+  /** Include repository-authored capability roots. Defaults to true. */
+  includeProject?: boolean;
 }
 
 /**
@@ -26,7 +28,7 @@ export function resolveCapabilityDirs(
   options: ResolveCapabilityDirsOptions,
 ): ResolvedCapabilityDir[] {
   const env = options.env ?? process.env;
-  return [
+  const dirs: ResolvedCapabilityDir[] = [
     {
       layer: "builtin",
       dir: join(packageRootFromImportMeta(), "builtin", kind),
@@ -43,6 +45,9 @@ export function resolveCapabilityDirs(
       readOnly: false,
     },
   ];
+  return options.includeProject === false
+    ? dirs.filter((entry) => entry.layer !== "project")
+    : dirs;
 }
 
 export function userConfigBase(

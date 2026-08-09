@@ -48,8 +48,14 @@ npm exec sparkwright -- run "inspect this repo and suggest a README improvement"
 
 ## OpenAI provider runs fail before starting
 
-Provider-backed CLI runs require a configured provider and a model reference in
-`provider/model` form:
+Provider-backed CLI runs require a usable provider connection and a model
+reference in `provider/model` form. Connect without editing config:
+
+```bash
+sparkwright provider connect openai --workspace .
+```
+
+Environment credentials remain supported:
 
 ```bash
 OPENAI_API_KEY=... npm exec sparkwright -- run "inspect this repo" \
@@ -58,11 +64,13 @@ OPENAI_API_KEY=... npm exec sparkwright -- run "inspect this repo" \
   --model openai/<model-name>
 ```
 
-If the selected provider has no API key in config and the corresponding
-environment variable is missing, the CLI exits non-zero with `host_start_failed`
-and records a failed trace. Real provider behavior is intentionally outside the
-deterministic golden path, so v0 release checks use the deterministic model by
-default.
+If the selected provider has no applicable stored connection, config key, or
+environment key, the CLI exits non-zero with `host_start_failed` and records a
+failed trace. Run `sparkwright provider list --workspace .` to inspect
+non-secret status. A stored connection bound to a different endpoint is not
+reused, and a failed selected stored connection does not fall back to an
+ambient key. Real provider behavior is intentionally outside the deterministic
+golden path, so release checks use the deterministic model by default.
 
 OpenAI-compatible providers can be tested with the same CLI path by setting `OPENAI_BASE_URL`. Set the base URL without the trailing `/responses` (the AI SDK appends it):
 

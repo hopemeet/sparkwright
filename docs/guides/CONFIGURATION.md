@@ -13,8 +13,9 @@ field before running SparkWright.
 
 ```txt
 Personal config: ~/.config/sparkwright/config.yaml
-  Put private provider settings here: model, providers, API keys, personal TUI
-  preferences. This file is created by `sparkwright init` and is chmod 600.
+  Put model defaults, custom provider endpoints/options, and personal TUI
+  preferences here. Legacy API-key fields remain supported, but the preferred
+  path is `provider connect` or TUI `/connect`.
   Existing config.json/config.yaml/config.yml files are also loaded.
 
 Project config: <workspace>/.sparkwright/config.yaml
@@ -26,20 +27,37 @@ Temporary overrides: SPARKWRIGHT_CONFIG, environment variables, CLI flags
   Use these for one-off runs, CI jobs, or local experiments.
 ```
 
-Do not put provider API keys in project config. Keep credentials in the user
-file or environment variables.
+Do not put provider API keys in project config. Prefer the Host credential
+store; user-config and environment keys remain compatibility sources.
+
+Project capability sources have an additional admission boundary. A project
+config that can select runtime/model/process/network behavior and project
+`.sparkwright/command`, `skills`, `agents`, or `workflows` files are inactive
+until their exact content manifest is trusted. Safety-tightening fields such as
+lower access/background ceilings, confidential paths, write limits, sandbox
+enforcement/deny rules, restrictive tool selectors, hardened web transport,
+and local UI preferences remain effective before trust.
+
+Use `sparkwright trust status --workspace .` to inspect the five independent
+scopes, `trust grant` after reviewing them, and `trust revoke` to remove the
+pin. A content change invalidates only the affected scope. State is stored at
+`$XDG_STATE_HOME/sparkwright/project-trust.json` (normally
+`~/.local/state/sparkwright/project-trust.json`) with mode `0600`; it contains
+canonical workspace identity, hashes, and timestamps, not capability bodies or
+provider secrets. Trust admits source into existing governance and does not
+weaken access, approval, sandbox, confidentiality, tool, or write policy.
 
 ## Where Files Live
 
 SparkWright keeps installation, configuration, state, and project artifacts in
 separate locations:
 
-| What                                       | Default path                 | Notes                                                                                       |
-| ------------------------------------------ | ---------------------------- | ------------------------------------------------------------------------------------------- |
-| Program install                            | `~/.sparkwright`             | Used by source installs for `versions/`, `current`, and `bin/sparkwright`.                  |
-| User config and user-authored capabilities | `~/.config/sparkwright`      | Personal `config.{json,yaml,yml}`, user Skills, agents, and commands.                       |
-| User runtime state                         | `~/.local/state/sparkwright` | Cron jobs/output, IM gateway routing state, host crash logs, and other machine-local state. |
-| Project data                               | `<workspace>/.sparkwright`   | Project config, project Skills/agents/commands, sessions, tasks, and exports.               |
+| What                                       | Default path                 | Notes                                                                                                                                                    |
+| ------------------------------------------ | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Program install                            | `~/.sparkwright`             | Used by source installs for `versions/`, `current`, and `bin/sparkwright`.                                                                               |
+| User config and user-authored capabilities | `~/.config/sparkwright`      | Personal `config.{json,yaml,yml}`, user Skills, agents, and commands.                                                                                    |
+| User runtime state                         | `~/.local/state/sparkwright` | Project trust pins, non-secret provider connection metadata, cron jobs/output, IM gateway routing state, host crash logs, and other machine-local state. |
+| Project data                               | `<workspace>/.sparkwright`   | Project config, project Skills/agents/commands, sessions, tasks, and exports.                                                                            |
 
 `~/.sparkwright` is not a config or state directory. Treat it as replaceable
 program files owned by source install and uninstall scripts.
@@ -81,10 +99,11 @@ files remain the precise-control layer.
 
 ## Scaffold
 
-Installing SparkWright does not write config files. The first interactive CLI
-or TUI run scaffolds the user config if no config exists yet, then stops and
-asks you to set a provider key or environment variable before rerunning. You
-can also create files explicitly:
+Installing SparkWright does not write config files. The TUI can start with no
+config and use `/connect`. A first interactive CLI model run scaffolds the user
+config if none exists, then points to `provider connect`; provider-management
+commands themselves do not require scaffolding. You can also create files
+explicitly:
 
 Scaffold the two common layers separately:
 
@@ -94,8 +113,8 @@ sparkwright init --project   # <workspace>/.sparkwright/config.yaml
 ```
 
 `sparkwright init` creates the same personal config template used by first-run
-scaffolding. Set the `apiKey` for the provider you want, or leave keys out of
-the file and use environment variables. YAML templates point
+scaffolding. Connect through `sparkwright provider connect <provider>`, use TUI
+`/connect`, or keep using environment/legacy config keys. YAML templates point
 `yaml-language-server` at the local `config.schema.json` shipped with the
 installed CLI, so editor validation works without a schema server.
 
@@ -149,12 +168,7 @@ Put this in your user config file, for example
     "model": "openai/gpt-5.4-mini",
     "providers": {
       "openai": {
-        "baseURL": "https://api.openai.com/v1",
-        "apiKey": "replace-me",
-        "models": {
-          "gpt-5.4-mini": {},
-          "gpt-5.4": {}
-        }
+        "baseURL": "https://api.openai.com/v1"
       }
     }
   }
@@ -164,8 +178,36 @@ Put this in your user config file, for example
 `OPENAI_API_KEY` overrides provider `apiKey` when set. `OPENAI_BASE_URL`
 overrides provider `baseURL` when set.
 
-Store config files containing API keys privately. Provider keys are plaintext
-in config.
+For a bundled provider on its official package and endpoint, `models` may be
+omitted: SparkWright lists the bundled catalog and still uses `identity.model`
+or `--model` as the deterministic runtime selection. A non-empty `models` map
+keeps its legacy meaning as an allowlist and metadata map, so catalog additions
+outside that map remain unavailable. A custom package or endpoint does not
+inherit official catalog metadata; when it has no allowlist, an explicitly
+typed `provider/model` remains valid.
+
+Connect without adding a key to config:
+
+```bash
+sparkwright provider connect openai --workspace .
+printf '%s\n' "$OPENAI_API_KEY" | \
+  sparkwright provider connect openai --api-key-stdin --workspace .
+```
+
+On macOS, stored provider credentials use the operating-system credential
+store. Headless/non-macOS deployments must configure an available backend; the
+explicit lower-assurance fallback is
+`SPARKWRIGHT_CREDENTIAL_STORE=file`, which uses a 0600 state file. Connection
+metadata is separate and never contains the key. Config `apiKey` remains a
+legacy plaintext source.
+
+Use `sparkwright provider list --workspace .` to inspect connected provider
+models and non-secret status. `provider connect|disconnect|remove|refresh`
+manages stored connections; `provider login|logout` remains for ambient legacy
+sources. Metadata is written to
+`$XDG_STATE_HOME/sparkwright/provider-auth.json` (normally
+`~/.local/state/sparkwright/provider-auth.json`) with exact driver, endpoint,
+method, grant, selection, suppression, and revision state but no credential.
 
 ### Provider Request Options
 
@@ -895,10 +937,11 @@ Top-level `tools` is the preferred tool configuration surface.
   initial provider tool schema until discovered through `tool_search`.
 
 Selectors are: `workspace.read`, `workspace.write`, `bash`, `web`, `planning`,
-`skills`, `agents`, `tasks`, `cron`, `mcp`, and `mcp:<server>`. Multiple
-selectors in one file are a union; multiple config layers intersect, so a
-project can narrow a user setting. For example, user `use: ["mcp"]` plus project
-`use: ["mcp:demo"]` yields only the `demo` MCP server tools.
+`skills`, `agents`, `tasks`, `cron`, `mcp`, `mcp:<server>`, `extensions`, and
+`extension:<id>`. Multiple selectors in one file are a union; multiple config
+layers intersect, so a project can narrow a user setting. For example, user
+`use: ["extensions"]` plus project `use: ["extension:workspace.notes"]` yields
+only that registered extension's tools.
 Model-backed implementation delegates should usually select both
 `workspace.read` and `workspace.write`; write-only delegates often cannot find
 safe patch anchors. Delegates that select `bash` still require a write-enabled

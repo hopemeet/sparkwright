@@ -60,6 +60,12 @@ const toolUseSelectorSchema = z.union([
     .string()
     .regex(/^mcp:.+$/)
     .describe("Select tools from one configured MCP server, e.g. mcp:demo."),
+  z
+    .string()
+    .regex(/^extension:[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/)
+    .describe(
+      "Select tools from one registered in-process extension, e.g. extension:acme.docs.",
+    ),
 ]);
 
 export const modelCostSchema = z

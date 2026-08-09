@@ -126,6 +126,8 @@ interface BuildCommandRegistryDeps {
     descriptor: ProjectCommandDescriptor,
     rest: string,
   ) => void;
+  submitFollowUp: (goal: string) => void;
+  openProjectTrust: () => void;
 }
 
 /**
@@ -150,8 +152,18 @@ export function buildCommandRegistry(
     workflowActions,
     projectCommands,
     runProjectCommand,
+    submitFollowUp,
+    openProjectTrust,
   } = deps;
   const reg = new CommandRegistry();
+  reg.register({
+    name: "trust",
+    title: "Inspect project trust",
+    description: "Review, grant, or revoke repository capability trust.",
+    category: "config",
+    run: openProjectTrust,
+    runRaw: openProjectTrust,
+  });
   reg.register({
     name: "workflow",
     title: "List workflow jobs",
@@ -260,6 +272,20 @@ export function buildCommandRegistry(
         });
       });
     },
+  });
+  reg.register({
+    name: "followup",
+    title: "Queue a follow-up",
+    description: "Run another goal after the active run finishes.",
+    category: "session",
+    aliases: ["follow-up", "next"],
+    run: () =>
+      toasts.push({
+        title: "follow-up",
+        message: "usage: /followup <goal>",
+        variant: "info",
+      }),
+    runRaw: (rest) => submitFollowUp(rest),
   });
   reg.register({
     name: "compact",
@@ -391,6 +417,13 @@ export function buildCommandRegistry(
     description: "Change the model reference for the next run.",
     category: "config",
     run: () => layers.toggle("model"),
+  });
+  reg.register({
+    name: "connect",
+    title: "Connect a model provider",
+    description: "Choose a provider and store an API key outside config.",
+    category: "config",
+    run: () => layers.toggle("connect"),
   });
   reg.register({
     name: "image",

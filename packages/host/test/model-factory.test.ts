@@ -8,8 +8,36 @@ import {
   inspectResolvedModelConfig,
   resolveProfileModelAdapters,
 } from "../src/model-factory.js";
+import { ProviderAuthManager } from "../src/provider-auth.js";
 
 describe("model factory pricing diagnostics", () => {
+  it("keeps non-interactive model resolution independent from catalog picker state", async () => {
+    const workspace = await configuredWorkspace({
+      identity: {
+        model: "openai/gpt-4o-mini",
+        providers: { openai: { apiKey: "sk-test" } },
+      },
+    });
+    try {
+      const manager = new ProviderAuthManager({
+        statePath: join(workspace, "provider-auth.json"),
+      });
+      await manager.catalog({
+        workspaceRoot: workspace,
+        model: "openai/gpt-5.4-mini",
+      });
+
+      await expect(
+        createModel({ workspaceRoot: workspace, goal: "stable default" }),
+      ).resolves.toMatchObject({
+        ok: true,
+        resolved: { modelRef: "openai/gpt-4o-mini" },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("surfaces missing pricing before and after adapter construction", async () => {
     const workspace = await configuredWorkspace({
       identity: {

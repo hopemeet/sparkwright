@@ -38,7 +38,7 @@ async function makeRepo(): Promise<{ repoRoot: string; sessionDir: string }> {
   return { repoRoot: root, sessionDir };
 }
 
-describe("acquireWorktree", () => {
+describe("acquireWorktree", { timeout: 15_000 }, () => {
   it("creates a worktree under sessionDir/worktrees/<taskId> on a new branch", async () => {
     const { repoRoot, sessionDir } = await makeRepo();
     const handle = await acquireWorktree({

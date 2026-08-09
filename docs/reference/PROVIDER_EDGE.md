@@ -30,6 +30,14 @@ endpoint and credentials:
 `deterministic` selects the built-in offline model used for stable demos and
 tests, and is also the default when no `identity.model` is configured.
 
+The Host projects configured providers and models through `provider.list`.
+Credential profile ids are opaque and workspace-scoped; catalog and auth
+responses expose status and source labels but never the key itself. Keys remain
+in the existing private user-config or environment sources. Login/refresh
+activate and rotate the generation of an available credential, while logout
+prevents new adapters from using it. The machine-local activation state is a
+mode-`0600` file under the XDG state directory.
+
 If `HTTPS_PROXY`, `https_proxy`, `HTTP_PROXY`, or `http_proxy` is set, the CLI
 passes that proxy explicitly into the provider's `fetch`. This matters because
 Node's built-in `fetch` does not consistently honor proxy environment variables
@@ -129,7 +137,8 @@ Responsibilities:
 
 Non-goals for provider packages:
 
-- auth store beyond reading provider environment variables at the CLI edge
+- credential persistence or protocol auth policy; the Host owns non-secret
+  activation state while existing private config/environment sources own keys
 - dynamic npm install
 - model metadata sync
 - production provider routing service

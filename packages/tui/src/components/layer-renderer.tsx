@@ -1,6 +1,11 @@
 import React from "react";
 import type {
   CapabilitySnapshot,
+  ProviderCatalogSnapshot,
+  ProviderAuthMethodsSnapshot,
+  ProviderConnectionSummary,
+  ProjectTrustSnapshot,
+  SessionForkPoint,
   TaskOutputChunkSnapshot,
   TaskRecordSnapshot,
   WorkflowRunSnapshot,
@@ -12,12 +17,14 @@ import { ConfigPanel, type ConfigPanelResolved } from "./config-panel.js";
 import { CreateCapabilityDialog } from "./create-capability-dialog.js";
 import { HelpPanel } from "./help-panel.js";
 import { ModelDialog } from "./model-dialog.js";
+import { ConnectDialog } from "./connect-dialog.js";
 import { NotificationPanel } from "./notification-panel.js";
 import { SessionListDialog } from "./session-list-dialog.js";
 import { SessionRenameDialog } from "./session-rename-dialog.js";
 import { SkillsPanel } from "./skills-panel.js";
 import { WorkflowPanel } from "./workflow-panel.js";
 import { ForkDialog } from "./fork-dialog.js";
+import { ProjectTrustDialog } from "./project-trust-dialog.js";
 import type { CommandRegistry } from "../lib/commands.js";
 import type { Bindings } from "../lib/keybindings.js";
 import type { CreateCapabilityDraft } from "../lib/create-capability.js";
@@ -50,6 +57,10 @@ export function LayerRenderer(props: {
   renameTarget: string | null;
   effModel?: string;
   modelCandidates: string[];
+  providerCatalog: ProviderCatalogSnapshot | null;
+  loadingProviders: boolean;
+  projectTrust: ProjectTrustSnapshot | null;
+  loadingProjectTrust: boolean;
   sessionDiagnostics: SessionDiagnostics | null;
   loadingDiagnosticsFor: string | null;
   capabilitySnapshot: CapabilitySnapshot | null;
@@ -70,8 +81,23 @@ export function LayerRenderer(props: {
   onRequestRename: (id: string) => void;
   onCommitRename: (id: string, label: string) => void;
   onCommitModel: (model: string) => void;
+  onProviderAuth: (
+    action: "login" | "logout" | "refresh",
+    profileId: string,
+  ) => void;
+  onLoadProviderAuthMethods: (
+    providerId: string,
+  ) => Promise<ProviderAuthMethodsSnapshot | null>;
+  onSubmitProviderSecret: (
+    providerId: string,
+    methodId: string,
+    secret: string,
+  ) => Promise<ProviderConnectionSummary | null>;
+  onRefreshProviderCatalog: () => Promise<ProviderCatalogSnapshot | null>;
+  onGrantProjectTrust: (expectedManifestHash: string) => void;
+  onRevokeProjectTrust: () => void;
   onFork: (
-    forkAtSequence: number | undefined,
+    forkPoint: SessionForkPoint | undefined,
     label: string,
     edit?: boolean,
   ) => void;
@@ -133,8 +159,33 @@ export function LayerRenderer(props: {
         <ModelDialog
           model={props.effModel ?? ""}
           candidates={props.modelCandidates}
+          catalog={props.providerCatalog}
+          loading={props.loadingProviders}
           onCancel={props.onCloseTop}
           onCommit={props.onCommitModel}
+          onAuth={props.onProviderAuth}
+        />
+      );
+    case "connect":
+      return (
+        <ConnectDialog
+          catalog={props.providerCatalog}
+          loading={props.loadingProviders}
+          onLoadMethods={props.onLoadProviderAuthMethods}
+          onSubmitSecret={props.onSubmitProviderSecret}
+          onRefresh={props.onRefreshProviderCatalog}
+          onCommitModel={props.onCommitModel}
+          onCancel={props.onCloseTop}
+        />
+      );
+    case "trust":
+      return (
+        <ProjectTrustDialog
+          snapshot={props.projectTrust}
+          loading={props.loadingProjectTrust}
+          onGrant={props.onGrantProjectTrust}
+          onRevoke={props.onRevokeProjectTrust}
+          onClose={props.onCloseTop}
         />
       );
     case "workflow":

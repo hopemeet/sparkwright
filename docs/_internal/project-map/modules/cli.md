@@ -9,6 +9,52 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-09
+- Scope: P6.2 adds `provider connect|disconnect|remove` and connection-aware
+  refresh/logout. Interactive keys use a no-echo prompt; pipelines require
+  `--api-key-stdin`; key values are rejected in argv. A connected bundled
+  provider remains visible without creating or editing YAML.
+- Read: CLI provider parser/handler, secret input adapter, Host provider owner,
+  and CLI connection/sentinel tests.
+- Tests: full `npm run release:check` passed, including CLI 175/175, Host
+  602/602, TUI 553/553, the 16-case regression matrix, production audit, and
+  both install smokes.
+
+- Status: Verified
+- Date: 2026-08-09
+- Scope: direct-Core provider construction now passes the full selected
+  provider config into Host registry composition, preserving catalog inventory,
+  endpoint binding, and legacy allowlist semantics. New user config templates
+  no longer enumerate models, while existing `provider list` output remains the
+  configured-provider compatibility view.
+- Read: direct-Core provider runner, Host model builder/catalog, CLI provider
+  command, and Protocol projection compatibility.
+- Tests: full `npm run release:check` passed, including CLI 173/173, Host
+  585/585, Core 687/687, TUI 552/552, 16/16 regression-matrix cases,
+  production audit, and both install smokes.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: CLI boot now assesses Project Trust before config and source
+  discovery. `trust status|grant|revoke` exposes the Host-owned lifecycle,
+  while Direct Core diagnostics apply the same admission decision.
+- Read: CLI parsing/help/rendering, Host-backed and Direct Core boot paths,
+  config doctor, Skill roots, input validation, and trust manager calls.
+- Tests: full CLI suite passed 7 files / 173 tests together with Host 578/578,
+  schema, manifest, real Host trust, 16-case matrix, and install-smoke gates.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: CLI adds `provider list|login|logout|refresh` over the shared Host
+  provider-auth owner. Text/JSON output contains only model inventory and
+  non-secret profile metadata; ordinary CLI model calls remain fail-fast on
+  authentication failure.
+- Read: CLI parser, provider handler/help, Host provider-auth state, and focused
+  CLI regressions.
+- Tests: full workspace regression passed, including CLI 172/172 and provider
+  command/error coverage; release regression and install smokes passed.
+
+- Status: Verified
 - Date: 2026-08-07
 - Scope: clarified that internal Direct Core diagnostics do not promise Host
   feature parity, specifically configured HTTP Event Hook transport. Normal

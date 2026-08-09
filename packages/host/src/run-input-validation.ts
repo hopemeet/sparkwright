@@ -8,6 +8,7 @@ import {
   loadHostConfig,
   resolveModelSelection,
 } from "./config/config-implementation.js";
+import { isProjectScopeTrusted, ProjectTrustManager } from "./project-trust.js";
 
 const RESERVED_MODEL_REFS = new Set([DETERMINISTIC_PROVIDER, "scripted"]);
 
@@ -41,7 +42,17 @@ export async function validateRunInput(
   // fields and applies the rest, so without this the run path would silently
   // ignore a typo'd field. We report them as warnings, not errors, to preserve
   // the best-effort load behavior.
-  const loaded = await loadHostConfig(input.workspaceRoot, input.env);
+  const trust = workspaceOk
+    ? await new ProjectTrustManager({ env: input.env })
+        .inspect(input.workspaceRoot)
+        .catch(() => undefined)
+    : undefined;
+  const loaded = await loadHostConfig(input.workspaceRoot, input.env, {
+    projectMode:
+      trust && isProjectScopeTrusted(trust, "config")
+        ? "trusted"
+        : "restricted",
+  });
   for (const error of loaded.errors) {
     warnings.push(`config ${error.file} (${error.field}): ${error.message}`);
   }

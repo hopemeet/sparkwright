@@ -115,12 +115,10 @@ follow the active maps below for the current contract.
   use raw refs with parent-model inheritance. Logical aliases, model
   allowlists/budgets, and per-logical model usage keying are deferred out of the
   MVP. Active model construction contract: [modules/host.md](modules/host.md).
-
 - [designs/provider-connections.md](designs/provider-connections.md) — P6.0
-  design baseline for catalog-driven provider connections, credential and
-  endpoint binding, OAuth attempts, config compatibility, model-selection
-  determinism, migration, and the P6.1-P6.4 acceptance gates. No runtime
-  behavior from this design is implemented yet.
+  design baseline plus implemented P6.1 registry/catalog compatibility and
+  P6.2 API-key connections. OAuth attempts, dynamic catalog refresh, picker
+  preferences, and final migration assistance remain in P6.3-P6.4.
 
 ## Archived Reviews
 
@@ -135,6 +133,7 @@ unsourced [QA convergence stub](../reviews/qa-convergence-plan.md).
 - `packages/core/src/index.ts`, `packages/core/src/internal.ts`, or `scripts/check-internal-imports.mjs`: [modules/core.md](modules/core.md), [modules/edge-packages.md](modules/edge-packages.md), [modules/host.md](modules/host.md), [modules/agent-runtime.md](modules/agent-runtime.md), [modules/cli.md](modules/cli.md)
 - `packages/core/src/trace.ts`, `packages/core/src/trace-codec.ts`, `packages/core/src/trace-diagnostics.ts`, `packages/core/src/run-health.ts`, `packages/core/src/trace-session-consistency.ts`, or `packages/core/src/trace-store.ts`: [modules/core.md](modules/core.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md), [maps/session/session-store.md](maps/session/session-store.md)
 - `packages/core/src/context.ts` or `packages/core/src/path-display.ts`: [modules/core.md](modules/core.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
+- `packages/core/src/extensions.ts`: [modules/core.md](modules/core.md), [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/safety/approvals.md](maps/safety/approvals.md)
 - `packages/core/src/hooks.ts`: [modules/core.md](modules/core.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/core/src/events.ts`, `packages/core/src/user-hooks.ts`, or `packages/core/src/workflow-hooks.ts`: [modules/core.md](modules/core.md), [modules/host.md](modules/host.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
 - `packages/core/src/environment.ts`: [modules/core.md](modules/core.md), [maps/safety/shell.md](maps/safety/shell.md)
@@ -151,7 +150,7 @@ unsourced [QA convergence stub](../reviews/qa-convergence-plan.md).
 - `packages/host/src/config.ts` or `packages/host/src/config-zod-schema.ts`: [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
 - `packages/host/src/config/*`: [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
 - `packages/host/src/tool-identities.ts`, `packages/host/src/tool-catalog.ts`, `packages/host/src/tool-selectors.ts`, or `packages/host/src/tool-surface.ts`: [modules/host.md](modules/host.md), [modules/coding-tools.md](modules/coding-tools.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/capabilities/README.md](maps/capabilities/README.md)
-- `packages/host/src/provider-auth.ts`, `packages/host/src/model-builder.ts`, or `packages/host/src/model-factory.ts`: [modules/host.md](modules/host.md), [modules/protocol.md](modules/protocol.md), [modules/edge-packages.md](modules/edge-packages.md), [designs/provider-connections.md](designs/provider-connections.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md)
+- `packages/host/src/provider-catalog.ts`, `packages/host/src/provider-auth.ts`, `packages/host/src/provider-credential-store.ts`, `packages/host/src/model-builder.ts`, `packages/host/src/model-factory.ts`, or `packages/tui/src/components/connect-dialog.tsx`: [modules/host.md](modules/host.md), [modules/protocol.md](modules/protocol.md), [modules/cli.md](modules/cli.md), [modules/tui.md](modules/tui.md), [modules/edge-packages.md](modules/edge-packages.md), [designs/provider-connections.md](designs/provider-connections.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md)
 - `packages/host/src/runtime.ts`, `packages/host/src/run-access.ts`, `packages/host/src/run-security-plan.ts`, or `packages/host/src/run-policy.ts`: [modules/host.md](modules/host.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/host/src/runtime/*`, including interaction/control routing in `execution-interaction-operations.ts`, run preparation in `run-preparation-operations.ts`, Agent/Delegate assembly in `agent-runtime-assembly.ts`, Workflow durable ownership in `workflow-runtime-operations.ts`, and live episode ownership in `workflow-episode-runtime.ts`: [modules/host.md](modules/host.md), [modules/agent-runtime.md](modules/agent-runtime.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/capabilities/agents.md](maps/capabilities/agents.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/approvals.md](maps/safety/approvals.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/safety/shell.md](maps/safety/shell.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/host/src/session-queries.ts` or `packages/host/src/session-compaction.ts`: [modules/host.md](modules/host.md), [maps/session/session-store.md](maps/session/session-store.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
@@ -193,6 +192,7 @@ unsourced [QA convergence stub](../reviews/qa-convergence-plan.md).
 - `packages/shell-sandbox/src/*`: [modules/edge-packages.md](modules/edge-packages.md), [modules/host.md](modules/host.md), [modules/mcp-adapter.md](modules/mcp-adapter.md), [maps/safety/shell.md](maps/safety/shell.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md)
 - `packages/project-context/src/index.ts`: [modules/coding-tools.md](modules/coding-tools.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
 - `packages/project-commands/src/*`: [modules/edge-packages.md](modules/edge-packages.md), [modules/tui.md](modules/tui.md), [maps/safety/shell.md](maps/safety/shell.md)
+- `packages/host/src/project-trust.ts`, `packages/host/src/project-command-resolution.ts`, or project-source trust admission: [modules/host.md](modules/host.md), [modules/protocol.md](modules/protocol.md), [modules/cli.md](modules/cli.md), [modules/tui.md](modules/tui.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/safety/shell.md](maps/safety/shell.md)
 - `packages/skills/src/*` or `packages/host/src/skill-*`: [modules/skills.md](modules/skills.md), [maps/capabilities/skills.md](maps/capabilities/skills.md)
 - `packages/host/src/project-skill-create.ts`, `sparkwright skills create`, or TUI `/create skill`: [modules/skills.md](modules/skills.md), [modules/host.md](modules/host.md), [modules/cli.md](modules/cli.md), [modules/tui.md](modules/tui.md), [maps/capabilities/skills.md](maps/capabilities/skills.md)
 - `packages/skills/src/markdown-folder-asset.ts`: [modules/skills.md](modules/skills.md), [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md)
@@ -226,6 +226,19 @@ trace/session inspection.
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-08-09
+- Scope: P6.1 routes Host provider catalog composition, Registry-backed model
+  enumeration/adapter resolution, additive provider projections, and direct-Core
+  compatibility through the provider-connections design and Host, Protocol,
+  CLI, and Edge Package maps.
+- Read: new Host provider catalog, provider auth/model construction, Protocol
+  DTO/schema/dispatch, CLI direct-Core caller, SDK forwarding, reference docs,
+  and all routed module pages.
+- Tests: full `npm run release:check` passed, including Core 687/687, Host
+  585/585, CLI 173/173, TUI 552/552, Protocol 6/6, SDK Core 13/13, 16/16
+  regression-matrix cases, production audit, and both install smokes.
+
 - Status: Read-only
 - Date: 2026-08-09
 - Scope: cataloged the P6.0 provider-connection design baseline and routed
@@ -236,6 +249,20 @@ trace/session inspection.
   boundaries, Protocol provider DTOs, CLI provider commands, TUI model picker,
   and the new design baseline.
 - Tests: documentation validation only; runtime tests were not run.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: Host-owned Project Trust now admits executable project configuration,
+  commands, Skills, Agent profiles, and Workflows by canonical workspace and
+  per-scope content hash. Untrusted or changed sources stay outside runtime
+  assembly; inspection is read-only and mutation is limited to local trusted
+  connections.
+- Read: trust state/hash boundary, config/source discovery gates, protocol/SDK,
+  CLI/TUI controls, release manifest audit, and real Host regression.
+- Tests: full `npm run release:check` passed: Core 687/687, Host 578/578, CLI
+  173/173, TUI 552/552, SDK Core 13/13, 22 schemas / 19 fixtures, 27 public
+  release manifests, production audit with 0 vulnerabilities, Project Trust
+  lifecycle regression, 16/16 regression-matrix cases, and both install smokes.
 
 - Status: Verified
 - Date: 2026-08-01

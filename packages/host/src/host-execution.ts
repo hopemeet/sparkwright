@@ -145,6 +145,7 @@ export class HostExecution {
   tryInject(
     runId: string,
     input: {
+      commandId: string;
       content: string;
       parts?: ContentPart[];
       metadata?: Record<string, unknown>;
@@ -156,6 +157,7 @@ export class HostExecution {
     }
     const acceptance = active.run.tryEnqueueCommand({
       type: "user_message",
+      commandId: input.commandId,
       content: input.content,
       parts: input.parts,
       metadata: input.metadata,

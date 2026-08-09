@@ -78,8 +78,10 @@ export function startWsServer(opts: WsServerOptions): { close: () => void } {
             opts.authPrincipalId ?? DEFAULT_BEARER_PRINCIPAL_ID,
             "ws-bearer",
             "gateway",
+            [],
+            "remote",
           )
-        : unauthenticatedConnection("ws-no-auth"),
+        : unauthenticatedConnection("ws-no-auth", [], "remote"),
     );
   });
 

@@ -1,10 +1,15 @@
 import type { ModelAdapter, ModelPricing } from "@sparkwright/core";
 import { OPENAI_MODEL_PRICING } from "@sparkwright/provider-ai-sdk";
+import type { ProviderConfig } from "./config-zod-schema.js";
 import {
   SUPPORTED_PROVIDER_NPMS,
   type ModelSelection,
 } from "./config/contracts.js";
 import { costToPricing } from "./config/config-implementation.js";
+import {
+  createHostProviderRegistry,
+  toRegistryModelRef,
+} from "./provider-catalog.js";
 
 type ConfiguredSelection = Extract<ModelSelection, { kind: "configured" }>;
 
@@ -12,6 +17,10 @@ export interface BuildAdapterInput {
   /** @reserved Public provider-selection field consumed by host adapters. */
   selection: ConfiguredSelection;
   env: Record<string, string | undefined>;
+  /** Host-resolved credential. Kept out of protocol/config projection. */
+  credential?: { apiKey: string; source: string };
+  /** Full provider config used to compose catalog inventory and allowlists. */
+  providerConfig?: ProviderConfig;
   /** Optional fetch override (e.g. a proxy-aware fetch from the CLI). */
   fetch?: typeof fetch;
 }
@@ -58,8 +67,10 @@ export async function buildConfiguredAdapter(
     };
   }
 
-  const envApiKey = nonEmptyEnv(env, npmInfo.apiKeyEnv);
-  const apiKey = envApiKey ?? selection.apiKey;
+  const envApiKey = input.credential
+    ? undefined
+    : nonEmptyEnv(env, npmInfo.apiKeyEnv);
+  const apiKey = input.credential?.apiKey ?? envApiKey ?? selection.apiKey;
   if (!apiKey) {
     return {
       ok: false,
@@ -88,10 +99,7 @@ export async function buildConfiguredAdapter(
     };
   }
 
-  const [{ createOpenAiProvider }, { ProviderRegistry }] = await Promise.all([
-    import("@sparkwright/provider-ai-sdk"),
-    import("@sparkwright/provider-registry"),
-  ]);
+  const { createOpenAiProvider } = await import("@sparkwright/provider-ai-sdk");
 
   const client = (
     factory as (opts: {
@@ -106,31 +114,48 @@ export async function buildConfiguredAdapter(
   });
 
   const pricingResolution = resolveConfiguredModelPricing(selection);
-  const registry = new ProviderRegistry([
-    createOpenAiProvider({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      openai: client as any,
-      id: selection.providerKey,
-      models: [
-        {
-          id: selection.modelId,
-          providerId: selection.providerKey,
-          pricing: pricingResolution.pricing,
-          metadata: selection.providerOptions
-            ? { providerOptions: selection.providerOptions }
-            : undefined,
-        },
-      ],
-    }),
-  ]);
+  const adapterProvider = createOpenAiProvider({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    openai: client as any,
+    id: selection.providerKey,
+    models: [],
+  });
+  const providerConfig = input.providerConfig ?? {
+    npm: selection.npm,
+    ...(selection.baseURL ? { baseURL: selection.baseURL } : {}),
+    models: {
+      [selection.modelId]: {
+        ...(selection.cost ? { cost: selection.cost } : {}),
+        ...(selection.providerOptions
+          ? { providerOptions: selection.providerOptions }
+          : {}),
+      },
+    },
+  };
+  const registry = createHostProviderRegistry({
+    configuredProviders: {
+      [selection.providerKey]: {
+        ...providerConfig,
+        ...(baseURL ? { baseURL } : {}),
+      },
+    },
+    providerIds: [selection.providerKey],
+    includeBundledProviders: false,
+    requestedModels: { [selection.providerKey]: [selection.modelId] },
+    adapterFactories: {
+      [selection.providerKey]: adapterProvider.createAdapter,
+    },
+  });
 
   return {
     ok: true,
     adapter: await registry.getAdapter(
-      `${selection.providerKey}:${selection.modelId}`,
+      toRegistryModelRef(selection.providerKey, selection.modelId),
     ),
     sources: {
-      apiKey: envApiKey ? `env:${npmInfo.apiKeyEnv}` : "config",
+      apiKey:
+        input.credential?.source ??
+        (envApiKey ? `env:${npmInfo.apiKeyEnv}` : "config"),
       pricing: pricingResolution.source,
       ...(pricingResolution.costUnavailableReason
         ? { costUnavailableReason: pricingResolution.costUnavailableReason }

@@ -10,6 +10,15 @@ canonical trace or a session consistency report.
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-08-08
+- Scope: TUI adds a Project Trust dialog and command admission check.
+  Transcript export, raw trace diagnostics, and session-consistency ownership
+  are unchanged; trust uses its dedicated panel and protocol snapshot.
+- Read: TUI app/layer routing, trust dialog, RunController, and existing export
+  projection.
+- Tests: focused TUI trust/command/registry coverage passed 4/4.
+
+- Status: Read-only
 - Date: 2026-08-02
 - Scope: removed Skill proposal/learning presentation and pending human-action
   state from TUI. Canonical transcript export, Activity events, and raw trace

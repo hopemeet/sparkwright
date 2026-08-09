@@ -1,10 +1,8 @@
 import { describe, expect, it } from "vitest";
 import React from "react";
 import { render } from "ink";
-import {
-  SessionListDialog,
-  sessionWindow,
-} from "../src/components/session-list-dialog.js";
+import { SessionListDialog } from "../src/components/session-list-dialog.js";
+import { windowAroundCursor } from "../src/lib/list-window.js";
 import type {
   SessionDiagnostics,
   SessionSummary,
@@ -184,7 +182,7 @@ describe("SessionListDialog rendering", () => {
       session(`session_${i + 1}`, `task ${i + 1}`, i),
     );
 
-    const page = sessionWindow(sessions, 15, 8);
+    const page = windowAroundCursor(sessions, 15, 8);
 
     expect(page.start).toBe(11);
     expect(page.visible.map((s) => s.id)).toEqual([

@@ -10,6 +10,38 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-08
+- Scope: run preparation now assesses Project Trust before executable project
+  sources enter model, provider, Skill, Agent, Workflow, MCP, or project-command
+  assembly. Trust denial is a pre-execution failure with a bounded snapshot;
+  no alternate run loop or scheduler was introduced.
+- Read: HostRuntime and run-preparation ordering, security plan, capability
+  assembly, project command resolution, and regression traces.
+- Tests: Host 578/578, real untrusted/grant/change lifecycle regression,
+  16/16 scenario matrix, and full release gates passed.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: FactLedger verification relevance now includes `node --test` command
+  lines. This improves persisted evidence classification only; completion,
+  continuation, tool execution, and verifier receipt ownership are unchanged.
+- Read: shell command fact classification and FactLedger projection.
+- Tests: Core FactLedger 8/8, full Core 687/687, and full
+  `npm run release:check` passed.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: command admission is now idempotent by command id and observable
+  through queued/applied/rejected facts. A command accepted before a natural
+  terminal boundary receives a bounded interaction continuation, including
+  beyond ordinary maxSteps, while current model/tool work remains cooperative.
+- Read: Core loop phases/terminal paths/budgets, Host injection and lane
+  follow-up routing, protocol/SDK/TUI consumers, and focused regressions.
+- Tests: Core 678/678, Host 562/562, SDK Core 12/12, and TUI 547/547 passed;
+  full `npm run release:check` passed, including the 16-case regression matrix
+  and source/package install smokes.
+
+- Status: Verified
 - Date: 2026-08-07
 - Scope: corrected the low-level RunHook boundary to list only executable
   model/tool/event callbacks; the never-invoked loop-wide `onError` field was
@@ -427,6 +459,10 @@ createRun/resumeRunFromCheckpoint
 - Interactive commands enter through one atomic acceptance operation. Terminal
   or abort-closing runs reject before queue mutation, so a successful Host
   inject response always means the command reached the consumable Core queue.
+- Command ids deduplicate live admission. Natural finalization performs its
+  last queue check synchronously with terminal closure; pending user input uses
+  the bounded `interaction` forced-continuation source. Terminal paths emit
+  `run.command.rejected` for any command they cannot consume.
 - A Host interactive execution may contain multiple Core runs. HostExecution
   retains the stable root alias and current/final episode ids; only its
   completion drains execution ownership. Core terminal remains a per-run fact.

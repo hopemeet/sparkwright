@@ -1,5 +1,40 @@
 # TUI Rendering Coverage
 
+- 2026-08-09 P6.2 `/connect` coverage walks provider, auth method, masked API
+  key, and connected-provider model selection. The sentinel is supplied to the
+  submit callback but never appears in Ink output. Focused ConnectDialog,
+  ModelDialog, command-registry, and SDK cutover suites pass 28/28. The full TUI
+  suite passes 553/553 and `npm run release:check` passes through the 16-case
+  regression matrix and both install smokes.
+
+- 2026-08-08 Project Trust coverage verifies `/trust` renders scope status and
+  effects, requires a second explicit confirmation for grant/revoke, and does
+  not auto-dispatch a command after grant. Project command discovery excludes
+  untrusted project bodies. Focused dialog/registry/command tests passed 4/4;
+  the full TUI suite passed 85 files / 552 tests. Host 578/578, the real
+  no-process regression, 16/16 scenario matrix, and full release gates cover
+  the boundary behind the presentation.
+
+- 2026-08-08 P4 interaction-polish coverage verifies an asynchronously loaded
+  provider catalog cannot move `/model` selection to the same numeric index in
+  a reordered list, long catalogs open around the current model, provider auth
+  actions are spelled out, and pending interactions retain enough structure to
+  render `follow-up`, `command`, and `next` ownership. The shared list-window
+  path now covers model, fork, session, and slash-command lists. Focused tests
+  passed 44/44; the full 84-file / 550-test TUI suite, typecheck, build, and
+  formatting passed. Real PTY checks at 80 and 110 columns verified the fixed
+  model highlight and Host-owned follow-up label. A read-only real two-run
+  session (`session_tui_msketbne`) completed with no tool failures and trace
+  verification reported 0 findings. Full `npm run release:check` then passed,
+  including the 16-case regression matrix and both install smokes.
+
+- 2026-08-08 interaction coverage verifies plain active-run submission uses
+  typed steering, `/followup` uses Host lane admission, Host-owned queue entries
+  cannot be drained into duplicate `run.start` calls, and failed admission
+  remains a TUI-owned fallback. Focused controller/queue/registry tests, TUI
+  typecheck, the full 83-file / 547-test suite, and full `npm run release:check`
+  passed.
+
 - Todo projection coverage uses canonical `title` items from `todo_write`
   request/result events. The TUI no longer accepts `content` as an alternate
   model DTO field; title-less malformed rows retain only the generic diagnostic
@@ -18,8 +53,13 @@
 ## Current Confidence
 
 - Status: `Verified`
-- Last reviewed: 2026-08-01
-- Latest evidence: child Agent approval coverage verifies ask-mode `approved`
+- Last reviewed: 2026-08-08
+- Latest evidence: P4 model/queue/list rendering coverage verifies stable model
+  selection across asynchronous catalog reorder, bounded current-item
+  visibility, explicit auth actions, and structured pending-interaction labels.
+  The full TUI suite passed 550/550, and real-model trace verification reported
+  zero findings for a Host-scheduled follow-up run.
+- Additional recent evidence: child Agent approval coverage verifies ask-mode `approved`
   and bypass-mode `auto-approved` outcomes appear once under the Agent in both
   compact and detailed projections, never inline with actions and never as a
   second standalone child block. Raw replay events take precedence over the

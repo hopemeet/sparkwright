@@ -6,6 +6,7 @@ import {
   createSessionRunStoreFactory,
   resumeRunFromCheckpoint,
   type ContextItem,
+  type CredentialResolver,
   type InteractionChannel,
   type ModelAdapter,
   type RunBudget,
@@ -56,6 +57,7 @@ import { buildAgentPromptBuilder } from "@sparkwright/project-context";
 import type { ResolvedModelConfig } from "../model-factory.js";
 import { createModel } from "../model-factory.js";
 import type { ResolvedRunAccess } from "../run-access.js";
+import type { ProviderAuthManager } from "../provider-auth.js";
 import { observeSkillUsageEvent } from "../skill-usage.js";
 import { bindConfiguredEventHooks } from "../workflow-hooks.js";
 import { createWorkflowProjectionHooks } from "../workflow-projection.js";
@@ -97,13 +99,19 @@ export interface WorkflowEpisodeEnvironment {
   runIdHolder: { value: string | null };
   interactionChannel: InteractionChannel;
   model: ModelAdapter;
+  credentialResolver?: CredentialResolver;
   modelRef: string;
   resolvedModel: ResolvedModelConfig;
   workflowModelAdapters: Map<
     string,
-    { adapter: ModelAdapter; resolved: ResolvedModelConfig }
+    {
+      adapter: ModelAdapter;
+      resolved: ResolvedModelConfig;
+      credentialResolver?: CredentialResolver;
+    }
   >;
   preparedSkills: { context?: ContextItem[] } | null;
+  preparedExtensions: { context: ContextItem[] };
   preparedMcp: { close(): Promise<void> } | null;
   mainAgent: AgentProfile;
   tools: ToolDefinition[];
@@ -144,6 +152,7 @@ export interface PreparedWorkflowEpisode {
 
 export interface WorkflowActorEpisodePlan {
   model: ModelAdapter;
+  credentialResolver?: CredentialResolver;
   modelRef: string;
   resolvedModel: ResolvedModelConfig;
   nodeId?: string;
@@ -174,6 +183,9 @@ export class WorkflowEpisodeRuntime {
     workspaceRoot: string;
     workflows: Awaited<ReturnType<typeof loadLayeredWorkflowAssets>>;
     parentModelRef: string;
+    providerAuth?: ProviderAuthManager;
+    waitForCredentialRefresh?: boolean;
+    includeProjectConfig?: boolean;
     workflowName?: string;
     workflowRunId?: WorkflowRunId;
     controlSessionId?: string;
@@ -260,6 +272,11 @@ export class WorkflowEpisodeRuntime {
           goal: input.goal,
           workspaceRoot: input.workspaceRoot,
           targetPath: input.targetPath,
+          ...(input.providerAuth ? { providerAuth: input.providerAuth } : {}),
+          ...(input.waitForCredentialRefresh
+            ? { waitForCredentialRefresh: true }
+            : {}),
+          includeProjectConfig: input.includeProjectConfig,
         })
       : { ok: true as const, adapters: new Map() };
     if (!workflowModelAdapters.ok) {
@@ -480,6 +497,7 @@ export class WorkflowEpisodeRuntime {
         context: [
           ...input.priorContext,
           ...(env.preparedSkills?.context ?? []),
+          ...env.preparedExtensions.context,
           ...extraContext,
         ],
         workspace: env.workspace,
@@ -496,6 +514,9 @@ export class WorkflowEpisodeRuntime {
         tools: episode.toolSurface.tools,
         workflowHooks: env.workflowHooks,
         model: episode.model,
+        ...(episode.credentialResolver
+          ? { credentialResolver: episode.credentialResolver }
+          : {}),
         maxSteps: resolveWorkflowEpisodeMaxSteps(env.mainAgent),
         ...(episode.runBudget !== undefined
           ? { runBudget: episode.runBudget }
@@ -582,7 +603,11 @@ export class WorkflowEpisodeRuntime {
       );
       const run = createRun({
         goal,
-        context: [...(env.preparedSkills?.context ?? []), ...extraContext],
+        context: [
+          ...(env.preparedSkills?.context ?? []),
+          ...env.preparedExtensions.context,
+          ...extraContext,
+        ],
         workspace: env.workspace,
         interactionChannel: env.interactionChannel,
         policy: createHostRunPolicy({
@@ -597,6 +622,9 @@ export class WorkflowEpisodeRuntime {
         tools: episode.toolSurface.tools,
         workflowHooks: env.workflowHooks,
         model: episode.model,
+        ...(episode.credentialResolver
+          ? { credentialResolver: episode.credentialResolver }
+          : {}),
         maxSteps: resolveWorkflowEpisodeMaxSteps(env.mainAgent),
         runBudget: episode.runBudget,
         metadata: workflowActorEpisodeRunMetadata(env.runMetadata, episode),
@@ -645,6 +673,9 @@ export class WorkflowEpisodeRuntime {
                 promptBuilder: buildMainAgentPromptBuilder(env, sessionId),
                 tools: episode.toolSurface.tools,
                 model: episode.model,
+                ...(episode.credentialResolver
+                  ? { credentialResolver: episode.credentialResolver }
+                  : {}),
                 maxSteps: resolveWorkflowEpisodeMaxSteps(env.mainAgent),
                 ...(episode.runBudget !== undefined
                   ? { runBudget: episode.runBudget }
@@ -722,6 +753,7 @@ export class WorkflowEpisodeRuntime {
         context: [
           ...input.priorContext,
           ...(env.preparedSkills?.context ?? []),
+          ...env.preparedExtensions.context,
           ...extraContext,
         ],
         workspace: env.workspace,
@@ -738,6 +770,9 @@ export class WorkflowEpisodeRuntime {
         tools: episode.toolSurface.tools,
         workflowHooks: env.workflowHooks,
         model: episode.model,
+        ...(episode.credentialResolver
+          ? { credentialResolver: episode.credentialResolver }
+          : {}),
         maxSteps: resolveWorkflowEpisodeMaxSteps(env.mainAgent),
         ...(episode.runBudget !== undefined
           ? { runBudget: episode.runBudget }
@@ -1159,19 +1194,30 @@ export async function resolveWorkflowModelAdapters(input: {
   goal: string;
   workspaceRoot: string;
   targetPath?: string;
+  providerAuth?: ProviderAuthManager;
+  waitForCredentialRefresh?: boolean;
+  includeProjectConfig?: boolean;
 }): Promise<
   | {
       ok: true;
       adapters: Map<
         string,
-        { adapter: ModelAdapter; resolved: ResolvedModelConfig }
+        {
+          adapter: ModelAdapter;
+          resolved: ResolvedModelConfig;
+          credentialResolver?: CredentialResolver;
+        }
       >;
     }
   | { ok: false; message: string }
 > {
   const adapters = new Map<
     string,
-    { adapter: ModelAdapter; resolved: ResolvedModelConfig }
+    {
+      adapter: ModelAdapter;
+      resolved: ResolvedModelConfig;
+      credentialResolver?: CredentialResolver;
+    }
   >();
   const refs = new Set<string>();
   for (const node of input.definition.nodes) {
@@ -1184,6 +1230,11 @@ export async function resolveWorkflowModelAdapters(input: {
       goal: input.goal,
       workspaceRoot: input.workspaceRoot,
       ...(input.targetPath ? { targetPath: input.targetPath } : {}),
+      ...(input.providerAuth ? { providerAuth: input.providerAuth } : {}),
+      ...(input.waitForCredentialRefresh
+        ? { waitForCredentialRefresh: true }
+        : {}),
+      includeProjectConfig: input.includeProjectConfig,
     });
     if (!built.ok) {
       return {
@@ -1194,6 +1245,9 @@ export async function resolveWorkflowModelAdapters(input: {
     adapters.set(modelRef, {
       adapter: built.adapter,
       resolved: built.resolved,
+      ...(built.credentialResolver
+        ? { credentialResolver: built.credentialResolver }
+        : {}),
     });
   }
   return { ok: true, adapters };
@@ -1203,6 +1257,7 @@ export function resolveWorkflowActorEpisodePlan(
   env: Pick<
     WorkflowEpisodeEnvironment,
     | "model"
+    | "credentialResolver"
     | "modelRef"
     | "resolvedModel"
     | "workflowModelAdapters"
@@ -1223,7 +1278,13 @@ export function resolveWorkflowActorEpisodePlan(
   const model =
     nodeModelRef && env.workflowModelAdapters.has(modelRef)
       ? env.workflowModelAdapters.get(modelRef)!
-      : { adapter: env.model, resolved: env.resolvedModel };
+      : {
+          adapter: env.model,
+          resolved: env.resolvedModel,
+          ...(env.credentialResolver
+            ? { credentialResolver: env.credentialResolver }
+            : {}),
+        };
   const workflowAllowedTools = workflowEpisodeAllowedTools(env.workflowRecord);
   const toolSurface = resolveRunToolSurface({
     tools: env.tools,
@@ -1235,6 +1296,9 @@ export function resolveWorkflowActorEpisodePlan(
   );
   return {
     model: model.adapter,
+    ...(model.credentialResolver
+      ? { credentialResolver: model.credentialResolver }
+      : {}),
     modelRef,
     resolvedModel: model.resolved,
     ...(node ? { nodeId: node.id } : {}),

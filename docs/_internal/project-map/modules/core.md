@@ -13,6 +13,61 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-08
+- Scope: explicit verification-command classification now recognizes
+  `node --test`, so terminal FactLedger evidence does not mislabel Node's
+  built-in test runner as an ordinary diagnostic command. No run-loop stop or
+  completion policy changed.
+- Read: command classification, FactLedger event projection, Host terminal
+  evidence consumer, and focused FactLedger coverage.
+- Tests: Core FactLedger 8/8, full Core 687/687, and full
+  `npm run release:check` passed.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: Core Extension interfaces are now backed by one preparation boundary
+  that validates registrations before callbacks, bounds context/tool surfaces,
+  prevents conversation-source forgery, assigns stable identity, and
+  normalizes tools into the existing fail-closed governance path. The run loop
+  remains extension-unaware.
+- Read: Extension interfaces/preparation, tool governance/concurrency helpers,
+  public exports, Host consumers, and focused tests.
+- Tests: Core Extension 8/8, full Core 686/686, Protocol 6/6, affected
+  typechecks/schema checks, and full `npm run release:check` passed.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: live run commands now carry stable identities, deduplicate within the
+  run, expose queued/applied/rejected lifecycle facts, and receive a bounded
+  interaction continuation when steering wins the natural-terminal race.
+  In-flight model/tool work remains cooperative and is never interrupted.
+- Read: Core command admission/consumption, terminal paths, forced-continuation
+  ledger, event vocabulary/schema, checkpoints, and focused command tests.
+- Tests: Core run passed 133/133 and the full Core suite passed 678/678; full
+  `npm run release:check` passed.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: credential refresh resolution now receives the run-owned abort signal,
+  so an interactive Host wait is cancelled with the run instead of surviving
+  as an unbounded side operation. Core remains provider-neutral.
+- Read: Run credential-error retry branch, resolver contract, Host managed
+  adapter, and focused resolver regression.
+- Tests: full workspace regression passed, including Core 675/675; release
+  regression and install smokes also passed.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: Core session branching moved from event-sequence replay to the
+  `ForkableSessionStore` capability with stable before/after run boundaries.
+  `FileSessionStore` stages and atomically publishes self-contained snapshots;
+  `InMemorySessionStore` preserves the same logical lineage contract.
+- Read: Core session and file-run stores, trace consistency checks, public
+  barrel, Host session consumers, and focused regressions.
+- Tests: focused Core fork/consistency coverage, workspace build, repository
+  test typecheck, reserved-field check, and schema validation passed.
+
+- Status: Verified
 - Date: 2026-08-07
 - Scope: removed the never-invoked `RunHook.onError` callback and its exported
   input type. The remaining model/tool/event callbacks keep their existing
@@ -353,6 +408,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 - `packages/core/src/run-outcome.ts`
 - `packages/core/src/policy.ts`
 - `packages/core/src/environment.ts`
+- `packages/core/src/extensions.ts`
 - `packages/core/src/workspace.ts`
 - `packages/core/test/run.test.ts`
 - `packages/core/test/run-budget.test.ts`
@@ -360,6 +416,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 - `packages/core/test/user-hooks.test.ts`
 - `packages/core/test/trace.test.ts`
 - `packages/core/test/session.test.ts`
+- `packages/core/test/extensions.test.ts`
 
 ## Owns / Does Not Own
 
@@ -371,8 +428,11 @@ Owns:
 - trace JSONL codec, redaction, and standard/debug payload filtering
 - trace summary, timeline, report, and verification primitives
 - `SessionStore` interfaces and file/memory implementations
+- complete session-fork semantics and durable lineage provenance
 - checkpoint save/load and best-effort reconstruction from trace
 - synchronous run-local and inherited descendant-tree work-budget accounts
+- extension registration inspection/preparation into ordinary context and tool
+  primitives
 
 Does not own:
 
@@ -402,12 +462,19 @@ Does not own:
   an ordinary natural final, infers an executable requirement, or requires a
   receipt merely because a ChangeSet exists. The old exported evaluator names
   are deprecated aliases only.
-- The package root exports stable types, factories, and extension interfaces.
+- The package root exports stable types, factories, and extension preparation
+  interfaces/helpers.
   `EventLog`, file/in-memory trace stores, concrete workspace/checkpoint
   classes, default prompt/context implementations, and `SparkwrightRun` are
   reference implementations exported exclusively from
   `@sparkwright/core/internal`; repository production imports are explicit and
   governed.
+- `prepareExtensions()` and `inspectExtensions()` validate the complete
+  registration set before adapter callbacks. Prepared context is restricted to
+  non-conversation roles and receives host-authored extension provenance.
+  Missing tool effect declarations fail closed to external, risky,
+  approval-required, non-idempotent execution; dynamic policy results are
+  normalized through the same boundary.
 - `TraceSink.append(event)` is its sole event-ingest method. `MemoryTrace`
   implements that method directly and has no `write` alias.
 - Facts enter append-only event streams before derived stores or views.
@@ -419,6 +486,12 @@ Does not own:
   `tryEnqueueCommand()` either enqueues and emits `run.command.enqueued`, or
   rejects with `terminal`/`closing`. Embedders must not split acceptance into a
   state probe followed by dispatch.
+- Run command ids are live-run idempotency identities. The loop emits
+  `run.command.applied` only when Phase 1 consumes a command and
+  `run.command.rejected` when terminality or the interaction-continuation
+  budget strands queued input. Accepted steering that reaches the natural
+  final boundary receives a bounded `interaction` forced continuation; it does
+  not preempt an in-flight model request or tool batch.
 - `event.sequence` is per run, not per session.
 - `ToolDefinition.previewArgs()` is the tool-owned request preview contract.
   The run loop calls it before execution and stores bounded text on
@@ -742,6 +815,10 @@ Does not own:
 - `session.ts` owns the `session-compact.v2` artifact parser/writer; artifacts
   require top-level `freedChars` and are ignored when the schema or
   `throughRunId` anchor is invalid.
+- `session.ts` owns stable session fork points and the store capability that
+  materializes them. File-backed forks must publish self-contained retained
+  history with rewritten session identity; products must not copy only
+  `SessionRecord.runIds` or use run-local trace sequences as fork boundaries.
 - `file-atomic.ts` owns the package-bottom atomic text writer used by
   core-owned stores and by the `agent-runtime` doc-store public wrapper. Core
   must not import `agent-runtime`; shared file atomics live below runtime

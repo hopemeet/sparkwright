@@ -9,6 +9,42 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-08-08
+- Scope: a queued process-local follow-up augments normal completed-turn
+  conversation replay with bounded terminal evidence from its `previousRunId`.
+  The evidence records changed paths and observed command/verifier outcomes,
+  but directs exact API/signature questions back to current source. Ordinary
+  fresh starts and checkpoint/workflow resume do not receive this item; no new
+  durability or reconnect guarantee was introduced.
+- Read: Host follow-up admission metadata, fresh-run context loading, session
+  trace FactLedger projection, and Core prompt section ordering.
+- Tests: Host protocol 66/66 and full Host 567/567 passed, including explicit
+  follow-up/default context separation; full `npm run release:check` passed.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: steering and follow-up preserve the existing durability boundary.
+  Core live command queues remain explicitly non-serialized in checkpoints;
+  Host follow-ups use the process-local execution lane and make no restart or
+  reconnect delivery claim.
+- Read: Core checkpoint resumability facts, Host lane follow-up admission,
+  protocol documentation, and TUI fallback behavior.
+- Tests: focused interaction/checkpoint coverage and affected full package
+  suites passed; full `npm run release:check` passed, including the 16-case
+  regression matrix and source/package install smokes.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: file-backed session forks now materialize retained run files and
+  rewrite trace/transcript/run identity before publication. Switching to a
+  fork replays visible history, and a subsequent Host run rebuilds prompt
+  context from the fork's own completed results.
+- Read: Core fork snapshot path, Host completed-turn loader, TUI switch/replay
+  and fork-and-continue flow.
+- Tests: focused Core consistency regression and TUI real Host
+  fork/switch/continue regression passed.
+
 - Status: Read-only
 - Date: 2026-08-02
 - Scope: TUI automatic Skill learning and pending proposal human-action state

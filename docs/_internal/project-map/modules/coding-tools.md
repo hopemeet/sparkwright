@@ -12,6 +12,16 @@ See also [../maps/runtime/tool-orchestration.md](../maps/runtime/tool-orchestrat
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-08-08
+- Scope: Project Trust governs executable project configuration and commands
+  before catalog assembly. Coding-tool definitions, CAS behavior, path
+  validation, and workspace-write policy are unchanged.
+- Read: Host catalog/selectors and restricted config admission against the
+  coding-tools public boundary.
+- Tests: focused Host config/capability/trust coverage passed; coding-tools
+  source did not change.
+
+- Status: Read-only
 - Date: 2026-08-02
 - Scope: existing Skill changes now use ordinary controlled coding writes after
   privileged Skill mutation tools were removed. Coding-tool CAS, validation,

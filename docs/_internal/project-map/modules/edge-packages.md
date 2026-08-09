@@ -30,6 +30,10 @@ contracts, and focused checklists that no longer fit here.
 
 ## Ownership Summary
 
+- `sdk-core.forkSession()` consumes the protocol-owned
+  `SessionForkRequestPayload`; it does not maintain a parallel fork request
+  shape. Current clients send stable `forkPoint` boundaries while deprecated
+  sequence compatibility remains Host-owned.
 - `sdk-core` exposes `task.updated` as a typed client event. The SDK does not
   treat live lifecycle push as durable truth; products reconcile task state
   through `task.list` and retrieve output through `task.output`.
@@ -44,6 +48,9 @@ contracts, and focused checklists that no longer fit here.
   client behavior; `sdk-node` and `sdk-browser` add environment-specific
   transports. Protocol schema and host-client behavior remain the source of
   truth.
+- `sdk-core` exposes provider catalog and auth-action request methods without
+  introducing its own provider or credential shapes. Node/browser transports
+  remain unaware of credential material.
 - Provider packages adapt external model ecosystems into core `ModelAdapter`
   and model registry shapes. Host model construction, config loading, pricing,
   and capability diagnostics still own product behavior.
@@ -79,7 +86,10 @@ contracts, and focused checklists that no longer fit here.
   has no process launcher and is not a daemon; F remains responsible for the
   long-running service carrier.
 - Project commands and shell sandbox packages are edge helpers consumed by TUI,
-  host, CLI, and MCP/shell paths. `shell-sandbox` owns OS-specific filesystem
+  Host, CLI, and MCP/shell paths. `project-commands` owns discovery, parsing,
+  interpolation, and safety-runner composition but never executes a process;
+  TUI only presents descriptors and Host supplies the governed runner.
+  `shell-sandbox` owns OS-specific filesystem
   grant compilation plus the availability/enforce/fallback launch decision for
   argv processes; callers still own transport I/O, timeout, shutdown, and trace
   lifecycle. Route safety-sensitive changes through shell and workspace-write
@@ -163,6 +173,74 @@ contracts, and focused checklists that no longer fit here.
   source exports. It should not be used as the sole authority for behavior.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-08-09
+- Scope: P6.1 preserves ProviderRegistry as the single provider/model
+  enumeration and adapter-resolution mechanism while Host supplies bundled
+  catalog metadata, config allowlists, explicit typed models, and driver
+  factories. SDK Core forwards the additive provider projection DTO without a
+  parallel shape; provider packages retain adapter-only ownership.
+- Read: ProviderRegistry and provider-ai-sdk contracts/tests, Host registry
+  composition, Protocol DTOs, and SDK Core provider methods.
+- Tests: full `npm run release:check` passed, including ProviderRegistry 7/7,
+  SDK Core 13/13, Host 585/585, all workspace suites/typechecks, 27 release
+  manifests, production audit, and both install smokes.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: published provider-edge manifests pin the tested AI SDK/provider
+  versions instead of allowing a fresh consumer install to float onto a newly
+  vulnerable transitive HTTP client. Both source-install and packed-release
+  smokes now audit the actual installed production graph at high severity.
+- Read: CLI/Host/provider AI SDK manifests, root lock resolution, install smoke
+  scripts, and consumer-install audit output.
+- Tests: root, source-install, and packed-release production audits each
+  reported zero vulnerabilities; both install smokes and full
+  `npm run release:check` passed.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: SDK Core forwards typed steering/follow-up command identity and mode,
+  returns the protocol-owned interaction result, and exposes
+  `run.follow_up.updated` through its typed event map. Transports remain
+  interaction-policy agnostic.
+- Read: Protocol interaction DTO/events, SDK Core client/event map, Host
+  producer, and TUI consumer.
+- Tests: SDK Core 12/12, the workspace build, and full
+  `npm run release:check` passed.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: SDK Core now forwards typed provider catalog and auth mutation
+  requests. Provider adapter packages remain key-store agnostic; Host owns
+  activation/generation state and adapter replacement.
+- Read: SDK Core client/exports, Protocol DTOs, Host provider auth/factory, and
+  Provider Edge reference.
+- Tests: full workspace regression passed, including SDK Core 12/12; release
+  regression and source/package install smokes passed.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: `@sparkwright/project-commands` remains frontend-agnostic and
+  process-free while its production caller moved from TUI-local execution to
+  Host-governed resolution. The protocol carries only command identity/rest;
+  the existing safety runner is composed with Host tracing and no-write
+  sandboxing.
+- Read: project-command package contract/tests, Host resolver/process runner,
+  Protocol request, and TUI adapter.
+- Tests: full `npm run release:check` passed, including project-commands 17/17,
+  Host 554/554, TUI 541/541, the regression matrix, and install smoke.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: `sdk-core.forkSession()` now consumes the protocol-owned semantic
+  session-fork payload directly. Node/browser transports remain unchanged and
+  do not own fork normalization or snapshot behavior.
+- Read: SDK core client, Protocol request/response types, Host compatibility
+  normalization, and TUI caller.
+- Tests: SDK build through the workspace build, repository test typecheck, and
+  focused real Host TUI fork regression passed.
 
 - Status: Verified
 - Date: 2026-08-02

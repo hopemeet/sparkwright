@@ -9,6 +9,18 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-08-08
+- Scope: session fork now uses stable before/after run boundaries and
+  `ForkableSessionStore`. `FileSessionStore` materializes retained run,
+  agent, trace, transcript, blob, and artifact state into an atomic,
+  self-contained branch snapshot with rewritten session identity and
+  structured lineage.
+- Read: Core session/run stores and consistency checks; Host session queries;
+  Protocol/SDK request shapes; TUI fork and replay flow.
+- Tests: focused Core fork/consistency tests, TUI fork dialog and real Host
+  continuation regression, workspace build, and test typecheck passed.
+
 - Status: Read-only
 - Date: 2026-08-02
 - Scope: Skill Stats continues to read session and child-agent traces through
@@ -370,6 +382,15 @@ Manual compact
 - `FileSessionStore` writes `session.json` through core `file-atomic`, the same
   lower-level atomic text writer wrapped by `agent-runtime` doc-store, because
   core cannot depend upward on runtime packages.
+- `forkSession()` delegates to `ForkableSessionStore`; in-memory stores copy
+  logical run membership, while `FileSessionStore` stages and atomically
+  publishes a self-contained snapshot. Fork provenance is canonical
+  `metadata.lineage = { parentSessionId, forkPoint }` plus a
+  `session.forked` event. New code must not rebuild branches by copying only
+  `session.runIds`.
+- Fork points use `{ runId, position: "before" | "after" }`. Main-agent
+  `after` points also retain child-agent runs until the next main run, so a
+  conversation turn stays diagnostically complete.
 - Workflow records live under workspace-level
   `.sparkwright/workflow-runs/`; each record retains `sessionId` so session
   filters and resume context remain available. Each workflow run has one
@@ -408,6 +429,8 @@ Manual compact
 ## Change Checklist
 
 - Keep `sessionId`, `runId`, and `SessionEvent.sequence` semantics separate.
+- Keep fork boundaries anchored to run identity; trace event sequences are
+  run-local and are not valid conversation fork points.
 - Update trace consistency checks when layout or metadata changes.
 - Preserve unknown `session.json` metadata when file stores reopen existing sessions.
 - Check multi-agent paths under `agents/<agent-id>/`.

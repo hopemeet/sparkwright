@@ -76,6 +76,17 @@ Does not own:
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-08-08
+- Scope: the MCP SDK dependency is updated within its public compatibility
+  range and the repository lock resolves patched transport/server validation
+  transitive dependencies. MCP discovery, tool wrapping, trust, and cleanup
+  contracts are unchanged.
+- Read: MCP package manifest/lock resolution, client transports, and production
+  dependency audit.
+- Tests: MCP adapter 34/34, root/source-install/packed-release production
+  audits with zero vulnerabilities, and full `npm run release:check` passed.
+
 - Status: Read-only
 - Date: 2026-07-17T17:24:00+0800
 - Scope: checked after durable Workflow package-identity convergence. MCP

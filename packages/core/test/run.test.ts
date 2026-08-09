@@ -4527,6 +4527,8 @@ describe("SparkwrightRun", () => {
       ],
       credentialResolver: async (req) => {
         expect(req.category).toBe("auth");
+        expect(req.signal).toBeInstanceOf(AbortSignal);
+        expect(req.signal?.aborted).toBe(false);
         return { refreshed: true, metadata: { method: "test" } };
       },
     });
@@ -5279,6 +5281,162 @@ describe("SparkwrightRun", () => {
     expect(run.events.all().map((event) => event.type)).toEqual(
       expect.arrayContaining(["run.command.enqueued", "run.command.applied"]),
     );
+  });
+
+  it("deduplicates live commands by commandId", async () => {
+    const run = createRun({
+      goal: "dedupe command",
+      model: {
+        async complete(input) {
+          expect(
+            input.context.filter((item) => item.content === "one message"),
+          ).toHaveLength(1);
+          return { message: "done" };
+        },
+      },
+    });
+
+    const first = run.injectUserMessage({
+      content: "one message",
+      metadata: { source: "test" },
+    });
+    if (!first.accepted) throw new Error("command was not accepted");
+    const duplicate = run.tryEnqueueCommand({
+      type: "user_message",
+      commandId: first.commandId,
+      content: "one message",
+      metadata: { source: "test" },
+    });
+
+    expect(duplicate).toEqual({
+      accepted: true,
+      commandId: first.commandId,
+      status: "queued",
+      duplicate: true,
+    });
+    await run.start();
+    expect(
+      run.events.all().filter((event) => event.type === "run.command.enqueued"),
+    ).toHaveLength(1);
+  });
+
+  it("applies steering that lands before a natural terminal boundary", async () => {
+    let releaseFirst!: () => void;
+    const firstTurnGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let modelCalls = 0;
+    const run = createRun({
+      goal: "terminal race",
+      maxSteps: 1,
+      model: {
+        async complete(input) {
+          modelCalls += 1;
+          if (modelCalls === 1) {
+            await firstTurnGate;
+            return { message: "first answer" };
+          }
+          expect(input.context.map((item) => item.content)).toContain(
+            "change the answer",
+          );
+          return { message: "steered answer" };
+        },
+      },
+    });
+
+    const resultPromise = run.start();
+    await waitForCondition(() => modelCalls === 1);
+    const acceptance = run.tryEnqueueCommand({
+      type: "user_message",
+      commandId: "command_terminal_race",
+      content: "change the answer",
+    });
+    releaseFirst();
+
+    await expect(resultPromise).resolves.toMatchObject({
+      state: "completed",
+      message: "steered answer",
+      metadata: {
+        forcedContinuationTurnsUsed: { interaction: 1 },
+      },
+    });
+    expect(acceptance).toEqual({
+      accepted: true,
+      commandId: "command_terminal_race",
+      status: "queued",
+      duplicate: false,
+    });
+    expect(modelCalls).toBe(2);
+    expect(
+      run.events
+        .all()
+        .filter((event) => event.type === "run.command.applied")
+        .at(-1)?.payload,
+    ).toMatchObject({ commandId: "command_terminal_race", step: 2 });
+  });
+
+  it("applies steering after an in-flight tool batch without interrupting it", async () => {
+    let releaseTool!: () => void;
+    const toolGate = new Promise<void>((resolve) => {
+      releaseTool = resolve;
+    });
+    let toolStarted = false;
+    const tool = defineTool({
+      name: "slow_read",
+      description: "A gated read for interaction ordering.",
+      inputSchema: { type: "object" },
+      policy: { risk: "safe" },
+      async execute() {
+        toolStarted = true;
+        await toolGate;
+        return { ok: true };
+      },
+    });
+    let modelCalls = 0;
+    const run = createRun({
+      goal: "tool boundary steering",
+      tools: [tool],
+      model: {
+        async complete(input) {
+          modelCalls += 1;
+          if (modelCalls === 1) {
+            return {
+              toolCalls: [{ toolName: "slow_read", arguments: {} }],
+            };
+          }
+          expect(input.context.map((item) => item.content)).toContain(
+            "include the new constraint",
+          );
+          return { message: "updated after tool" };
+        },
+      },
+    });
+
+    const resultPromise = run.start();
+    await waitForCondition(() => toolStarted);
+    run.tryEnqueueCommand({
+      type: "user_message",
+      commandId: "command_during_tool",
+      content: "include the new constraint",
+    });
+    expect(
+      run.events.all().some((event) => event.type === "run.command.applied"),
+    ).toBe(false);
+    releaseTool();
+
+    await expect(resultPromise).resolves.toMatchObject({
+      state: "completed",
+      message: "updated after tool",
+    });
+    const events = run.events.all();
+    const toolCompleted = events.findIndex(
+      (event) => event.type === "tool.completed",
+    );
+    const commandApplied = events.findIndex(
+      (event) => event.type === "run.command.applied",
+    );
+    expect(toolCompleted).toBeGreaterThanOrEqual(0);
+    expect(commandApplied).toBeGreaterThan(toolCompleted);
   });
 
   it("applies queued cancellation before model dispatch", async () => {

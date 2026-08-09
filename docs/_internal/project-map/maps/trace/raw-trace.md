@@ -11,6 +11,16 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-08-08
+- Scope: Project Trust denial happens before executable project sources enter
+  run assembly. Existing run-event serialization is unchanged; trust details
+  use protocol errors, capability snapshots, and bounded run metadata.
+- Read: Host run/session preparation, trust snapshot projection, Core events,
+  and raw-trace consumers.
+- Tests: focused Host trust/protocol coverage, schema validation, and the real
+  no-process regression passed.
+
+- Status: Read-only
 - Date: 2026-08-02
 - Scope: Skill Stats no longer reads proposal/history metadata; it remains a
   consumer of canonical session and child-agent traces. Shell guidance changed

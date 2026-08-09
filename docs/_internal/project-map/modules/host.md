@@ -12,6 +12,122 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-09
+- Scope: P6.2 adds Host-owned stored provider connections: OS-backed or
+  explicitly opted-in 0600 credential storage, non-secret revisioned metadata,
+  exact driver/endpoint/method bindings, workspace/user grants, ambient-source
+  suppression, and transactional legacy-migration rollback. Model construction
+  resolves the selected connection before config and never falls back to an
+  ambient key after a stored connection is selected.
+- Read: provider credential store/auth owner, catalog descriptors, model
+  factory, Host authorities/runtime/server, SDK bridge, and focused security
+  tests.
+- Tests: full `npm run release:check` passed, including Host 602/602, CLI
+  175/175, TUI 553/553, SDK Core 14/14, Protocol 6/6, 16/16 regression cases,
+  production audit, Project Trust regression, and both install smokes.
+
+- Status: Verified
+- Date: 2026-08-09
+- Scope: P6.1 makes the Host-composed ProviderRegistry the model inventory and
+  adapter-resolution authority. A versioned bundled catalog and code-owned,
+  model-free connection descriptors feed configured-provider, explicit model,
+  and legacy allowlist composition. Provider catalog responses now support
+  compatibility, all, connected, and available views without exposing secrets
+  or applying official metadata to custom driver/endpoint bindings.
+- Read: provider catalog composition, provider auth projections, model
+  builder/factory, direct-Core caller, protocol validation/schema, and focused
+  catalog/auth/model tests.
+- Tests: full `npm run release:check` passed, including Host 585/585, Core
+  687/687, CLI 173/173, TUI 552/552, Protocol 6/6, SDK Core 13/13, 16/16
+  regression-matrix cases, Project Trust regression, production audit, and
+  both install smokes.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: the Host now owns Project Trust state and evaluates canonical
+  workspace, scope manifests, and content changes before loading executable
+  project config, commands, Skills, Agent profiles, or Workflows. Restricted
+  config loading preserves only local presentation and safety-tightening
+  settings.
+- Read: ProjectTrustManager, HostService/HostRuntime composition, run and
+  capability preparation, provider/model/config assembly, connection
+  authority, and project-source resolvers.
+- Tests: full Host suite passed 52 files / 578 tests; schema, 27-package release
+  manifest, real Host trust, 16-case matrix, and full release gates passed.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: queued Host follow-ups now receive one bounded, model-visible evidence
+  item from the immediately preceding completed run's terminal FactLedger.
+  Changed paths and observed command/verifier outcomes are authoritative; the
+  item explicitly requires a source read before exact API/signature claims.
+  Ordinary session starts and resume paths retain their existing context.
+- Read: Host follow-up metadata, fresh-run preparation, completed-turn/trace
+  loading, Core context rendering, and focused protocol coverage.
+- Tests: Core FactLedger 8/8, Host protocol 66/66, full Host 567/567, and full
+  `npm run release:check` passed.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: trusted Host embedders can register governed in-process extensions.
+  Run preparation loads bounded context and governed tools; configured
+  inspection discovers descriptors without loading context. Canonical
+  selectors, capability snapshots, run metadata, child delegation, approval,
+  and mutation leases all reuse existing Host/Core paths.
+- Read: Runtime options, run/capability preparation, catalog/selectors,
+  capability projection, workflow episodes, protocol schema, and extension
+  integration tests.
+- Tests: Host Extension 4/4, full Host 566/566, Protocol 6/6, affected
+  typechecks/schema checks, and full `npm run release:check` passed.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: Host interaction routing now distinguishes in-run steering from a
+  same-session follow-up. Steering reuses the Core queue; follow-ups reuse the
+  existing bounded execution lane and publish started/rejected correlation
+  without introducing another scheduler.
+- Read: HostService lane composition, HostExecution/interaction owner,
+  HostRuntime follow-up defaults, protocol handler, and integration tests.
+- Tests: Host protocol passed 63/63, the full Host suite passed 562/562, Host
+  typecheck passed, and full `npm run release:check` passed.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: Host now owns one workspace-scoped provider catalog and non-secret
+  credential activation/generation broker. Existing config/environment sources
+  remain the key authority; protocol surfaces receive opaque profiles only.
+  Trusted interactive clients can rotate a failed adapter in place, while
+  ordinary CLI and remote clients remain fail-fast.
+- Read: provider auth state, model builder/factory, HostService/HostRuntime
+  composition, run/workflow preparation, server authorization, and CLI/TUI
+  callers.
+- Tests: full workspace regression passed, including Host 561/561 and the
+  provider auth/protocol suites; release regression and install smokes passed.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: file-authored project commands are now resolved during Host run
+  preparation from a protocol identity reference. The Host owns rediscovery,
+  effective-goal construction, shell safety, fail-closed no-write sandboxing,
+  and buffered `extension.process.*` evidence; workflow starts reject this
+  main-run-only input.
+- Read: Protocol/server validation, run preparation/HostRuntime handoff,
+  project-command resolver, shared governed inline-shell runner, and TUI caller.
+- Tests: full `npm run release:check` passed, including Host 554/554, the
+  16-case regression matrix, and source/release install smoke.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: Host `session.fork` now validates semantic run boundaries, delegates
+  snapshot materialization to Core, maps the deprecated sequence request only
+  at the protocol-v2 edge, and returns run-count/fork-point results. Completed
+  turn loading remains session-local and now works on forked snapshots.
+- Read: session queries, HostRuntime/server delegation, Core file-session fork,
+  Protocol/SDK shapes, and TUI continuation regression.
+- Tests: workspace build, repository test typecheck, focused Core/TUI fork
+  suites, schema validation, and reserved-field check passed.
+
+- Status: Verified
 - Date: 2026-08-02
 - Scope: removed Host-owned Skill proposal/history/registry/suggestion services,
   model mutation tools, evolution config, and Stats rollups. Host retains
@@ -726,6 +842,7 @@ Owns:
 - provider pricing resolution for run metadata, session compaction usage hints,
   and `capability.inspect` diagnostics
 - skill, MCP, shell, cron, and agent capability preparation
+- trusted in-process Extension registration at the embedder boundary
 - complete run preparation ownership through `RunPreparationOperations`
 - effective capability inspection and snapshot-cache ownership through
   `CapabilityRuntimeOperations`
@@ -780,6 +897,12 @@ Does not own:
   monotonic: it cannot restore a removed tool, and every retained
   `tool_search` is rebuilt over exactly the final definitions instead of
   reusing a broader captured index. Child policy remains defense in depth.
+- Extension registrations are runtime inputs, not project config or code
+  loading. `extensions`/`extension:<id>` selectors narrow their tools through
+  the canonical catalog. Declared surfaces live in
+  `CapabilitySnapshot.extensions`; the effective filtered tools remain in
+  `CapabilitySnapshot.tools`. Only tools explicitly marked
+  `delegation:"child"` can enter child catalogs.
 - The main Host catalog registers `web_fetch` from
   `@sparkwright/web-tools` with source/selector `web`. Built-in identity marks
   it advanced, so normal default loading defers its schema and derives
@@ -842,6 +965,11 @@ Does not own:
   delivery, cancellation cleanup, and drain. It receives one read-only current
   execution port from HostRuntime; it does not create HostExecution, replace
   `currentExecution`, retain an active-run copy, or admit execution lanes.
+- `run.inject_message` defaults to `steer`. `follow_up` is admitted through the
+  same process HostService lane as ordinary starts, inherits the live run's
+  model/access/background-task/trace defaults, and emits
+  `run.follow_up.updated` when its execution starts or is rejected. The queue is
+  process-local and must not be described as restart-durable.
 - `resolveExecutionPlan()` freezes workspace/session/model/access identity
   before `createExecutionResources()` creates a fresh LocalWorkspace, trace
   emitter, and session store handles. Live execution resources are not pooled.
@@ -1572,6 +1700,10 @@ Does not own:
   replay, raw-trace fact projection, compact-context anchoring, session listing,
   trace/compaction inspection, transcript previews, and session fork queries.
   `HostRuntime` delegates without retaining filesystem readers or projections.
+- Host normalizes deprecated `forkAtSequence` from the session event log and
+  immediately converts it to a stable Core `SessionForkPoint`. New Host and
+  product code passes `forkPoint` directly; trace-event sequence is never a
+  fork anchor.
 - `session-compaction.ts` owns the complete manual compaction operation:
   completed-turn loading, optional summarizer model assembly, artifact writes,
   and compaction event recording. Runtime does not prepare a parallel turn list.

@@ -112,6 +112,16 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-08
+- Scope: Host, CLI, and TUI admit project Skill roots only after the Skills
+  Project Trust scope matches its stored content pin. The Skills package keeps
+  deterministic parsing/indexing/loading and does not own trust state.
+- Read: Skills discovery/load boundary, Host Skill roots and run preparation,
+  CLI/TUI discovery, and ProjectTrustManager.
+- Tests: focused Host trust/preparation and TUI discovery coverage passed; the
+  real Host regression confirmed denial before execution.
+
+- Status: Verified
 - Date: 2026-08-02
 - Scope: removed Skill self-evolution across Host, CLI, TUI, config, and Stats;
   retained deterministic non-overwriting project creation, package identity v2,

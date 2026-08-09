@@ -6,6 +6,23 @@ contracts, public schema, package exports, or generated `dist`.
 
 ## Core
 
+### `packages/core/src/extensions.ts`
+
+Run:
+
+```bash
+npm --workspace @sparkwright/core test -- test/extensions.test.ts
+npm --workspace @sparkwright/core run typecheck
+npm --workspace @sparkwright/host test -- test/extensions.test.ts
+npm --workspace @sparkwright/protocol test -- test/index.test.ts
+npm run schema:check
+```
+
+Cover whole-set registration validation before callbacks, bounded/non-forging
+context, conservative static and argument-dependent tool governance, explicit
+concurrency safety, approval routing, built-in collisions, selector filtering,
+and declared-versus-effective capability inspection.
+
 ### `packages/core/src/index.ts`, `internal.ts`, or public/internal export routing
 
 Run:
@@ -22,6 +39,21 @@ Then typecheck/build every workspace moved between the public and internal
 entrypoints and run its focused tests. Assert removed implementation names are
 absent from the root module and present under `/internal`; import-only source
 changes can still fail at runtime when an upstream `dist` barrel is stale.
+
+### `packages/core/src/session.ts` session store, replay, or fork behavior
+
+Run:
+
+```bash
+npm --workspace @sparkwright/core test -- test/session.test.ts test/session-fork.test.ts test/trace-session-consistency.test.ts
+npm --workspace @sparkwright/core run typecheck
+npm --workspace @sparkwright/core run build
+```
+
+For fork changes, also run the TUI fork dialog and real Host continuation
+regressions. Preserve stable run-boundary semantics, self-contained file
+snapshots, rewritten session identity, main/child-agent ownership, and a clean
+session-consistency report.
 
 ### `packages/core/src/workspace.ts` or `workspace-checkpoint.ts`
 
@@ -50,6 +82,11 @@ Run:
 npm --workspace @sparkwright/core test -- test/run.test.ts
 npm --workspace @sparkwright/core test -- test/runtime-guardrails.test.ts
 ```
+
+For live command identity, steering terminal races, or tool-boundary ordering,
+also run Host protocol, SDK Core, and TUI interaction coverage. Assert an
+accepted command is applied or explicitly rejected, duplicate ids enqueue
+once, and in-flight tool batches are not interrupted.
 
 Broaden to `test/trace.test.ts` when run terminal payloads, tool outcomes,
 verification summaries, or trace snapshots change.
@@ -113,6 +150,20 @@ implementation-to-facade reverse imports.
 
 ## Shell Tool
 
+### `packages/mcp-adapter/package.json` or MCP SDK lock resolution
+
+Run:
+
+```bash
+npm --workspace @sparkwright/mcp-adapter test
+npm --workspace @sparkwright/mcp-adapter run typecheck
+npm run security:audit:production
+```
+
+When the SDK or a transport dependency changes, keep stdio, Streamable HTTP,
+SSE, OAuth, list-tools, and cleanup coverage in scope. Use non-forced compatible
+updates and finish with the repository release gate.
+
 ### `packages/shell-sandbox/src/*`
 
 Run:
@@ -149,6 +200,22 @@ Reason: downstream packages import `@sparkwright/shell-tool` through package
 exports, which point at `dist`.
 
 ## Host
+
+### Host Extension runtime/catalog integration
+
+For `runtime/*` Extension preparation, `tool-catalog.ts`, `tool-selectors.ts`,
+or `CapabilitySnapshot.extensions`, run:
+
+```bash
+npm --workspace @sparkwright/host test -- test/extensions.test.ts test/tools.test.ts test/protocol.test.ts
+npm --workspace @sparkwright/host run typecheck
+npm --workspace @sparkwright/cli test -- test/config-schema.test.ts
+npm run schema:check
+```
+
+Preserve the in-process trust boundary: runtime options register code, config
+only narrows registered tools, inspection never loads context, and child
+catalogs require explicit `delegation: "child"`.
 
 ### `packages/host/src/agent-profiles.ts` or Markdown Agent authoring
 
@@ -233,6 +300,26 @@ npm --workspace @sparkwright/host test -- test/tools.test.ts
 Also run shell-tool tests when behavior belongs to command parsing, path scope,
 foreground timeout, promotion, or shell output schema.
 
+### Host/TUI file-authored project command execution
+
+Run:
+
+```bash
+npm --workspace @sparkwright/project-commands test
+npm --workspace @sparkwright/host test -- test/project-command-resolution.test.ts test/skill-inline-shell.test.ts
+npm --workspace @sparkwright/host test -- test/protocol.test.ts -t "project command"
+npm --workspace @sparkwright/tui test -- test/project-commands.test.ts test/queue-store.test.ts
+npm --workspace @sparkwright/host run typecheck
+npm --workspace @sparkwright/tui run typecheck
+npm run schema:check
+```
+
+Assert the wire carries only `{ name, rest? }`, Host rediscovers the descriptor,
+unsafe/approval-required interpolation starts no process, admitted interpolation
+uses a fail-closed no-write sandbox even for write-enabled runs, and
+`extension.process.*` evidence is flushed into the run. The TUI may discover
+descriptors for presentation but must not import a process launcher.
+
 ### `packages/host/src/runtime.ts` or `packages/host/src/runtime/*`
 
 Run the focused suite matching the changed surface:
@@ -274,7 +361,7 @@ npm --workspace @sparkwright/host test -- test/execution-interaction-operations.
 npm --workspace @sparkwright/server-runtime test -- test/execution-lanes.test.ts
 npm --workspace @sparkwright/sdk-node test -- test/round-trip.test.ts
 npm --workspace @sparkwright/cli test -- test/cli-approval.test.ts
-npm --workspace @sparkwright/tui test -- test/run-controller-approval.test.ts test/run-controller-session-mutation.test.ts test/sdk-cutover.test.ts
+npm --workspace @sparkwright/tui test -- test/run-controller-approval.test.ts test/run-controller-session-mutation.test.ts test/run-controller-interaction.test.ts test/queue-store.test.ts test/sdk-cutover.test.ts
 npm --workspace @sparkwright/host run typecheck
 ```
 
@@ -315,6 +402,49 @@ the last-run snapshot only in the capability owner, reuse the WorkspaceContext
 TaskManager/root, and route generic/live MCP preparation through the canonical
 run-preparation helper behind one narrow port. Run the import/internal-import
 gates.
+
+For `provider-auth.ts`, `provider-credential-store.ts`, `model-builder.ts`,
+`model-factory.ts`, `/connect`, or provider protocol methods, run:
+
+```bash
+npm --workspace @sparkwright/host test -- test/provider-auth.test.ts test/provider-credential-store.test.ts test/provider-protocol.test.ts test/model-factory.test.ts test/protocol.test.ts
+npm --workspace @sparkwright/sdk-core test -- test/client.test.ts
+npm --workspace @sparkwright/cli test -- test/cli.test.ts -t provider
+npm --workspace @sparkwright/tui test -- test/connect-dialog.test.tsx test/model-dialog.test.tsx test/sdk-cutover.test.ts test/build-command-registry.test.ts
+npm run schema:check
+```
+
+Assert that metadata state contains only opaque connection/profile identity,
+binding fingerprints, grants, selection/suppression, generations, revisions,
+and timestamps; catalog/protocol/CLI/TUI output must not contain credential
+material. Cover 0600/corruption behavior, cross-manager writes and revision
+observation, local secret submission, remote denial, exact endpoint binding,
+no ambient fallback, ambient suppression, transactional migration rollback,
+masked TUI input, adapter replacement, abortable waits, and fail-fast behavior
+for clients that did not advertise interactive auth.
+
+For `project-trust.ts`, project-source admission, or trust protocol/UI changes,
+run:
+
+```bash
+npm --workspace @sparkwright/host test -- test/project-trust.test.ts test/project-trust-protocol.test.ts test/project-command-resolution.test.ts test/config.test.ts test/capability-runtime-operations.test.ts test/run-preparation-operations.test.ts
+npm --workspace @sparkwright/sdk-core test -- test/client.test.ts
+npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "project trust|doctor paths"
+npm --workspace @sparkwright/tui test -- test/project-trust-dialog.test.tsx test/project-commands.test.ts test/build-command-registry.test.ts
+npm run schema:check
+npm run check:release-manifests
+npm run regression:project-trust
+```
+
+Assert canonical workspace identity, per-scope content pins, changed-content
+invalidation, external non-secret state, symlink failure, restricted config
+merge, denial before process/MCP preparation, local-only mutation authority,
+explicit TUI confirmation, and no automatic command execution after grant.
+
+The sequential `runCli` integration suite uses a 15-second per-case budget
+because it starts real Host/MCP processes; its multi-scenario Workflow
+projection ladder uses 30 seconds. Git-backed Agent Runtime worktree tests use
+a 15-second suite budget. Keep unit-only suites on the default timeout.
 
 For `runtime/run-preparation-operations.ts`, run:
 
@@ -393,6 +523,32 @@ checkpoint resume, completed-turn replay, compact artifact anchoring,
 compaction audit events, and session inspect/fork behavior. These modules own
 session filesystem reads; `HostRuntime` must not grow a second reader or expose
 private helpers for tests.
+
+For queued follow-up evidence, assert that an explicit `previousRunId` adds one
+bounded `session_turn_evidence` item, exact API/signature claims require a
+current source read, and ordinary starts plus resume retain their prior context.
+Also run the Core FactLedger test when command classification changes.
+
+### `packages/core/src/fact-classifier.ts`
+
+Run:
+
+```bash
+npm --workspace @sparkwright/core test -- test/fact-ledger.test.ts
+npm --workspace @sparkwright/core run typecheck
+```
+
+Verification-command additions must be explicit command shapes, not goal-prose
+heuristics. Cover both a positive command and an ordinary diagnostic negative;
+broaden to trace tests when terminal FactLedger serialization changes.
+
+When `session.fork` changes, additionally run:
+
+```bash
+npm --workspace @sparkwright/core test -- test/session-fork.test.ts
+npm --workspace @sparkwright/tui test -- test/fork-dialog.test.ts test/fork.test.ts test/run-controller-session-mutation.test.ts
+npm run typecheck:test
+```
 
 ## Agent Runtime
 
@@ -516,6 +672,23 @@ register cleanup with the shared LIFO stack.
 
 ## Repository Governance
 
+### Dependency manifests, lockfile, or install scripts
+
+Run under a supported Node release:
+
+```bash
+npm install
+npm run security:audit:production
+npm run source:install-smoke
+npm run release:install-smoke
+```
+
+The root audit is necessary but not sufficient: workspace lock resolution can
+differ from a consumer's fresh tarball graph. Both install smokes must audit
+their installed production dependencies and fail on high or critical findings.
+Provider SDK versions stay pinned to the tested set until a newer compatible
+set passes provider, Host, CLI, and installed-artifact gates.
+
 ### import/facade or project-map routing scripts
 
 Run:
@@ -552,7 +725,7 @@ parser, action, layer, dialog branch, or help entry.
 For execution identity, approval routing/cleanup, or session mutation guards:
 
 ```bash
-npm --workspace @sparkwright/tui test -- test/run-controller-approval.test.ts test/run-controller-session-mutation.test.ts test/sdk-cutover.test.ts
+npm --workspace @sparkwright/tui test -- test/run-controller-approval.test.ts test/run-controller-session-mutation.test.ts test/run-controller-interaction.test.ts test/queue-store.test.ts test/sdk-cutover.test.ts
 npm --workspace @sparkwright/tui run typecheck
 ```
 
@@ -576,6 +749,17 @@ presentation helpers:
 npm --workspace @sparkwright/tui test -- test/event-stream-render.test.ts
 npm --workspace @sparkwright/tui test -- test/status-bar-render.test.tsx
 ```
+
+For model selection, pending-run presentation, or bounded interactive lists:
+
+```bash
+npm --workspace @sparkwright/tui test -- test/model-dialog.test.tsx test/queued-messages.test.tsx test/queue-store.test.ts test/fork-dialog.test.ts test/session-list-dialog-render.test.tsx test/input-box.test.ts
+npm --workspace @sparkwright/tui run typecheck
+```
+
+Catalog-loading or app-shell changes also require a real PTY `/model` capture;
+steering/follow-up presentation changes require one active-run queue capture
+and trace verification after the Host starts the next run.
 
 For transcript changes:
 

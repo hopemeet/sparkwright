@@ -3,6 +3,8 @@ export interface CliIO {
   stderr?: Pick<NodeJS.WriteStream, "write">;
   stdinIsTTY?: boolean;
   question?: (prompt: string) => Promise<string>;
+  /** Read one line without echoing it; also used for --api-key-stdin pipes. */
+  readSecret?: (prompt: string) => Promise<string>;
 }
 
 export function writeLine(

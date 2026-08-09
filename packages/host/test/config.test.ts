@@ -26,6 +26,104 @@ async function writeProjectConfig(cwd: string, body: unknown): Promise<void> {
 }
 
 describe("loadHostConfig", () => {
+  it("keeps only safety tightening and local UI from an untrusted project config", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        identity: {
+          model: "openai/user-model",
+          providers: { openai: { apiKey: "user-key" } },
+        },
+        policy: {
+          confidentialDefaults: true,
+          sandbox: { mode: "warn", network: { mode: "allow" } },
+        },
+      });
+      await writeProjectConfig(cwd, {
+        identity: {
+          model: "openai/project-model",
+          providers: { project: { apiKey: "project-key" } },
+        },
+        policy: {
+          confidentialPaths: ["private/**"],
+          confidentialDefaults: false,
+          write: { maxFiles: 2, allowDeletions: false },
+          sandbox: {
+            mode: "enforce",
+            failIfUnavailable: true,
+            filesystem: {
+              allowRead: ["/"],
+              denyRead: ["private/**"],
+              tmp: false,
+            },
+            network: { mode: "deny" },
+          },
+        },
+        run: {
+          accessMode: "read-only",
+          backgroundTasks: "disabled",
+          maxSteps: 99,
+          traceLevel: "debug",
+        },
+        ui: { theme: "mono", vim: true },
+        tools: { allowed: ["read_file"], defer: ["mcp"] },
+        capabilities: {
+          mcp: {
+            servers: [{ id: "project", type: "stdio", command: "node" }],
+          },
+          hooks: { workflow: [] },
+          web: { security: "hardened" },
+        },
+      });
+
+      const loaded = await loadHostConfig(
+        cwd,
+        { XDG_CONFIG_HOME: xdg },
+        { projectMode: "restricted" },
+      );
+
+      expect(loaded.config.model).toBe("openai/user-model");
+      expect(loaded.config.providers).toEqual({
+        openai: expect.objectContaining({ apiKey: "user-key" }),
+      });
+      expect(loaded.config.accessMode).toBe("read-only");
+      expect(loaded.config.backgroundTasks).toBe("disabled");
+      expect(loaded.config.confidentialDefaults).toBe(true);
+      expect(loaded.config.confidentialPaths).toEqual(["private/**"]);
+      expect(loaded.config.write).toEqual({
+        maxFiles: 2,
+        allowDeletions: false,
+      });
+      expect(loaded.config.shell?.sandbox).toMatchObject({
+        mode: "enforce",
+        failIfUnavailable: true,
+        filesystem: { denyRead: ["private/**"], tmp: false },
+        network: { mode: "deny" },
+      });
+      expect(loaded.config.shell?.sandbox?.filesystem).not.toHaveProperty(
+        "allowRead",
+      );
+      expect(loaded.config.tools).toEqual({ allowed: ["read_file"] });
+      expect(loaded.config.capabilities).toEqual({
+        web: { security: "hardened" },
+      });
+      expect(loaded.config.maxSteps).toBeUndefined();
+      expect(loaded.config.traceLevel).toBeUndefined();
+      expect(loaded.config.theme).toBe("mono");
+      expect(loaded.config.vim).toBe(true);
+      expect(loaded.warnings).toContainEqual(
+        expect.objectContaining({
+          field: "(projectTrust)",
+          message: expect.stringContaining("capabilities.mcp"),
+        }),
+      );
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("resolves the user config under XDG_CONFIG_HOME", async () => {
     const xdg = await makeTempDir();
     try {

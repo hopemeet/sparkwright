@@ -1,14 +1,15 @@
 import React, { useState } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
+import type { SessionForkPoint } from "@sparkwright/protocol";
 import type { RunEvent } from "../lib/event-type.js";
 import { useTheme } from "../lib/theme-context.js";
 import { isBackInput } from "../lib/input-key.js";
+import { windowAroundCursor } from "../lib/list-window.js";
 import { DialogFrame } from "./dialog-frame.js";
 
 /**
- * Fork-point picker. We surface each user turn (a `run.started` event with a
- * goal) plus its event sequence; forking at that sequence keeps history up to
- * and including that turn. A "full session (clone)" option forks everything.
+ * Fork-point picker. Each turn is anchored to its stable run id. Enter keeps
+ * the selected turn; `e` branches immediately before it and prefills the goal.
  *
  * Enter forks at the highlighted point; esc cancels.
  */
@@ -19,7 +20,7 @@ export function ForkDialog(props: {
    * prefill the input with this turn's goal so the user can tweak and re-run.
    */
   onFork: (
-    forkAtSequence: number | undefined,
+    forkPoint: SessionForkPoint | undefined,
     label: string,
     edit?: boolean,
   ) => void;
@@ -31,18 +32,24 @@ export function ForkDialog(props: {
   // Options: [full clone, ...turns]. Cursor 0 = full clone.
   const options: Array<{
     label: string;
-    seq: number | undefined;
+    runId: string | undefined;
+    turnNumber?: number;
   }> = [
-    { label: "Full session (clone everything)", seq: undefined },
-    ...turns.map((t) => ({
+    { label: "Full session (clone everything)", runId: undefined },
+    ...turns.map((t, index) => ({
       label: t.goal,
-      seq: t.sequence,
+      runId: t.runId,
+      turnNumber: index + 1,
     })),
   ];
   const [cursor, setCursor] = useState(0);
   const safeCursor = Math.max(0, Math.min(cursor, options.length - 1));
   const windowSize = Math.max(5, Math.min(12, (stdout?.rows ?? 30) - 8));
-  const { start, visible } = optionWindow(options, safeCursor, windowSize);
+  const { start, visible } = windowAroundCursor(
+    options,
+    safeCursor,
+    windowSize,
+  );
 
   useInput((input, key) => {
     if (isBackInput(input, key)) {
@@ -51,14 +58,23 @@ export function ForkDialog(props: {
     }
     if (key.return) {
       const pick = options[safeCursor];
-      props.onFork(pick.seq, pick.label);
+      props.onFork(
+        pick.runId ? { runId: pick.runId, position: "after" } : undefined,
+        pick.label,
+      );
       return;
     }
     // "e" = fork & edit: only meaningful for a specific user turn (not the
     // full-clone option, which has no single goal to edit).
     if (input === "e") {
       const pick = options[safeCursor];
-      if (pick.seq !== undefined) props.onFork(pick.seq, pick.label, true);
+      if (pick.runId) {
+        props.onFork(
+          { runId: pick.runId, position: "before" },
+          pick.label,
+          true,
+        );
+      }
       return;
     }
     if (key.upArrow || input === "k") {
@@ -91,13 +107,13 @@ export function ForkDialog(props: {
         const optionIndex = start + i;
         const selected = optionIndex === safeCursor;
         return (
-          <Box key={`${opt.seq ?? "full"}-${optionIndex}`}>
+          <Box key={`${opt.runId ?? "full"}-${optionIndex}`}>
             <Text color={selected ? theme.success : undefined}>
               {selected ? "› " : "  "}
             </Text>
-            {opt.seq !== undefined ? (
+            {opt.runId !== undefined ? (
               <Text color={theme.muted}>
-                [{String(opt.seq).padStart(3, " ")}]{" "}
+                [#{String(opt.turnNumber).padStart(2, " ")}]{" "}
               </Text>
             ) : (
               <Text color={theme.muted}>[all] </Text>
@@ -124,16 +140,14 @@ export function ForkDialog(props: {
 }
 
 interface Turn {
-  sequence: number;
+  runId: string;
   goal: string;
 }
 
 export function extractTurns(events: RunEvent[]): Turn[] {
-  // Fork happens at a host sequence, which only `run.started` carries — but its
-  // payload.goal is empty on some providers. The TUI's own `tui.user` event
-  // (synthetic, negative sequence) always carries the goal text and is appended
-  // just before the run starts, so we pair each run.started with the goal of the
-  // tui.user that precedes it.
+  // The synthetic `tui.user` event supplies a fallback goal when
+  // `run.started` omits it. Child-agent runs are execution details rather than
+  // conversation turns, so only the main agent appears in this picker.
   const turns: Turn[] = [];
   let pendingGoal: string | undefined;
   for (const ev of events) {
@@ -143,31 +157,18 @@ export function extractTurns(events: RunEvent[]): Turn[] {
       continue;
     }
     if (ev.type !== "run.started") continue;
+    if (ev.metadata?.agentId !== undefined && ev.metadata.agentId !== "main") {
+      continue;
+    }
+    if (!ev.runId) continue;
     const p = (ev.payload ?? {}) as { goal?: unknown };
     const ownGoal =
       typeof p.goal === "string" && p.goal.trim() ? p.goal : undefined;
     turns.push({
-      sequence: ev.sequence ?? 0,
+      runId: ev.runId,
       goal: ownGoal ?? pendingGoal ?? "(run)",
     });
     pendingGoal = undefined;
   }
   return turns;
-}
-
-export function optionWindow<T>(
-  items: readonly T[],
-  cursor: number,
-  windowSize: number,
-): { start: number; visible: readonly T[] } {
-  const size = Math.max(1, windowSize);
-  const safeCursor = Math.max(
-    0,
-    Math.min(cursor, Math.max(0, items.length - 1)),
-  );
-  const start = Math.max(
-    0,
-    Math.min(items.length - size, safeCursor - Math.floor(size / 2)),
-  );
-  return { start, visible: items.slice(start, start + size) };
 }

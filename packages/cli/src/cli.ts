@@ -32,6 +32,8 @@ import {
 } from "@sparkwright/core";
 import {
   isTraceLevel,
+  PROJECT_TRUST_SCOPES,
+  type ProjectTrustScope,
   type RunInputPayload,
   type TraceLevel,
   type WorkflowRunSnapshot,
@@ -73,6 +75,9 @@ import {
   shadowWorkflowFromSession,
   existingSkillRoots,
   HostRuntime,
+  ProviderAuthManager,
+  ProjectTrustManager,
+  isProjectScopeTrusted,
   createHostService,
   createHostStartRunRequest,
   resolveSkillRootsForRuntime,
@@ -88,6 +93,7 @@ import {
   type WorkflowAssetReport,
   type WorkflowDistillReport,
   type WorkflowShadowReport,
+  type HostService,
 } from "@sparkwright/host";
 import {
   FileWorkflowServiceStore,
@@ -147,8 +153,6 @@ import {
 
 export type { CliIO } from "./io.js";
 
-const cliHostService = createHostService();
-
 export async function runCli(
   argv: string[],
   options: {
@@ -160,6 +164,10 @@ export async function runCli(
   const io = options.io ?? {};
   const env = options.env ?? process.env;
   const cwd = options.cwd ?? process.cwd();
+  const cliHostService = createHostService({
+    providerAuthOptions: { env },
+    projectTrustOptions: { env },
+  });
 
   const helpText = helpForArgs(argv, env);
   if (helpText) {
@@ -181,7 +189,17 @@ export async function runCli(
   // full parser because config itself may provide default workspace/model
   // values, but an explicit --workspace must decide which project config layer
   // participates in the merge.
-  const cfg = await loadHostConfig(workspaceBootstrapRoot(argv, cwd), env);
+  const bootstrapRoot = workspaceBootstrapRoot(argv, cwd);
+  const projectTrustManager = new ProjectTrustManager({ env });
+  const bootstrapTrust = await projectTrustManager
+    .inspect(bootstrapRoot)
+    .catch(() => undefined);
+  const cfg = await loadHostConfig(bootstrapRoot, env, {
+    projectMode:
+      bootstrapTrust && isProjectScopeTrusted(bootstrapTrust, "config")
+        ? "trusted"
+        : "restricted",
+  });
   for (const e of cfg.errors) {
     writeLine(io.stderr, `config: ${e.file}: ${e.field}: ${e.message}`);
   }
@@ -224,6 +242,10 @@ export async function runCli(
   }
   const { command } = parsed.value;
 
+  if (command === "trust") {
+    return handleTrustCommand(parsed.value, io, projectTrustManager);
+  }
+
   if (command === "trace") {
     return handleTraceCommand(parsed.value, io);
   }
@@ -252,11 +274,15 @@ export async function runCli(
   }
 
   if (command === "workflow") {
-    return handleWorkflowCommand(parsed.value, io, env);
+    return handleWorkflowCommand(parsed.value, io, env, cliHostService);
   }
 
   if (command === "capabilities") {
     return handleCapabilitiesCommand(parsed.value, io, env, cliHostService);
+  }
+
+  if (command === "provider") {
+    return handleProviderCommand(parsed.value, io, env);
   }
 
   if (command === "delegates") {
@@ -350,23 +376,6 @@ export async function runCli(
         io,
         env,
       );
-}
-
-export async function scaffoldFirstRunUserConfigIfMissing(input: {
-  argv: string[];
-  cwd: string;
-  env: Record<string, string | undefined>;
-  io: CliIO;
-}): Promise<CliRunResult | undefined> {
-  const cfg = await loadHostConfig(
-    workspaceBootstrapRoot(input.argv, input.cwd),
-    input.env,
-  );
-  return maybeScaffoldFirstRunUserConfig({
-    cfg,
-    env: input.env,
-    io: input.io,
-  });
 }
 
 function directCoreEnabled(env: Record<string, string | undefined>): boolean {
@@ -480,7 +489,7 @@ async function maybeScaffoldFirstRunUserConfig(input: {
       [
         "No Sparkwright config found yet.",
         `Created user config: ${result.path}`,
-        'Next: set "identity.providers.openai.apiKey" or export OPENAI_API_KEY, then rerun your command.',
+        "Next: run `sparkwright provider connect openai` or export OPENAI_API_KEY, then rerun your command.",
         "For repo-specific settings later, run `sparkwright init --project` inside that workspace.",
         "Inspect config with `sparkwright config inspect --format text`.",
       ].join("\n"),
@@ -667,6 +676,8 @@ function parseArgs(
     "tasks",
     "workflow",
     "capabilities",
+    "provider",
+    "trust",
     "delegates",
     "skills",
     "agents",
@@ -685,6 +696,8 @@ function parseArgs(
     command === "tasks" ||
     command === "workflow" ||
     command === "capabilities" ||
+    command === "provider" ||
+    command === "trust" ||
     command === "delegates" ||
     command === "skills" ||
     command === "agents" ||
@@ -735,7 +748,9 @@ function parseArgs(
   let llm = false;
   let compaction = false;
   let detach = false;
+  let apiKeyStdin = false;
   let delegateGoal: string | undefined;
+  const trustScopes: ProjectTrustScope[] = [];
 
   const applyRequestedAccessMode = (requested: RunAccessMode): void => {
     const effective =
@@ -751,6 +766,21 @@ function parseArgs(
       args.splice(index, 1);
       index -= 1;
       continue;
+    }
+
+    if (arg === "--api-key-stdin") {
+      apiKeyStdin = true;
+      args.splice(index, 1);
+      index -= 1;
+      continue;
+    }
+
+    if (arg === "--api-key") {
+      return {
+        ok: false,
+        message:
+          "API keys are not accepted in argv. Use --api-key-stdin or the hidden interactive prompt.",
+      };
     }
 
     if (arg === "--trace-level") {
@@ -772,6 +802,20 @@ function parseArgs(
         return { ok: false, message: "Usage: --workspace requires a path" };
       workspaceRoot = resolve(cwd, value);
       workspaceRootSource = "cli";
+      args.splice(index, 2);
+      index -= 1;
+      continue;
+    }
+
+    if (arg === "--scope") {
+      const value = args[index + 1];
+      if (!(PROJECT_TRUST_SCOPES as readonly string[]).includes(value ?? "")) {
+        return {
+          ok: false,
+          message: `Usage: --scope must be one of: ${PROJECT_TRUST_SCOPES.join(", ")}`,
+        };
+      }
+      trustScopes.push(value as ProjectTrustScope);
       args.splice(index, 2);
       index -= 1;
       continue;
@@ -1203,6 +1247,28 @@ function parseArgs(
     };
   }
 
+  if (
+    command === "trust" &&
+    subcommand !== "status" &&
+    subcommand !== "grant" &&
+    subcommand !== "revoke"
+  ) {
+    return { ok: false, message: trustUsage() };
+  }
+
+  if (
+    command === "provider" &&
+    subcommand !== "list" &&
+    subcommand !== "connect" &&
+    subcommand !== "disconnect" &&
+    subcommand !== "login" &&
+    subcommand !== "logout" &&
+    subcommand !== "remove" &&
+    subcommand !== "refresh"
+  ) {
+    return { ok: false, message: providerUsage() };
+  }
+
   if (command === "delegates" && subcommand !== "run") {
     return {
       ok: false,
@@ -1294,6 +1360,7 @@ function parseArgs(
           command === "tasks" ||
           command === "workflow" ||
           command === "capabilities" ||
+          command === "trust" ||
           command === "delegates" ||
           command === "skills" ||
           command === "agents"
@@ -1355,8 +1422,285 @@ function parseArgs(
       compaction,
       detach,
       delegateGoal,
+      trustScopes: trustScopes.length > 0 ? trustScopes : undefined,
+      apiKeyStdin,
     },
   };
+}
+
+async function handleProviderCommand(
+  parsed: ParsedArgs,
+  io: CliIO,
+  env: Record<string, string | undefined>,
+): Promise<CliRunResult> {
+  const subcommand = parsed.subcommand;
+  if (
+    subcommand !== "list" &&
+    subcommand !== "connect" &&
+    subcommand !== "disconnect" &&
+    subcommand !== "login" &&
+    subcommand !== "logout" &&
+    subcommand !== "refresh" &&
+    subcommand !== "remove"
+  ) {
+    writeLine(io.stderr, providerUsage());
+    return { exitCode: 1 };
+  }
+  const manager = new ProviderAuthManager({ env });
+  try {
+    const trust = await new ProjectTrustManager({ env }).inspect(
+      parsed.workspaceRoot,
+    );
+    const includeProjectConfig = isProjectScopeTrusted(trust, "config");
+    const catalog = await manager.catalog({
+      workspaceRoot: parsed.workspaceRoot,
+      ...(parsed.modelName ? { model: parsed.modelName } : {}),
+      includeProjectConfig,
+      ...(subcommand === "login" ? {} : { projection: "all" as const }),
+    });
+    if (subcommand === "list") {
+      const visibleCatalog = {
+        ...catalog,
+        providers: catalog.providers.filter(
+          (provider) => provider.configured || provider.connected,
+        ),
+      };
+      if (parsed.format === "json") {
+        writeLine(io.stdout, JSON.stringify(visibleCatalog, null, 2));
+      } else if (visibleCatalog.providers.length === 0) {
+        writeLine(io.stdout, "No providers available.");
+      } else {
+        for (const provider of visibleCatalog.providers) {
+          const source = provider.credential.sourceLabel
+            ? ` · ${provider.credential.sourceLabel}`
+            : "";
+          writeLine(
+            io.stdout,
+            `${provider.id} · ${provider.credential.status}${source}`,
+          );
+          for (const model of provider.models) {
+            writeLine(
+              io.stdout,
+              `  ${model.selected ? "*" : "-"} ${model.ref}`,
+            );
+          }
+        }
+      }
+      return { exitCode: 0 };
+    }
+
+    const providerRef = parsed.target;
+    if (!providerRef) {
+      writeLine(io.stderr, providerUsage());
+      return { exitCode: 1 };
+    }
+    const provider = catalog.providers.find(
+      (entry) =>
+        entry.id === providerRef ||
+        entry.credential.id === providerRef ||
+        entry.connections?.some((connection) => connection.id === providerRef),
+    );
+    if (!provider) {
+      writeLine(
+        io.stderr,
+        `Unknown provider or credential profile: ${providerRef}`,
+      );
+      return { exitCode: 1 };
+    }
+
+    const context = {
+      workspaceRoot: parsed.workspaceRoot,
+      env,
+      includeProjectConfig,
+    };
+    if (subcommand === "connect") {
+      if (!io.readSecret) {
+        writeLine(
+          io.stderr,
+          "API key input is unavailable. Use --api-key-stdin or run from an interactive terminal.",
+        );
+        return { exitCode: 1 };
+      }
+      if (!parsed.apiKeyStdin && io.stdinIsTTY !== true) {
+        writeLine(
+          io.stderr,
+          "Non-interactive provider connect requires --api-key-stdin.",
+        );
+        return { exitCode: 1 };
+      }
+      const method = provider.authMethods?.find(
+        (candidate) => candidate.type === "api_key",
+      );
+      if (!method) {
+        writeLine(
+          io.stderr,
+          `Provider "${provider.id}" has no API-key connection method.`,
+        );
+        return { exitCode: 1 };
+      }
+      let secret = await io.readSecret(
+        parsed.apiKeyStdin
+          ? ""
+          : `${provider.displayName ?? provider.id} API key: `,
+      );
+      const result = await manager.submitSecret({
+        providerId: provider.id,
+        methodId: method.id,
+        secret,
+        context,
+      });
+      secret = "";
+      if (!result.ok) {
+        writeLine(io.stderr, result.message);
+        return { exitCode: 1 };
+      }
+      if (parsed.format === "json") {
+        writeLine(io.stdout, JSON.stringify(result, null, 2));
+      } else {
+        writeLine(
+          io.stdout,
+          `${result.connection.providerId} · ${result.connection.status} · ${result.connection.id}`,
+        );
+      }
+      return { exitCode: 0 };
+    }
+
+    if (subcommand === "login") {
+      const result = await manager.act(
+        "login",
+        provider.credential.id,
+        context,
+      );
+      if (!result.ok) {
+        writeLine(io.stderr, result.message);
+        return { exitCode: 1 };
+      }
+      if (parsed.format === "json") {
+        writeLine(
+          io.stdout,
+          JSON.stringify({ profile: result.profile }, null, 2),
+        );
+      } else {
+        writeLine(
+          io.stdout,
+          `${result.profile.providerId} · ${result.profile.status} · generation ${result.profile.generation}`,
+        );
+      }
+      return { exitCode: 0 };
+    }
+
+    const connection =
+      provider.connections?.find((candidate) => candidate.id === providerRef) ??
+      provider.connections?.find((candidate) => candidate.selected) ??
+      provider.connections?.[0];
+    if (!connection) {
+      writeLine(
+        io.stderr,
+        `Provider "${provider.id}" has no connection to ${subcommand}.`,
+      );
+      return { exitCode: 1 };
+    }
+    const result = await manager.manageConnection({
+      action: subcommand,
+      connectionId: connection.id,
+      context,
+    });
+    if (!result.ok) {
+      writeLine(io.stderr, result.message);
+      return { exitCode: 1 };
+    }
+    if (parsed.format === "json") {
+      writeLine(io.stdout, JSON.stringify(result, null, 2));
+    } else if (result.connection) {
+      writeLine(
+        io.stdout,
+        `${result.connection.providerId} · ${result.connection.status} · revision ${result.revision}`,
+      );
+    } else {
+      writeLine(
+        io.stdout,
+        `${connection.providerId} · ${subcommand} · revision ${result.revision}`,
+      );
+    }
+    return { exitCode: 0 };
+  } catch (error) {
+    writeLine(
+      io.stderr,
+      error instanceof Error ? error.message : String(error),
+    );
+    return { exitCode: 1 };
+  }
+}
+
+async function handleTrustCommand(
+  parsed: ParsedArgs,
+  io: CliIO,
+  manager: ProjectTrustManager,
+): Promise<CliRunResult> {
+  const subcommand = parsed.subcommand;
+  if (
+    subcommand !== "status" &&
+    subcommand !== "grant" &&
+    subcommand !== "revoke"
+  ) {
+    writeLine(io.stderr, trustUsage());
+    return { exitCode: 1 };
+  }
+  try {
+    const before = await manager.inspect(parsed.workspaceRoot);
+    if (subcommand === "status") {
+      renderProjectTrust(before, parsed.format, io);
+      return { exitCode: 0 };
+    }
+    const scopes = parsed.trustScopes;
+    const result =
+      subcommand === "grant"
+        ? await manager.grant({
+            workspaceRoot: parsed.workspaceRoot,
+            expectedManifestHash: before.manifestHash,
+            ...(scopes ? { scopes } : {}),
+          })
+        : await manager.revoke({
+            workspaceRoot: parsed.workspaceRoot,
+            ...(scopes ? { scopes } : {}),
+          });
+    if (!result.ok) {
+      writeLine(io.stderr, result.message);
+      if (result.snapshot && parsed.format === "json") {
+        writeLine(io.stderr, JSON.stringify(result.snapshot, null, 2));
+      }
+      return { exitCode: 1 };
+    }
+    renderProjectTrust(result.snapshot, parsed.format, io);
+    return { exitCode: 0 };
+  } catch (error) {
+    writeLine(
+      io.stderr,
+      error instanceof Error ? error.message : String(error),
+    );
+    return { exitCode: 1 };
+  }
+}
+
+function renderProjectTrust(
+  snapshot: Awaited<ReturnType<ProjectTrustManager["inspect"]>>,
+  format: ParsedArgs["format"],
+  io: CliIO,
+): void {
+  if (format === "json") {
+    writeLine(io.stdout, JSON.stringify(snapshot, null, 2));
+    return;
+  }
+  writeLine(io.stdout, `Project trust: ${snapshot.status}`);
+  writeLine(io.stdout, `Workspace: ${snapshot.canonicalWorkspaceRoot}`);
+  writeLine(io.stdout, `Manifest: ${snapshot.manifestHash}`);
+  for (const scope of snapshot.scopes) {
+    const effects = scope.effects.join(", ");
+    writeLine(
+      io.stdout,
+      `  ${scope.scope}: ${scope.status} · ${scope.fileCount} file(s) · ${effects}`,
+    );
+  }
 }
 
 async function handleToolsCommand(
@@ -1654,6 +1998,7 @@ async function handleWorkflowCommand(
   parsed: ParsedArgs,
   io: CliIO,
   env: Record<string, string | undefined>,
+  cliHostService: HostService,
 ): Promise<CliRunResult> {
   const subcommand = parsed.subcommand;
   if (
@@ -1687,7 +2032,7 @@ async function handleWorkflowCommand(
       return { exitCode: report.errors.length > 0 ? 1 : 0 };
     }
     if (subcommand === "service") {
-      return handleWorkflowServiceCommand(parsed, io, env);
+      return handleWorkflowServiceCommand(parsed, io, env, cliHostService);
     }
 
     if (subcommand === "start") {
@@ -2042,6 +2387,7 @@ async function handleWorkflowServiceCommand(
   parsed: ParsedArgs,
   io: CliIO,
   _env: Record<string, string | undefined>,
+  cliHostService: HostService,
 ): Promise<CliRunResult> {
   const action = firstCliWord(parsed.goal);
   const store = new FileWorkflowServiceStore({
@@ -2633,9 +2979,18 @@ async function resolveSkillRootsForCli(
   workspaceRoot: string,
   env: Record<string, string | undefined>,
 ): Promise<SkillRoot[]> {
-  const cfg = await loadHostConfig(workspaceRoot, env);
+  const trust = await new ProjectTrustManager({ env }).inspect(workspaceRoot);
+  const cfg = await loadHostConfig(workspaceRoot, env, {
+    projectMode: isProjectScopeTrusted(trust, "config")
+      ? "trusted"
+      : "restricted",
+  });
   const roots = cfg.config.capabilities?.skills?.roots;
-  const resolved = resolveSkillRootsForRuntime(workspaceRoot, roots, env);
+  const resolved = resolveSkillRootsForRuntime(workspaceRoot, roots, env, {
+    // Skill management is read-only inspection/validation. Runtime loading is
+    // gated separately during Host and Direct Core run preparation.
+    includeProject: true,
+  });
   return roots && roots.length > 0
     ? resolved
     : await existingSkillRoots(resolved);
@@ -3926,6 +4281,8 @@ function helpForArgs(
   const supportsNestedHelp = new Set([
     "agents",
     "capabilities",
+    "provider",
+    "trust",
     "config",
     "cron",
     "delegates",
@@ -3974,6 +4331,8 @@ function helpForArgs(
   if (command === "tasks") return tasksUsage();
   if (command === "workflow") return workflowUsage();
   if (command === "capabilities") return capabilitiesUsage();
+  if (command === "provider") return providerUsage();
+  if (command === "trust") return trustUsage();
   if (command === "delegates") return delegatesUsage();
   if (command === "skills") return skillsUsage();
   if (command === "agents") return agentsUsage();
@@ -4010,33 +4369,23 @@ function renderConfigSchemaDirective(): string {
 function renderUserConfigTemplate(): string {
   return [
     renderConfigSchemaDirective(),
-    "# Personal Sparkwright config. Keep API keys here; do not commit this file.",
+    "# Personal Sparkwright config. Do not commit this file.",
     "# Created by `sparkwright init` or the first interactive run.",
     "identity:",
     "  model: openai/gpt-5.4-mini",
     "  providers:",
     "    openai:",
     "      baseURL: https://api.openai.com/v1",
-    "      apiKey: REPLACE_WITH_YOUR_API_KEY",
-    "      models:",
-    "        gpt-5.4-mini: {}",
-    "        gpt-5.4: {}",
+    "      # Connect without storing a key here: sparkwright provider connect openai",
+    "      # Optional: a non-empty models map restricts the bundled catalog.",
     "",
     "    # anthropic:",
     "    #   npm: '@ai-sdk/anthropic'",
     "    #   baseURL: https://api.anthropic.com/v1",
-    "    #   apiKey: REPLACE_WITH_YOUR_API_KEY",
-    "    #   models:",
-    "    #     claude-sonnet-4-6: {}",
-    "    #     claude-haiku-4-5: {}",
     "",
     "    # google:",
     "    #   npm: '@ai-sdk/google'",
     "    #   baseURL: https://generativelanguage.googleapis.com/v1beta",
-    "    #   apiKey: REPLACE_WITH_YOUR_API_KEY",
-    "    #   models:",
-    "    #     gemini-3.1-pro: {}",
-    "    #     gemini-3-flash: {}",
     "",
     "# policy:",
     "#   confidentialDefaults: true",
@@ -4192,7 +4541,7 @@ async function scaffoldUserConfig(
   writeLine(io.stdout, `Created ${path}`);
   writeLine(
     io.stdout,
-    'Next: set "identity.providers.<provider>.apiKey", then run `sparkwright tui`.',
+    "Next: run `sparkwright provider connect openai`, or open the TUI and use `/connect`.",
   );
   writeLine(
     io.stdout,
@@ -4264,6 +4613,8 @@ function usage(_env: Record<string, string | undefined>): string {
     "       sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--access-mode read-only|ask|accept-edits|bypass] [--trace-level standard|debug] [--session-id id] [--no-alt-screen]",
     "       sparkwright acp [--workspace path] [--session-root path] [--model provider/model] [--access-mode read-only|ask|accept-edits|bypass] [--trace-level standard|debug]",
     "       sparkwright capabilities inspect [--workspace path] [--model provider/model] [--resolve-mcp] [--format json|text]",
+    "       sparkwright provider list|connect|disconnect|login|logout|remove|refresh [provider] [--api-key-stdin] [--workspace path] [--format json|text]",
+    "       sparkwright trust status|grant|revoke [--workspace path] [--scope scope] [--format json|text]",
     "       sparkwright doctor paths [--workspace path] [--session-root path] [--format json|text]",
     '       sparkwright cron create --schedule "every 1h" --prompt "task" [--name name]',
     "       sparkwright cron list|status|run|tick",
@@ -4286,6 +4637,26 @@ function usage(_env: Record<string, string | undefined>): string {
     "       sparkwright session <summary|inspect|check|repair|compact> <session-id> [--workspace path] [--session-root path] [--format json|text] [--apply] [--compaction]",
     '       sparkwright session resume <session-id> "next goal" [--workspace path] [--session-root path] [--target README.md] [--access-mode read-only|ask|accept-edits|bypass] [--model provider/model] [--verbose]',
     "       sparkwright run resume <run-id> [--session <session-id>] [--workspace path] [--session-root path] [--force] [--from-trace] [--model provider/model] [--verbose]",
+  ].join("\n");
+}
+
+function providerUsage(): string {
+  return [
+    "Usage: sparkwright provider list [--workspace path] [--format json|text]",
+    "       sparkwright provider connect <provider> [--api-key-stdin] [--workspace path]",
+    "       sparkwright provider disconnect <provider-or-connection> [--workspace path]",
+    "       sparkwright provider login <provider> [--workspace path]",
+    "       sparkwright provider logout <provider-or-connection> [--workspace path]",
+    "       sparkwright provider remove <provider-or-connection> [--workspace path]",
+    "       sparkwright provider refresh <provider-or-connection> [--workspace path]",
+  ].join("\n");
+}
+
+function trustUsage(): string {
+  return [
+    "Usage: sparkwright trust status [--workspace path] [--format json|text]",
+    "       sparkwright trust grant [--workspace path] [--scope config|commands|skills|agents|workflows] [--format json|text]",
+    "       sparkwright trust revoke [--workspace path] [--scope config|commands|skills|agents|workflows] [--format json|text]",
   ].join("\n");
 }
 

@@ -19,6 +19,8 @@ const installRoot = join(tempRoot, "install");
 const xdgConfigHome = join(tempRoot, "xdg-config");
 const xdgStateHome = join(tempRoot, "xdg-state");
 const installedBin = platformCommand(join(installRoot, "bin", "sparkwright"));
+const installedApp = join(installRoot, "current", "app");
+const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const smokeEnv = {
   HOME: homeDir,
   SPARKWRIGHT_INSTALL_ROOT: installRoot,
@@ -37,6 +39,9 @@ try {
   });
 
   assertExists(installedBin, "source install did not create bin/sparkwright");
+  run(npm, ["audit", "--omit=dev", "--audit-level=high"], installedApp, {
+    env: smokeEnv,
+  });
   assertDoctorPaths();
   assertHelp("tui", ["Usage:", "sparkwright tui"]);
   assertHelp("acp", ["USAGE:", "sparkwright acp"]);
@@ -97,6 +102,11 @@ function assertDoctorPaths() {
     paths.state.hostCrashes,
     join(xdgStateHome, "sparkwright", "host-crashes"),
     "host crash state root mismatch",
+  );
+  assertEqual(
+    paths.state.projectTrust,
+    join(xdgStateHome, "sparkwright", "project-trust.json"),
+    "project trust state path mismatch",
   );
   assertEqual(
     paths.state.imGateway.dataDir,

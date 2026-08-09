@@ -30,14 +30,24 @@ describe("ExecutionInteractionOperations", () => {
 
     const handle = operations.executionDriverHandle("execution_owner");
     expect(
-      handle?.tryInject({ runId: run.record.id, content: "follow up" }),
+      handle?.tryInject({
+        runId: run.record.id,
+        commandId: "command_follow_up",
+        mode: "steer",
+        content: "follow up",
+      }),
     ).toBe("accepted");
     expect(
       run.events.all().filter((event) => event.type === "run.command.enqueued"),
     ).toHaveLength(1);
-    expect(handle?.tryInject({ runId: run.record.id, content: "   " })).toBe(
-      "closed",
-    );
+    expect(
+      handle?.tryInject({
+        runId: run.record.id,
+        commandId: "command_blank",
+        mode: "steer",
+        content: "   ",
+      }),
+    ).toBe("closed");
 
     handle?.cancel("owner test");
     expect(execution.abortController.signal.reason).toBe("owner test");

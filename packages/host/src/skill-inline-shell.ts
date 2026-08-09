@@ -1,14 +1,11 @@
-import { resolve } from "node:path";
 import type { EventEmitter, RunId } from "@sparkwright/core";
 import type { InlineShellRunner } from "@sparkwright/skills";
 import {
   createPlatformShellSandboxRuntime,
-  enforceNoWriteShellSandbox,
-  extendShellSandboxReadAccess,
   ResolvedShellSandboxConfig,
   type ShellSandboxRuntime,
 } from "@sparkwright/shell-sandbox";
-import { TracedProcessRunner } from "./traced-process-runner.js";
+import { runGovernedInlineShell } from "./governed-inline-shell.js";
 
 export interface CreateSkillInlineShellRunnerOptions {
   emitter: EventEmitter;
@@ -21,7 +18,6 @@ export interface CreateSkillInlineShellRunnerOptions {
 export function createSkillInlineShellRunner(
   options: CreateSkillInlineShellRunnerOptions,
 ): InlineShellRunner {
-  const runner = new TracedProcessRunner();
   const sandboxRuntime =
     options.sandboxRuntime ?? createPlatformShellSandboxRuntime();
   return async ({
@@ -32,38 +28,26 @@ export function createSkillInlineShellRunner(
     timeoutMs,
     maxOutputChars,
   }) => {
-    const processCwd = cwd ? resolve(cwd) : process.cwd();
     // `runId` is typically absent here: inline-shell expansion runs during
     // pre-run capability preparation (before `createRun` mints the run id),
     // emitting onto a buffered emitter that is flushed once the run exists.
     // Without a run id no output artifact is materialized — acceptable because
     // inline-shell output is already capped to `maxOutputChars` and inlined
     // into the skill body, so an artifact would only duplicate that capped text.
-    const restrictedSandbox = await restrictSkillScriptSandbox(
-      options.sandbox,
-      options.workspaceRoot,
-      sandboxRuntime,
-    );
-    const sandbox = await sandboxWithSkillRead(restrictedSandbox, processCwd);
-    const result = await runner.run({
+    const result = await runGovernedInlineShell({
       emitter: options.emitter,
-      runId: options.runId,
+      ...(options.runId ? { runId: options.runId } : {}),
+      ...(options.workspaceRoot
+        ? { workspaceRoot: options.workspaceRoot }
+        : {}),
+      ...(options.sandbox ? { sandbox: options.sandbox } : {}),
+      sandboxRuntime,
       name: "skill-inline-shell",
       kind: "skill_script",
-      runtime: "shell",
-      command: "bash",
-      args: ["-c", command],
-      cwd: processCwd,
-      cwdBase: options.workspaceRoot,
+      command,
+      ...(cwd ? { cwd } : {}),
       timeoutMs,
-      sandbox,
-      sandboxRuntime,
-      outputLimits: {
-        previewBytes: maxOutputChars,
-        artifactBytes: maxOutputChars,
-        maxStdoutBytes: maxOutputChars,
-        maxStderrBytes: maxOutputChars,
-      },
+      maxOutputBytes: maxOutputChars,
     });
 
     if (result.timedOut || result.error || result.exitCode !== 0) {
@@ -123,26 +107,6 @@ function inlineShellFailureMarker(
       ? ""
       : ` exitCode=${result.exitCode}`;
   return `[inline-shell error: ${code}${exit}]`;
-}
-
-async function restrictSkillScriptSandbox(
-  sandbox: ResolvedShellSandboxConfig | undefined,
-  workspaceRoot: string | undefined,
-  runtime: ShellSandboxRuntime,
-): Promise<ResolvedShellSandboxConfig | undefined> {
-  if (!sandbox) return undefined;
-  return enforceNoWriteShellSandbox(sandbox, {
-    runtime,
-    denyWriteRoots: workspaceRoot ? [workspaceRoot] : [],
-  });
-}
-
-async function sandboxWithSkillRead(
-  sandbox: ResolvedShellSandboxConfig | undefined,
-  skillDir: string,
-): Promise<ResolvedShellSandboxConfig | undefined> {
-  if (!sandbox) return undefined;
-  return extendShellSandboxReadAccess(sandbox, [skillDir]);
 }
 
 function normalizeInlineShellOutput(

@@ -9,6 +9,17 @@ See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runti
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-08-08
+- Scope: Extension tools that reach the Host catalog are wrapped by the
+  existing workspace mutation lease path. Extension governance defaults do not
+  create write authority: read-only access still hard-denies mutation, and
+  managed workspace changes still require the canonical workspace APIs.
+- Read: Core Extension tool normalization, Host catalog lease wrapping, run
+  access/policy boundaries, and focused integration coverage.
+- Tests: Core Extension 8/8, Host Extension 4/4, full Host 566/566, and full
+  `npm run release:check` passed.
+
 - Status: Read-only
 - Date: 2026-08-02
 - Scope: existing Skill updates now use ordinary controlled workspace edits;

@@ -4083,10 +4083,20 @@ function validateShared(
   return { config, sources, errors };
 }
 
+export interface LoadHostConfigOptions {
+  /**
+   * `restricted` keeps only project values that can tighten safety or affect
+   * local presentation. Executable/outbound project configuration is omitted
+   * until the Host has pinned and trusted that config manifest.
+   */
+  projectMode?: "trusted" | "restricted";
+}
+
 /** Load + merge the shared config fields across the resolution order. */
 export async function loadHostConfig(
   cwd: string,
   env: Record<string, string | undefined> = process.env,
+  options: LoadHostConfigOptions = {},
 ): Promise<LoadedSharedConfig> {
   const order = configLayerResolutionOrder(cwd, env);
   const merged: SharedConfig = {};
@@ -4130,6 +4140,25 @@ export async function loadHostConfig(
     }
     const v = validateShared(r.value, `${label}:${path}`, path, label);
     errors.push(...v.errors);
+    if (label === "project" && options.projectMode === "restricted") {
+      const restricted = restrictUntrustedProjectConfig(v.config);
+      if (restricted.removedFields.length > 0) {
+        warnings.push({
+          file: path,
+          field: "(projectTrust)",
+          message: `ignored until this project capability manifest is trusted: ${restricted.removedFields.join(", ")}`,
+        });
+      }
+      v.config = restricted.config;
+      if (v.config.model === undefined) delete v.sources.model;
+      if (v.config.providers === undefined) delete v.sources.providers;
+      if (v.config.workspace === undefined) delete v.sources.workspace;
+      if (v.config.shell === undefined) delete v.sources.shell;
+      if (v.config.tasks === undefined) delete v.sources.tasks;
+      if (v.config.runBudget === undefined) delete v.sources.runBudget;
+      if (v.config.maxSteps === undefined) delete v.sources.maxSteps;
+      if (v.config.traceLevel === undefined) delete v.sources.traceLevel;
+    }
     if (v.config.workspace !== undefined) {
       v.config.workspace = isAbsolute(v.config.workspace)
         ? v.config.workspace
@@ -4309,6 +4338,95 @@ export async function loadHostConfig(
   }
 
   return { config: merged, sources, attempted, errors, warnings };
+}
+
+function restrictUntrustedProjectConfig(input: SharedConfig): {
+  config: SharedConfig;
+  removedFields: string[];
+} {
+  const config: SharedConfig = {};
+  const removedFields: string[] = [];
+  const preserve = <K extends keyof SharedConfig>(key: K): void => {
+    if (input[key] !== undefined) config[key] = input[key];
+  };
+
+  preserve("accessMode");
+  preserve("backgroundTasks");
+  preserve("confidentialPaths");
+  preserve("write");
+  preserve("theme");
+  preserve("mouse");
+  preserve("keybindings");
+  preserve("vim");
+  if (input.confidentialDefaults === true) config.confidentialDefaults = true;
+
+  if (input.tools) {
+    const { defer: _defer, ...tighteningTools } = input.tools;
+    if (Object.keys(tighteningTools).length > 0) config.tools = tighteningTools;
+    if (input.tools.defer !== undefined) removedFields.push("tools.defer");
+  }
+
+  const sandbox = restrictiveProjectSandbox(input.shell?.sandbox);
+  if (sandbox) config.shell = { sandbox };
+  if (input.shell) {
+    const shellKeys = Object.keys(input.shell).filter(
+      (key) => key !== "sandbox",
+    );
+    removedFields.push(...shellKeys.map((key) => `shell.${key}`));
+    if (input.shell.sandbox && !sandbox) removedFields.push("policy.sandbox");
+  }
+
+  if (input.capabilities?.web?.security === "hardened") {
+    config.capabilities = { web: { security: "hardened" } };
+  }
+
+  for (const field of [
+    "model",
+    "providers",
+    "workspace",
+    "tasks",
+    "runBudget",
+    "maxSteps",
+    "traceLevel",
+  ] as const) {
+    if (input[field] !== undefined) removedFields.push(field);
+  }
+  if (input.capabilities) {
+    for (const key of Object.keys(input.capabilities)) {
+      if (key === "web" && input.capabilities.web?.security === "hardened") {
+        continue;
+      }
+      removedFields.push(`capabilities.${key}`);
+    }
+  }
+  if (input.confidentialDefaults === false) {
+    removedFields.push("policy.confidentialDefaults=false");
+  }
+  return { config, removedFields: [...new Set(removedFields)].sort() };
+}
+
+function restrictiveProjectSandbox(
+  input: ShellSandboxConfig | undefined,
+): ShellSandboxConfig | undefined {
+  if (!input) return undefined;
+  const filesystem = input.filesystem
+    ? {
+        ...(input.filesystem.denyRead?.length
+          ? { denyRead: [...input.filesystem.denyRead] }
+          : {}),
+        ...(input.filesystem.denyWrite?.length
+          ? { denyWrite: [...input.filesystem.denyWrite] }
+          : {}),
+        ...(input.filesystem.tmp === false ? { tmp: false } : {}),
+      }
+    : undefined;
+  const out: ShellSandboxConfig = {
+    ...(input.mode === "enforce" ? { mode: "enforce" } : {}),
+    ...(input.failIfUnavailable === true ? { failIfUnavailable: true } : {}),
+    ...(filesystem && Object.keys(filesystem).length > 0 ? { filesystem } : {}),
+    ...(input.network?.mode === "deny" ? { network: { mode: "deny" } } : {}),
+  };
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /** Split a "provider/model" reference. No slash → modelId is empty. */

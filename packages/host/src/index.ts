@@ -17,6 +17,7 @@ export {
 export type {
   Connection,
   HostConnectionAuthContext,
+  HostConnectionAuthority,
   HostConnectionPrincipalKind,
 } from "./connection.js";
 export { createStdioConnection } from "./transport-stdio.js";
@@ -27,6 +28,39 @@ export { installCrashLog } from "./crash-log.js";
 export { runHostMain } from "./main.js";
 export { buildConfiguredAdapter } from "./model-builder.js";
 export type { BuildAdapterInput } from "./model-builder.js";
+export {
+  ProviderAuthManager,
+  normalizeProviderEndpoint,
+  providerAuthStatePath,
+} from "./provider-auth.js";
+export type {
+  ProviderAuthAction,
+  ProviderAuthContext,
+  ProviderAuthManagerOptions,
+  ProviderCredentialLease,
+} from "./provider-auth.js";
+export {
+  FileProviderCredentialStore,
+  MacOsKeychainCredentialStore,
+  MemoryProviderCredentialStore,
+  createProviderCredentialStore,
+  providerCredentialFilePath,
+} from "./provider-credential-store.js";
+export type {
+  ProviderCredentialStore,
+  ProviderCredentialStoreOptions,
+} from "./provider-credential-store.js";
+export {
+  PROJECT_TRUST_SCOPES,
+  ProjectTrustManager,
+  isProjectScopeTrusted,
+  projectTrustStatePath,
+  summarizeProjectTrust,
+} from "./project-trust.js";
+export type {
+  ProjectTrustManagerOptions,
+  ProjectTrustMutationResult,
+} from "./project-trust.js";
 export { runConfiguredDelegate } from "./delegate-runner.js";
 export type {
   RunConfiguredDelegateInput,
@@ -60,6 +94,7 @@ export {
   assertCodingToolsCoveredByWorkspaceSelectors,
   formatToolUseSelectorList,
   intersectToolUseSelectors,
+  isExtensionSelector,
   isToolUseSelector,
   resolveSelectorAllowlist,
   shouldAppendDiscoveryTool,

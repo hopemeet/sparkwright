@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://sparkwright.dev/schemas/v0/host-message.schema.json",
   "x-sparkwrightProtocolVersion": "0.2",
+  "x-sparkwrightHostProtocolVersion": "2.0",
   "title": "Sparkwright Host Message",
   "description": "Wire envelope for all messages exchanged between a Sparkwright host (server-runtime + transport) and a client (TUI, web SDK, etc). Newline-delimited JSON over stdio or one message per WebSocket frame. Every message is one of: request (client→host, expects response), response (host→client, paired with a request by id), or event (host→client, fire-and-forget). The host protocol is versioned via the top-level `protocolVersion` field on the handshake; compatible additions retain the major version and breaking changes increment it. See docs/HOST_PROTOCOL.md.",
   "oneOf": [
@@ -56,6 +57,20 @@
             "workflow.resume",
             "workflow.control",
             "workflow.control.process",
+            "provider.list",
+            "provider.auth.methods",
+            "provider.auth.submit_secret",
+            "provider.auth.login",
+            "provider.auth.logout",
+            "provider.auth.refresh",
+            "provider.connection.select",
+            "provider.connection.disconnect",
+            "provider.connection.logout",
+            "provider.connection.remove",
+            "provider.connection.refresh",
+            "project.trust.inspect",
+            "project.trust.grant",
+            "project.trust.revoke",
             "capability.inspect"
           ]
         },
@@ -93,6 +108,36 @@
           "then": {
             "properties": {
               "payload": { "$ref": "#/$defs/RunCancelRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "kind": { "const": "project.trust.inspect" } }
+          },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/ProjectTrustInspectRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "kind": { "const": "project.trust.grant" } }
+          },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/ProjectTrustGrantRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "kind": { "const": "project.trust.revoke" } }
+          },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/ProjectTrustRevokeRequestPayload" }
             }
           }
         },
@@ -291,6 +336,95 @@
           }
         },
         {
+          "if": { "properties": { "kind": { "const": "provider.list" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/ProviderListRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "kind": { "const": "provider.auth.methods" } }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/ProviderAuthMethodsRequestPayload"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": { "const": "provider.auth.submit_secret" }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/ProviderSecretSubmitRequestPayload"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "provider.auth.login",
+                  "provider.auth.logout",
+                  "provider.auth.refresh"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/ProviderAuthActionRequestPayload"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": { "const": "provider.connection.select" }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/ProviderConnectionSelectRequestPayload"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "provider.connection.disconnect",
+                  "provider.connection.logout",
+                  "provider.connection.remove",
+                  "provider.connection.refresh"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/ProviderConnectionActionRequestPayload"
+              }
+            }
+          }
+        },
+        {
           "if": {
             "properties": { "kind": { "const": "capability.inspect" } }
           },
@@ -360,6 +494,7 @@
             "run.event",
             "task.updated",
             "approval.requested",
+            "run.follow_up.updated",
             "run.continuation",
             "run.completed",
             "run.failed"
@@ -409,6 +544,16 @@
           }
         },
         {
+          "if": {
+            "properties": { "kind": { "const": "run.follow_up.updated" } }
+          },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/RunFollowUpUpdatedEventPayload" }
+            }
+          }
+        },
+        {
           "if": { "properties": { "kind": { "const": "run.continuation" } } },
           "then": {
             "properties": {
@@ -448,6 +593,8 @@
             "approval_not_found",
             "session_not_found",
             "task_not_found",
+            "project_trust_required",
+            "project_trust_changed",
             "unauthorized",
             "conflict",
             "capacity",
@@ -502,6 +649,20 @@
       "required": ["goal"],
       "properties": {
         "goal": { "type": "string", "minLength": 1 },
+        "projectCommand": {
+          "type": "object",
+          "required": ["name"],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+            },
+            "rest": { "type": "string" }
+          },
+          "additionalProperties": false,
+          "description": "File-authored command identity resolved by the Host; clients never provide the command body."
+        },
         "input": { "$ref": "#/$defs/RunInputPayload" },
         "sessionId": { "type": "string", "minLength": 1 },
         "controlSessionId": {
@@ -616,6 +777,8 @@
       "required": ["runId", "content"],
       "properties": {
         "runId": { "type": "string", "minLength": 1 },
+        "commandId": { "type": "string", "minLength": 1 },
+        "mode": { "enum": ["steer", "follow_up"] },
         "content": { "type": "string", "minLength": 1 },
         "input": { "$ref": "#/$defs/RunInputPayload" },
         "metadata": { "type": "object" }
@@ -809,7 +972,23 @@
       "required": ["sourceSessionId"],
       "properties": {
         "sourceSessionId": { "type": "string", "minLength": 1 },
+        "forkPoint": {
+          "type": "object",
+          "required": ["runId", "position"],
+          "properties": {
+            "runId": { "type": "string", "minLength": 1 },
+            "position": { "enum": ["before", "after"] }
+          },
+          "additionalProperties": false
+        },
         "forkAtSequence": { "type": "integer", "minimum": 1 }
+      },
+      "not": {
+        "required": ["forkPoint", "forkAtSequence"],
+        "properties": {
+          "forkPoint": {},
+          "forkAtSequence": {}
+        }
       },
       "additionalProperties": false
     },
@@ -1080,6 +1259,232 @@
       },
       "additionalProperties": false
     },
+    "ProviderListRequestPayload": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional request-scoped model selection shown by clients."
+        },
+        "projection": {
+          "type": "string",
+          "enum": ["all", "connected", "available"],
+          "description": "Optional provider/model projection. Omitted preserves legacy configured-provider listing."
+        }
+      },
+      "additionalProperties": false
+    },
+    "ProviderAuthActionRequestPayload": {
+      "type": "object",
+      "required": ["profileId"],
+      "properties": {
+        "profileId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Host-issued opaque credential profile identifier; never credential material."
+        }
+      },
+      "additionalProperties": false
+    },
+    "ProviderAuthMethodsRequestPayload": {
+      "type": "object",
+      "required": ["providerId"],
+      "properties": {
+        "providerId": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "ProviderConnectionGrantScope": {
+      "type": "string",
+      "enum": ["workspace", "user"]
+    },
+    "ProviderSecretSubmitRequestPayload": {
+      "type": "object",
+      "required": ["providerId", "methodId", "secret"],
+      "properties": {
+        "providerId": { "type": "string", "minLength": 1 },
+        "methodId": { "type": "string", "minLength": 1 },
+        "secret": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 65536,
+          "pattern": "^[^\\x00-\\x1F\\x7F]+$"
+        },
+        "grantScope": {
+          "$ref": "#/$defs/ProviderConnectionGrantScope"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ProviderConnectionActionRequestPayload": {
+      "type": "object",
+      "required": ["connectionId"],
+      "properties": {
+        "connectionId": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "ProviderConnectionSelectRequestPayload": {
+      "type": "object",
+      "required": ["connectionId"],
+      "properties": {
+        "connectionId": { "type": "string", "minLength": 1 },
+        "grantScope": {
+          "$ref": "#/$defs/ProviderConnectionGrantScope"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ProjectTrustScope": {
+      "type": "string",
+      "enum": ["config", "commands", "skills", "agents", "workflows"]
+    },
+    "ProjectTrustInspectRequestPayload": {
+      "type": "object",
+      "additionalProperties": false
+    },
+    "ProjectTrustGrantRequestPayload": {
+      "type": "object",
+      "required": ["expectedManifestHash"],
+      "properties": {
+        "expectedManifestHash": { "type": "string", "minLength": 1 },
+        "scopes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ProjectTrustScope" },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "ProjectTrustRevokeRequestPayload": {
+      "type": "object",
+      "properties": {
+        "scopes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ProjectTrustScope" },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "ProjectTrustScopeSnapshot": {
+      "type": "object",
+      "required": ["scope", "status", "effects", "fileCount", "byteCount"],
+      "properties": {
+        "scope": { "$ref": "#/$defs/ProjectTrustScope" },
+        "status": {
+          "enum": ["not_present", "untrusted", "trusted", "changed", "invalid"]
+        },
+        "effects": {
+          "type": "array",
+          "items": {
+            "enum": ["runtime_configuration", "process", "network"]
+          },
+          "uniqueItems": true
+        },
+        "fileCount": { "type": "integer", "minimum": 0 },
+        "byteCount": { "type": "integer", "minimum": 0 },
+        "manifestHash": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "trustedManifestHash": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "grantedAt": { "$ref": "#/$defs/Timestamp" },
+        "reason": {
+          "enum": ["symlink_not_allowed", "limit_exceeded", "read_failed"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "ProjectTrustSnapshot": {
+      "type": "object",
+      "required": [
+        "canonicalWorkspaceRoot",
+        "workspaceId",
+        "status",
+        "manifestHash",
+        "scopes"
+      ],
+      "properties": {
+        "canonicalWorkspaceRoot": { "type": "string", "minLength": 1 },
+        "workspaceId": {
+          "type": "string",
+          "pattern": "^workspace_[a-f0-9]{20}$"
+        },
+        "status": {
+          "enum": ["not_required", "untrusted", "trusted", "changed", "invalid"]
+        },
+        "manifestHash": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "scopes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ProjectTrustScopeSnapshot" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ProviderCredentialProfileSummary": {
+      "type": "object",
+      "required": ["id", "providerId", "status", "generation"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "providerId": { "type": "string", "minLength": 1 },
+        "status": {
+          "type": "string",
+          "enum": ["ready", "missing", "logged_out"]
+        },
+        "source": { "type": "string", "enum": ["environment", "config"] },
+        "sourceLabel": { "type": "string", "minLength": 1 },
+        "generation": { "type": "integer", "minimum": 0 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "ProviderCatalogModel": {
+      "type": "object",
+      "required": ["ref", "providerId", "modelId", "selected"],
+      "properties": {
+        "ref": { "type": "string", "minLength": 1 },
+        "providerId": { "type": "string", "minLength": 1 },
+        "modelId": { "type": "string", "minLength": 1 },
+        "selected": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "ProviderCatalogEntry": {
+      "type": "object",
+      "required": ["id", "npm", "models", "credential"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "npm": { "type": "string", "minLength": 1 },
+        "models": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ProviderCatalogModel" }
+        },
+        "credential": {
+          "$ref": "#/$defs/ProviderCredentialProfileSummary"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ProviderCatalogSnapshot": {
+      "type": "object",
+      "required": ["providers"],
+      "properties": {
+        "selectedModel": { "type": "string", "minLength": 1 },
+        "providers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ProviderCatalogEntry" }
+        }
+      },
+      "additionalProperties": false
+    },
     "CapabilityInspectRequestPayload": {
       "type": "object",
       "properties": {
@@ -1146,6 +1551,10 @@
         "tools": {
           "type": "array",
           "items": { "$ref": "#/$defs/CapabilityToolSummary" }
+        },
+        "extensions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/CapabilityExtensionSummary" }
         },
         "skills": {
           "type": "object",
@@ -1234,7 +1643,8 @@
           },
           "additionalProperties": false
         },
-        "automation": { "$ref": "#/$defs/CapabilityAutomationSummary" }
+        "automation": { "$ref": "#/$defs/CapabilityAutomationSummary" },
+        "projectTrust": { "$ref": "#/$defs/ProjectTrustSnapshot" }
       },
       "additionalProperties": false
     },
@@ -1423,6 +1833,33 @@
         "requiresTool": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 }
+        }
+      },
+      "additionalProperties": false
+    },
+    "CapabilityExtensionSummary": {
+      "type": "object",
+      "required": ["id", "context", "tools"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "context": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "description": { "type": "string" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "tools": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
         }
       },
       "additionalProperties": false
@@ -1841,6 +2278,19 @@
         "previousRunId": { "type": "string", "minLength": 1 },
         "continuationCount": { "type": "integer", "minimum": 1 },
         "reason": { "const": "workflow_record_active" }
+      },
+      "additionalProperties": false
+    },
+    "RunFollowUpUpdatedEventPayload": {
+      "type": "object",
+      "required": ["commandId", "previousRunId", "sessionId", "status"],
+      "properties": {
+        "commandId": { "type": "string", "minLength": 1 },
+        "previousRunId": { "type": "string", "minLength": 1 },
+        "sessionId": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["started", "rejected"] },
+        "runId": { "type": "string", "minLength": 1 },
+        "message": { "type": "string" }
       },
       "additionalProperties": false
     },

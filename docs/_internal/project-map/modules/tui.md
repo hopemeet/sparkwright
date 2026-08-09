@@ -11,6 +11,91 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-09
+- Scope: P6.2 adds `/connect` with provider, auth-method, masked credential,
+  and post-connect model stages. It consumes Host catalog/method DTOs, clears
+  component secret state before submission, polls catalog revisions while the
+  connection/model dialogs are open, and keeps `/model` limited to available
+  connections.
+- Read: ConnectDialog, layer stack/renderer, command registry, App catalog
+  polling, RunController SDK bridge, and focused Ink/SDK tests.
+- Tests: focused connect/model/command/SDK coverage passed 28/28; full
+  `npm run release:check` passed with TUI 553/553, Host 602/602, CLI 175/175,
+  16/16 regression cases, and both install smokes.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: TUI adds `/trust` as an explicit two-step local decision surface and
+  rechecks command trust before dispatch. Untrusted project command bodies are
+  not parsed into the TUI registry, and granting trust never auto-runs the
+  pending command.
+- Read: trust dialog/layer, command registry, app dispatch, RunController SDK
+  bridge, config boot, and project-command discovery.
+- Tests: full TUI suite passed 85 files / 552 tests together with focused trust
+  UI coverage, SDK, Host protocol, schema, real Host trust, and release gates.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: P4 interaction polish keeps `/model` selection anchored by stable
+  model ref while the asynchronous Host catalog replaces/reorders fallback
+  candidates, windows long catalogs around the active model, expands provider
+  auth shortcut labels, and keeps candidates visible during catalog loading.
+  Pending-run presentation now consumes the existing structured QueueStore
+  snapshot and labels Host follow-ups, project commands, and local next goals
+  instead of flattening them into indistinguishable strings. Fork, session,
+  slash-command, and model lists share one cursor-window helper.
+- Read: ModelDialog, QueueStore/QueuedMessages/LiveFrame, shared list-window
+  helper and consumers, focused Ink tests, and real PTY/provider traces.
+- Tests: focused interaction/render tests 44/44; full TUI 550/550; TUI
+  typecheck/build/format; real 80-column `/model`; real 110-column steering and
+  follow-up; trace verification for `session_tui_msketbne` reported 0 findings;
+  full `npm run release:check` passed, including the 16-case regression matrix
+  and source/release install smokes.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: while a main run is active, plain prompt submission steers through
+  the Host instead of silently becoming another run. `/followup <goal>` queues
+  an explicit same-session next run; the existing QueueStore is retained as
+  presentation/fallback state and never double-starts Host-owned entries.
+- Read: App submission routing, RunController interaction methods/events,
+  QueueStore, command registry, composer copy, and focused tests.
+- Tests: focused controller/queue/registry coverage, TUI typecheck, the full TUI
+  suite (547/547), and full `npm run release:check` passed.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: `/model` now consumes the Host provider catalog, marks selected models
+  and credential readiness, and dispatches login/logout/refresh through SDK
+  methods. TUI Host connections explicitly opt into cancelable interactive
+  credential refresh.
+- Read: App layer state, ModelDialog, LayerRenderer, RunController SDK client,
+  and focused render/protocol tests.
+- Tests: full workspace regression passed, including TUI 544/544 and the
+  ModelDialog/auth-phase coverage; release regression and install smokes passed.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: TUI project commands are presentation and dispatch only. The TUI no
+  longer imports `node:child_process`, interpolates command bodies, or executes
+  shell; it queues `{ goal, projectCommand }` and sends only command identity
+  plus the rest-of-line to Host.
+- Read: project-command adapter, App dispatch/queue bridge, QueueStore, and
+  RunController protocol request.
+- Tests: full `npm run release:check` passed, including TUI 541/541 and the real
+  TUI -> SDK -> Host project-command regression.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: the fork dialog now lists main-agent conversation turns and sends
+  stable run boundaries. Enter forks after the selected turn; `e` forks before
+  it and prefills the selected goal. Full clone remains available.
+- Read: fork dialog, session actions, RunController/SDK flow, persisted replay,
+  and Host fork continuation.
+- Tests: fork dialog extraction/windowing, active-session mutation guards, and
+  real Host fork/switch/continue regression passed.
+
+- Status: Verified
 - Date: 2026-08-07
 - Scope: committed assistant Markdown now retains blank separator lines while
   crossing the presentation-to-document boundary, so paragraphs, emphasized
@@ -455,6 +540,10 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 
 - `packages/tui/src/app.tsx`
 - `packages/tui/src/components/input-box.tsx`
+- `packages/tui/src/components/model-dialog.tsx`
+- `packages/tui/src/components/queued-messages.tsx`
+- `packages/tui/src/components/fork-dialog.tsx`
+- `packages/tui/src/components/session-list-dialog.tsx`
 - `packages/tui/src/components/use-input-buffer.ts`
 - `packages/tui/src/components/use-input-history.ts`
 - `packages/tui/src/components/live-frame.tsx`
@@ -470,12 +559,14 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 - `packages/tui/src/state/approval-coordinator.ts`
 - `packages/tui/src/state/notification-store.ts`
 - `packages/tui/src/state/event-store.ts`
+- `packages/tui/src/state/queue-store.ts`
 - `packages/tui/src/state/layer-stack.ts`
 - `packages/tui/src/state/transcript-viewport-state.ts`
 - `packages/tui/src/lib/approval-view-model.ts`
 - `packages/tui/src/lib/ui-signal.ts`
 - `packages/tui/src/lib/interaction-router.ts`
 - `packages/tui/src/lib/commands.ts`
+- `packages/tui/src/lib/list-window.ts`
 - `packages/tui/src/lib/task-activity.ts`
 - `packages/tui/src/lib/tool-display.ts`
 - `packages/tui/src/lib/transcript-presentation.ts`
@@ -547,6 +638,16 @@ Does not own:
   and is not canonical waiting state.
 
 - `RunController` sends `run.start` with the current `sessionId`.
+- During an active main run, App sends ordinary composer submissions through
+  `RunController.steer()`. `/followup` uses `RunController.followUp()` and keeps
+  the Host command visible until `run.follow_up.updated`; QueueStore drains only
+  TUI-owned fallback/project-command entries. Its presentation snapshot keeps
+  the same structured identity, so the live frame labels `follow-up`,
+  `command`, and `next` without inventing a second queue model.
+- Model selection is keyed by the stable model ref rather than the provider
+  catalog array index. Asynchronous catalog refresh may reorder candidates but
+  must not move the visual/auth target away from the active model. All bounded
+  cursor lists use `windowAroundCursor()` so the active item remains visible.
 - Todo-supervisor continuation notices are transcript-native and label the
   preceding assistant answer as provisional before showing the continuation
   count; committed assistant blocks remain stable and are not rewritten.
@@ -618,6 +719,9 @@ Does not own:
   client input helpers own image MIME detection, size limits, base64 part
   construction, and attachment metadata shared with CLI.
 - `switchSession()` reloads persisted events from session trace and replays them into TUI state.
+- Fork turn selection ignores child-agent `run.started` events. It sends
+  `{ runId, position: "after" }` for Enter and `position: "before"` for
+  fork-and-edit; it never treats `RunEvent.sequence` as a session boundary.
 - `/compact` calls host `session.compact`; success toasts use
   `compactedRunCount`/char savings, while skipped outcomes surface
   `skippedReason` and the first warning message instead of assuming zero runs

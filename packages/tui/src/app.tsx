@@ -32,10 +32,7 @@ import { useTaskActions } from "./state/use-task-actions.js";
 import { useWorkflowActions } from "./state/use-workflow-actions.js";
 import { buildCommandRegistry } from "./state/build-command-registry.js";
 import type { ProjectCommandDescriptor } from "@sparkwright/project-commands";
-import {
-  loadProjectCommands,
-  resolveProjectCommandIntent,
-} from "./lib/project-commands.js";
+import { loadProjectCommands } from "./lib/project-commands.js";
 import {
   DEFAULTS as DEFAULT_BINDINGS,
   isPlainEscapeChord,
@@ -45,7 +42,13 @@ import {
   InteractionRouter,
   type InteractionAction,
 } from "./lib/interaction-router.js";
-import type { PermissionMode, TraceLevel } from "@sparkwright/protocol";
+import type {
+  PermissionMode,
+  ProviderCatalogSnapshot,
+  ProjectCommandReference,
+  ProjectTrustSnapshot,
+  TraceLevel,
+} from "@sparkwright/protocol";
 import {
   loadTuiConfig,
   watchTuiConfig,
@@ -198,7 +201,8 @@ export function App(props: AppProps): React.ReactElement {
 
   useEffect(() => {
     let cancelled = false;
-    void loadTuiConfig(props.initialCwd).then((loaded) => {
+    const configRoot = props.cliOverrides.workspaceRoot ?? props.initialCwd;
+    void loadTuiConfig(configRoot).then((loaded) => {
       if (cancelled) return;
       const r = resolveConfig(loaded, props.cliOverrides, props.initialCwd);
       setResolved(r);
@@ -301,6 +305,32 @@ function AppReady(
     modelName?: string;
   } | null>(null);
   const effModel = modelOverride ? modelOverride.modelName : resolved.modelName;
+  const [providerCatalog, setProviderCatalog] =
+    useState<ProviderCatalogSnapshot | null>(null);
+  const [loadingProviders, setLoadingProviders] = useState(false);
+  const [projectTrust, setProjectTrust] = useState<ProjectTrustSnapshot | null>(
+    null,
+  );
+  const [loadingProjectTrust, setLoadingProjectTrust] = useState(false);
+  useEffect(() => {
+    if (topLayer?.name !== "model" && topLayer?.name !== "connect") return;
+    let cancelled = false;
+    const projection = topLayer.name === "connect" ? "all" : "available";
+    const load = async () => {
+      const catalog = await controller.listProviders(effModel, projection);
+      if (cancelled) return;
+      setProviderCatalog(catalog);
+      setLoadingProviders(false);
+    };
+    setLoadingProviders(true);
+    void load();
+    const poll = setInterval(() => void load(), 1_000);
+    poll.unref?.();
+    return () => {
+      cancelled = true;
+      clearInterval(poll);
+    };
+  }, [controller, effModel, topLayer?.name]);
   const [permissionModeOverride, setPermissionModeOverride] =
     useState<TuiPermissionMode | null>(null);
   const requestedEffTuiPermissionMode =
@@ -474,7 +504,8 @@ function AppReady(
   }, [resolved.errors, toasts]);
 
   async function reloadConfig(verbose: boolean): Promise<void> {
-    const loaded = await loadTuiConfig(props.initialCwd);
+    const configRoot = props.cliOverrides.workspaceRoot ?? props.initialCwd;
+    const loaded = await loadTuiConfig(configRoot);
     const r = resolveConfig(loaded, props.cliOverrides, props.initialCwd);
     if (!modelOverride && r.modelName !== resolved.modelName) {
       controller.updateModel(r.modelName, r.modelNameSource);
@@ -555,7 +586,8 @@ function AppReady(
 
   useEffect(() => {
     if (!isRawModeSupported) return;
-    const dispose = watchTuiConfig(props.initialCwd, () => {
+    const configRoot = props.cliOverrides.workspaceRoot ?? props.initialCwd;
+    const dispose = watchTuiConfig(configRoot, () => {
       void reloadConfig(true);
     });
     return dispose;
@@ -580,26 +612,79 @@ function AppReady(
     };
   }, [resolved.workspaceRoot]);
 
-  // Keep a live ref to handleSubmit so project commands (captured in the memo)
-  // always submit through the current render's queue/run state, not a stale one.
-  const submitRef = useRef<(value: string) => void>(() => {});
+  const projectSubmitRef = useRef<
+    (goal: string, command: ProjectCommandReference) => void
+  >(() => {});
   useEffect(() => {
-    submitRef.current = handleSubmit;
+    projectSubmitRef.current = submitProjectCommand;
   });
 
   function runProjectCommand(
     descriptor: ProjectCommandDescriptor,
     rest: string,
   ): void {
-    void resolveProjectCommandIntent(descriptor, rest, resolved.workspaceRoot)
-      .then((intent) => submitRef.current(intent.prompt))
-      .catch((error: unknown) => {
-        toasts.push({
-          variant: "error",
-          title: `/${descriptor.name} failed`,
-          message: error instanceof Error ? error.message : String(error),
-        });
+    void (async () => {
+      if (descriptor.source === "project") {
+        const snapshot =
+          projectTrust ?? (await controller.inspectProjectTrust());
+        if (snapshot) setProjectTrust(snapshot);
+        const commandsTrusted = snapshot?.scopes.some(
+          (scope) =>
+            scope.scope === "commands" &&
+            (scope.status === "trusted" || scope.status === "not_present"),
+        );
+        if (!commandsTrusted) {
+          layers.push("trust");
+          toasts.push({
+            variant: "warning",
+            title: "project trust required",
+            message: `review /${descriptor.name} capability trust, then run it again`,
+          });
+          return;
+        }
+      }
+      const trimmedRest = rest.trim();
+      const goal = `/${descriptor.name}${trimmedRest ? ` ${trimmedRest}` : ""}`;
+      projectSubmitRef.current(goal, {
+        name: descriptor.name,
+        ...(trimmedRest ? { rest: trimmedRest } : {}),
       });
+    })();
+  }
+
+  function openProjectTrust(): void {
+    layers.push("trust");
+    setLoadingProjectTrust(true);
+    void controller.inspectProjectTrust().then((snapshot) => {
+      if (snapshot) setProjectTrust(snapshot);
+      setLoadingProjectTrust(false);
+    });
+  }
+
+  function grantProjectTrust(expectedManifestHash: string): void {
+    setLoadingProjectTrust(true);
+    void controller
+      .grantProjectTrust(expectedManifestHash)
+      .then(async (snapshot) => {
+        if (snapshot) {
+          setProjectTrust(snapshot);
+          store.appendNotice(`project trust -> ${snapshot.status}`);
+          await reloadConfig(false);
+        }
+        setLoadingProjectTrust(false);
+      });
+  }
+
+  function revokeProjectTrust(): void {
+    setLoadingProjectTrust(true);
+    void controller.revokeProjectTrust().then(async (snapshot) => {
+      if (snapshot) {
+        setProjectTrust(snapshot);
+        store.appendNotice(`project trust -> ${snapshot.status}`);
+        await reloadConfig(false);
+      }
+      setLoadingProjectTrust(false);
+    });
   }
 
   // Build the slash-command registry from the extracted builder. App-level
@@ -622,30 +707,75 @@ function AppReady(
         workflowActions,
         projectCommands,
         runProjectCommand,
+        submitFollowUp,
+        openProjectTrust,
       }),
     [
       layers,
       controller,
       toasts,
       state.sessionId,
+      state.status,
       resolved.bindings,
       resolved.workspaceRoot,
       projectCommands,
+      projectTrust,
       workflowActions,
     ],
   );
 
-  function startGoal(value: string): void {
+  function startGoal(
+    value: string,
+    projectCommand?: ProjectCommandReference,
+  ): void {
     quitArmedUntilRef.current = 0;
-    void controller.start(value);
+    void controller.start(
+      value,
+      projectCommand ? { projectCommand } : undefined,
+    );
+  }
+
+  function submitFollowUp(value: string): void {
+    const goal = value.trim();
+    if (!goal) {
+      toasts.push({
+        variant: "info",
+        title: "follow-up",
+        message: "usage: /followup <goal>",
+      });
+      return;
+    }
+    if (state.status !== "running" && state.status !== "awaiting-approval") {
+      startGoal(goal);
+      return;
+    }
+    void controller.followUp(goal).then((commandId) => {
+      if (commandId) {
+        queue.enqueueSubmission({ goal, commandId });
+        return;
+      }
+      queue.enqueue(goal);
+    });
+  }
+
+  function submitProjectCommand(
+    goal: string,
+    projectCommand: ProjectCommandReference,
+  ): void {
+    if (state.status === "running" || state.status === "awaiting-approval") {
+      queue.enqueueSubmission({ goal, projectCommand });
+      return;
+    }
+    startGoal(goal, projectCommand);
   }
 
   function handleSubmit(value: string): void {
-    // A run accepts one goal at a time. If one's already in flight (running or
-    // paused on an approval), queue the submission instead of dropping it — the
-    // drain effect below starts it once the current run finishes.
+    // Plain Enter steers the active run at the next safe turn boundary. If the
+    // terminal boundary wins the race, preserve the input as a local follow-up.
     if (state.status === "running" || state.status === "awaiting-approval") {
-      queue.enqueue(value);
+      void controller.steer(value).then((commandId) => {
+        if (!commandId) queue.enqueue(value);
+      });
       return;
     }
     if (state.stopReason === "manual_cancelled" && queued.length > 0) {
@@ -716,9 +846,24 @@ function AppReady(
     if (state.status !== "done" && state.status !== "idle") return;
     if (state.stopReason === "manual_cancelled") return;
     if (controller.isRunning() || queued.length === 0) return;
-    const next = queue.dequeue();
-    if (next) startGoal(next);
+    const next = queue.dequeueLocalSubmission();
+    if (next) startGoal(next.goal, next.projectCommand);
   }, [state.status, state.stopReason, queued.length, controller, queue]);
+
+  useEffect(
+    () =>
+      controller.subscribeFollowUpUpdates((event) => {
+        queue.removeByCommandId(event.payload.commandId);
+        if (event.payload.status === "rejected") {
+          toasts.push({
+            variant: "warning",
+            title: "follow-up rejected",
+            message: event.payload.message ?? "the queued run did not start",
+          });
+        }
+      }),
+    [controller, queue, toasts],
+  );
 
   function requestCancelRun(): void {
     controller.cancel();
@@ -958,6 +1103,53 @@ function AppReady(
     // on top of it (an unchanged pick just closes the dialog silently).
     if (changed) store.appendNotice(`model -> ${nextModelName} (next run)`);
     layers.pop("model");
+    layers.pop("connect");
+  }
+
+  async function refreshProviderCatalog(): Promise<ProviderCatalogSnapshot | null> {
+    const catalog = await controller.listProviders(
+      effModel,
+      topLayer?.name === "connect" ? "all" : "available",
+    );
+    setProviderCatalog(catalog);
+    return catalog;
+  }
+
+  async function submitProviderSecret(
+    providerId: string,
+    methodId: string,
+    secret: string,
+  ) {
+    const connection = await controller.submitProviderSecret(
+      providerId,
+      methodId,
+      secret,
+    );
+    if (connection) {
+      store.appendNotice(
+        `${providerId} connection -> ${connection.status} (${connection.id})`,
+      );
+    }
+    return connection;
+  }
+
+  function updateProviderAuth(
+    action: "login" | "logout" | "refresh",
+    profileId: string,
+  ): void {
+    setLoadingProviders(true);
+    void controller
+      .updateProviderAuth(action, profileId)
+      .then(async (profile) => {
+        if (profile) {
+          store.appendNotice(
+            `${profile.providerId} auth -> ${profile.status} (generation ${profile.generation})`,
+          );
+        }
+        const catalog = await controller.listProviders(effModel);
+        setProviderCatalog(catalog);
+        setLoadingProviders(false);
+      });
   }
 
   // Only reserve the sidebar rail when the terminal is wide AND there's
@@ -998,6 +1190,10 @@ function AppReady(
     renameTarget: sessionActions.renameTarget,
     effModel,
     modelCandidates: modelCandidates(resolved.providers),
+    providerCatalog,
+    loadingProviders,
+    projectTrust,
+    loadingProjectTrust,
     sessionDiagnostics: sessionActions.sessionDiagnostics,
     loadingDiagnosticsFor: sessionActions.loadingDiagnosticsFor,
     capabilitySnapshot: capActions.capabilitySnapshot,
@@ -1013,6 +1209,13 @@ function AppReady(
     onRefreshWorkflows: () => void workflowActions.refreshWorkflows(),
     onSelectWorkflow: workflowActions.selectWorkflow,
     onCommitModel: commitModelSelection,
+    onProviderAuth: updateProviderAuth,
+    onLoadProviderAuthMethods: (providerId: string) =>
+      controller.listProviderAuthMethods(providerId),
+    onSubmitProviderSecret: submitProviderSecret,
+    onRefreshProviderCatalog: refreshProviderCatalog,
+    onGrantProjectTrust: grantProjectTrust,
+    onRevokeProjectTrust: revokeProjectTrust,
     onFork: sessionActions.forkSession,
     onCloseTop: closeTopLayer,
     onInspectSession: (id: string) => void sessionActions.inspectSession(id),
@@ -1079,13 +1282,13 @@ function AppReady(
               />
             ) : isRawModeSupported ? (
               <InputBox
-                // Stay editable while a run is in flight: submissions are
-                // queued rather than blocked.
+                // Stay editable while a run is in flight: Enter steers and
+                // /followup schedules the next run.
                 disabled={false}
                 placeholder={
                   state.status === "running" ||
                   state.status === "awaiting-approval"
-                    ? "running — type to queue the next goal (esc cancels run)"
+                    ? "running — Enter steers · /followup queues next · esc cancels"
                     : 'type a goal, /capabilities for available capabilities, or "/" for commands'
                 }
                 workspaceRoot={resolved.workspaceRoot}

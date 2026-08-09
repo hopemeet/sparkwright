@@ -87,7 +87,23 @@ is denied and recorded as `workspace.write.denied` in the trace.
 
 ## Provider-Backed Run
 
-Set an API key and select a provider/model:
+Connect once, then select a provider/model without editing config:
+
+```bash
+# Hidden prompt when stdin is a terminal
+sparkwright provider connect openai --workspace .
+
+# Automation/CI: the key is read from stdin, never argv
+printf '%s\n' "$OPENAI_API_KEY" | \
+  sparkwright provider connect openai --api-key-stdin --workspace .
+```
+
+In the TUI, run `/connect`, choose a provider and method, enter the masked API
+key, then choose a model. The connection is shared with CLI/Host state, so
+`/model` immediately sees models from connected providers. No YAML model list
+or API-key field is required.
+
+Environment keys remain supported for one-off runs:
 
 ```bash
 OPENAI_API_KEY=... npm exec sparkwright -- run "inspect this repo" \
@@ -98,6 +114,72 @@ OPENAI_API_KEY=... npm exec sparkwright -- run "inspect this repo" \
 
 Provider adapters sit at the edge. The run still uses SparkWright tools,
 policy, approvals, artifacts, and trace.
+
+Bundled providers expose their model catalog without a per-model YAML list when
+their official package and endpoint binding is retained. A non-empty provider
+`models` map remains an explicit allowlist.
+
+Inspect the resolved provider/model catalog and credential status without
+printing keys:
+
+```bash
+sparkwright provider list --workspace .
+sparkwright provider connect openai --workspace .
+sparkwright provider disconnect openai --workspace .
+sparkwright provider login openai --workspace .
+sparkwright provider refresh openai --workspace .
+sparkwright provider logout openai --workspace .
+sparkwright provider remove openai --workspace .
+```
+
+`disconnect` removes the workspace selection/grant; `remove` also deletes a
+stored credential. For environment/config sources, disconnect creates a local
+suppression and does not claim to delete the external source. Legacy
+`login|refresh|logout` remains available for those sources. API keys are never
+accepted in argv.
+
+## Project Trust
+
+Checked-in files can configure or describe executable behavior. SparkWright
+therefore does not activate a project's model/provider settings, MCP servers,
+Skills, agents, workflows, or file-authored commands merely because a workspace
+was opened.
+
+Inspect the current decision before running unfamiliar code:
+
+```bash
+sparkwright trust status --workspace . --format text
+```
+
+Review the files reported under `.sparkwright`, then pin the current manifest:
+
+```bash
+sparkwright trust grant --workspace .
+sparkwright trust grant --workspace . --scope commands --scope skills
+```
+
+Trust is recorded per canonical workspace and per scope: `config`, `commands`,
+`skills`, `agents`, and `workflows`. It stores hashes and timestamps under the
+user state directory, not executable file bodies in the repository. A changed
+file changes the manifest and moves that scope to `changed`; inspect the diff
+and grant the new manifest explicitly. Revoke all or selected scopes with:
+
+```bash
+sparkwright trust revoke --workspace .
+sparkwright trust revoke --workspace . --scope commands
+```
+
+Until granted, ordinary project files remain readable, safety-tightening
+project settings still apply, and project executable/remote capabilities are
+omitted. An explicit attempt to invoke an untrusted project command fails with
+`project_trust_required` (or `project_trust_changed`) before interpolation or
+process launch. Trust only admits the pinned source into the normal runtime;
+it never bypasses access mode, approval, sandbox, confidential-path, tool, or
+write policy.
+
+In the TUI, use `/trust`. Press `g` or `r`, review the confirmation text, then
+press `y` or Enter. A project command that needs trust opens this view and must
+be invoked again after the grant succeeds.
 
 ## Public Web Reads
 
@@ -152,6 +234,12 @@ atomically replaces that preview with the full committed assistant answer; no
 final answer content is discarded. Whether reasoning appears at all still
 depends on the selected model and provider gateway.
 
+While a run is active, submitting an ordinary prompt steers that run at its
+next safe turn boundary. It does not interrupt a model request or tool batch
+already in flight. Use `/followup <goal>` when the text should become a new run
+after the current execution finishes. Follow-ups are kept in the bounded Host
+session lane and are process-local; restart is not a delivery guarantee.
+
 The following slash commands remain independent direct entry points even when
 they share an internal panel:
 
@@ -163,6 +251,8 @@ they share an internal panel:
 - `/notifications` opens UI feedback history (run/connection diagnostics,
   action feedback, approvals, and background alerts). It is presentation state,
   not a replacement for trace or session evidence.
+- `/followup <goal>` explicitly queues the next same-session run; plain prompt
+  submission during an active run is steering instead.
 
 Approval cards identify the originating main run or Workflow, session/run ids,
 queue position, risk, exact remembered scope, and effect details. High-risk and

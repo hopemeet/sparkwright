@@ -3,6 +3,7 @@ import { Box, Text, measureElement, type DOMElement } from "ink";
 import type { StoreState } from "../state/event-store.js";
 import type { ValidationError } from "../lib/config.js";
 import type { UnreadTaskActivitySummary } from "../lib/task-activity.js";
+import type { QueuedSubmission } from "../state/queue-store.js";
 import { useTheme } from "../lib/theme-context.js";
 import { QueuedMessages } from "./queued-messages.js";
 import { Sidebar, UsageSummaryLine } from "./sidebar.js";
@@ -26,7 +27,7 @@ export function LiveFrame(props: {
   toast: React.ComponentProps<typeof ToastView>["toast"];
   toastQueueDepth: number;
   errors: ValidationError[];
-  queued: readonly string[];
+  queued: readonly QueuedSubmission[];
   showQueued: boolean;
   onHeightChange?: (rows: number) => void;
 }): React.ReactElement {

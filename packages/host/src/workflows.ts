@@ -114,10 +114,14 @@ export interface WorkflowAssetReport {
 export async function loadLayeredWorkflowAssets(
   workspaceRoot: string,
   env: Record<string, string | undefined> = process.env,
+  options: { includeProject?: boolean } = {},
 ): Promise<WorkflowAssetReport> {
   const roots = resolveCapabilityDirs("workflows", {
     cwd: workspaceRoot,
     env,
+    ...(options.includeProject !== undefined
+      ? { includeProject: options.includeProject }
+      : {}),
   });
   const rootSummaries = await Promise.all(roots.map(workflowRootSummary));
   const byName = new Map<string, WorkflowAssetDetail>();

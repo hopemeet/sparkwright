@@ -11,10 +11,14 @@ export function resolveSkillRootsForRuntime(
   workspaceRoot: string,
   configuredRoots: readonly string[] | undefined,
   env: Record<string, string | undefined> = process.env,
+  options: { includeProject?: boolean } = {},
 ): SkillRoot[] {
   const layered = resolveCapabilityDirs("skills", {
     cwd: workspaceRoot,
     env,
+    ...(options.includeProject !== undefined
+      ? { includeProject: options.includeProject }
+      : {}),
   }).map((dir) => ({ root: dir.dir, layer: dir.layer }));
 
   if (!configuredRoots || configuredRoots.length === 0) return layered;

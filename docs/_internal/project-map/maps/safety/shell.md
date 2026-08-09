@@ -10,6 +10,29 @@ See [workspace-writes.md](workspace-writes.md) and [../../modules/coding-tools.m
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-08
+- Scope: project command interpolation and any inline process launch now sit
+  behind Project Trust in addition to existing shell classification, approval,
+  sandbox, and trace controls. Untrusted or changed command content is rejected
+  before interpolation or process creation.
+- Read: Project Trust command manifest, Host project-command resolution,
+  governed inline shell, run preparation, and real no-sentinel regression.
+- Tests: Host 578/578, the real untrusted/changed no-process regression,
+  16/16 scenario matrix, and full release gates passed.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: Skill inline shell and file-authored project-command interpolation now
+  share one Host governed inline-shell primitive. Both enforce no-write
+  sandboxing and bounded traced process execution; project commands add the
+  existing shell safety classifier and fail closed for denied or
+  approval-required commands before launch.
+- Read: governed/Skill inline shell, project-command resolver, shell safety,
+  sandbox enforcement, run preparation, and focused tests.
+- Tests: full `npm run release:check` passed, including Shell 44/44, Host
+  554/554, TUI 541/541, the regression matrix, and install smoke.
+
+- Status: Verified
 - Date: 2026-08-02
 - Scope: shell guidance now directs managed capability changes to controlled
   workspace writes or CLI commands after Skill mutation tools were removed.
@@ -181,6 +204,8 @@ See [workspace-writes.md](workspace-writes.md) and [../../modules/coding-tools.m
 
 - `packages/host/src/shell.ts`
 - `packages/host/src/traced-process-runner.ts`
+- `packages/host/src/governed-inline-shell.ts`
+- `packages/host/src/project-command-resolution.ts`
 - `packages/host/src/workflow-node-api.ts`
 - `packages/host/src/workspace-snapshot.ts`
 - `packages/shell-tool/src/*`
@@ -199,6 +224,13 @@ model calls bash tool
   -> output or shell.background task
   -> background task adopts live shell stream via TracedProcessRunner
   -> trace + task state
+
+file-authored project command
+  -> Host rediscovers `{ name, rest }`
+  -> shell-tool safety classification for each fixed interpolation
+  -> governed inline shell (forced no-write sandbox)
+  -> buffered extension.process.* trace
+  -> resolved goal starts the ordinary Host run
 ```
 
 ## Contracts
