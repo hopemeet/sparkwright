@@ -10,6 +10,15 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-09
+- Scope: P6.4 changes main provider catalog/config and presentation state only;
+  Agent model precedence, spawning, delegation, and tool authority are
+  unchanged.
+- Read: provider-connection design, Host config/model selection, and Agent
+  capability boundary.
+- Tests: affected Host/config checks and the full release gate passed.
+
 - Status: Verified
 - Date: 2026-08-08
 - Scope: project Agent profiles remain undiscoverable and unrunnable until the

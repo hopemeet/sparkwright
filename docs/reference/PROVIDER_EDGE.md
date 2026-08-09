@@ -6,11 +6,12 @@ The first provider edge is `@sparkwright/provider-ai-sdk`, a thin bridge over
 the Vercel AI SDK. Provider/model selection for product shells lives in the
 optional `@sparkwright/provider-registry` package.
 
-Provider selection is config-driven. A run references a model as
+Provider selection is Host-resolved. A run references a model as
 `"<provider>/<model>"`, and the `<provider>` key is looked up in the
-`identity.providers` map of the merged shared config (user → project → env). Each
-provider entry names the AI SDK npm package that implements it, plus the
-endpoint and credentials:
+bundled/provider catalog plus the optional `identity.providers` map of the
+merged shared config (user → project → env). Config can select a custom AI SDK
+package/endpoint and model policy, while interactive credentials normally come
+from `provider connect` or TUI `/connect`:
 
 ```jsonc
 {
@@ -19,7 +20,6 @@ endpoint and credentials:
     "providers": {
       "openai": {
         "baseURL": "https://api.openai.com/v1",
-        "apiKey": "sk-...",
       },
     },
   },
@@ -30,13 +30,12 @@ endpoint and credentials:
 `deterministic` selects the built-in offline model used for stable demos and
 tests, and is also the default when no `identity.model` is configured.
 
-The Host projects configured providers and models through `provider.list`.
-Credential profile ids are opaque and workspace-scoped; catalog and auth
-responses expose status and source labels but never the key itself. Keys remain
-in the existing private user-config or environment sources. Login/refresh
-activate and rotate the generation of an available credential, while logout
-prevents new adapters from using it. The machine-local activation state is a
-mode-`0600` file under the XDG state directory.
+The Host projects configured and catalog providers through `provider.list`.
+Credential and connection ids are opaque; responses expose status, exact
+non-secret binding, grants, and source categories but never credential values.
+Stored credentials live behind the Host credential-store boundary; private
+config/environment keys remain compatibility sources. Connection and catalog
+metadata are separate mode-`0600` state under the XDG state directory.
 
 If `HTTPS_PROXY`, `https_proxy`, `HTTP_PROXY`, or `http_proxy` is set, the CLI
 passes that proxy explicitly into the provider's `fetch`. This matters because
@@ -137,8 +136,8 @@ Responsibilities:
 
 Non-goals for provider packages:
 
-- credential persistence or protocol auth policy; the Host owns non-secret
-  activation state while existing private config/environment sources own keys
+- credential persistence, catalog refresh, or protocol auth policy; the Host
+  owns these boundaries
 - dynamic npm install
 - model metadata sync
 - production provider routing service

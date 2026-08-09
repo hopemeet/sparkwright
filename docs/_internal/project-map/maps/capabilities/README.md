@@ -7,6 +7,14 @@ MCP, agents, cron, shell/task tools, and capability inspection.
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-09
+- Scope: P6.4 catalog refresh, model policy, credential migration, and picker
+  preferences were reviewed against capability admission. They do not add a
+  capability loader, tool authority, or inspection shape.
+- Read: Host provider/config control path and capability preparation maps.
+- Tests: affected Host/TUI/SDK checks and the full release gate passed.
+
 - Status: Verified
 - Date: 2026-08-08
 - Scope: executable project capability sources now cross one Host-owned trust

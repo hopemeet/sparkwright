@@ -54,6 +54,9 @@ contracts, and focused checklists that no longer fit here.
 - `sdk-core` forwards the P6.3 OAuth attempt lifecycle using Protocol-owned
   DTOs. It does not interpret provider-specific prompts, retain temporary
   secrets, or implement credential refresh.
+- `sdk-core.refreshProviderCatalog()` forwards the Protocol-owned P6.4 request
+  and result without interpreting signatures, credentials, discovery payloads,
+  or cache policy; those remain Host-owned.
 - Provider packages adapt external model ecosystems into core `ModelAdapter`
   and model registry shapes. Host model construction, config loading, pricing,
   and capability diagnostics still own product behavior.
@@ -176,6 +179,16 @@ contracts, and focused checklists that no longer fit here.
   source exports. It should not be used as the sole authority for behavior.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-08-09
+- Scope: SDK Core forwards Protocol-owned provider catalog refresh payloads and
+  results. Provider Registry remains the single model inventory/resolution
+  mechanism; transport and provider adapters do not interpret credentials,
+  signatures, discovery, or cache policy.
+- Read: SDK Core client/exports/tests, Protocol DTOs, Host catalog owner, and
+  Provider Registry composition.
+- Tests: focused SDK/provider registry tests and the full release gate passed.
 
 - Status: Verified
 - Date: 2026-08-09

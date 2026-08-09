@@ -4,6 +4,12 @@ import { useTheme } from "../lib/theme-context.js";
 import { isBackInput } from "../lib/input-key.js";
 import { windowAroundCursor } from "../lib/list-window.js";
 import { DialogFrame } from "./dialog-frame.js";
+import {
+  compareModelPreferences,
+  EMPTY_MODEL_PREFERENCES,
+  modelPreferenceScore,
+  type ModelPreferencesSnapshot,
+} from "../lib/model-preferences.js";
 import type {
   ProviderAuthStatus,
   ProviderCatalogSnapshot,
@@ -11,8 +17,12 @@ import type {
 
 interface ModelCandidate {
   ref: string;
+  providerId: string;
+  providerName: string;
   profileId?: string;
   authStatus?: ProviderAuthStatus;
+  favorite: boolean;
+  groupStart?: boolean;
 }
 
 /**
@@ -39,24 +49,78 @@ export function ModelDialog(props: {
   onCommit: (model: string) => void;
   onCancel: () => void;
   onAuth?: (action: "login" | "logout" | "refresh", profileId: string) => void;
+  preferences?: ModelPreferencesSnapshot;
+  onToggleFavorite?: (model: string) => void;
 }): React.ReactElement {
   const theme = useTheme();
   const [model, setModel] = useState(props.model);
   // Until the user edits, the pre-filled current model is not used as a filter
   // (otherwise the list would collapse to just the current entry on open).
   const [edited, setEdited] = useState(false);
+  const preferences = props.preferences ?? EMPTY_MODEL_PREFERENCES;
   const candidates = useMemo<ModelCandidate[]>(() => {
-    if (props.catalog) {
-      return props.catalog.providers.flatMap((provider) =>
-        provider.models.map((candidate) => ({
-          ref: candidate.ref,
-          profileId: provider.credential.id,
-          authStatus: provider.credential.status,
-        })),
-      );
+    const favorites = new Set(preferences.favorites);
+    const raw = props.catalog
+      ? props.catalog.providers.flatMap((provider) =>
+          provider.models.map((candidate) => ({
+            ref: candidate.ref,
+            providerId: provider.id,
+            providerName: provider.displayName ?? provider.id,
+            profileId: provider.credential.id,
+            authStatus: provider.credential.status,
+            favorite: favorites.has(candidate.ref),
+          })),
+        )
+      : (props.candidates ?? []).map((ref) => {
+          const providerId = ref.split("/", 1)[0] ?? ref;
+          return {
+            ref,
+            providerId,
+            providerName: providerId,
+            favorite: favorites.has(ref),
+          };
+        });
+    const groups = new Map<string, ModelCandidate[]>();
+    for (const candidate of raw) {
+      const group = groups.get(candidate.providerId) ?? [];
+      group.push(candidate);
+      groups.set(candidate.providerId, group);
     }
-    return (props.candidates ?? []).map((ref) => ({ ref }));
-  }, [props.candidates, props.catalog]);
+    return [...groups.values()]
+      .sort((left, right) => {
+        const leftFavorite = left.some((candidate) => candidate.favorite);
+        const rightFavorite = right.some((candidate) => candidate.favorite);
+        if (leftFavorite !== rightFavorite) return rightFavorite ? 1 : -1;
+        const leftScore = Math.max(
+          0,
+          ...left.map((candidate) =>
+            modelPreferenceScore(candidate.ref, preferences),
+          ),
+        );
+        const rightScore = Math.max(
+          0,
+          ...right.map((candidate) =>
+            modelPreferenceScore(candidate.ref, preferences),
+          ),
+        );
+        return (
+          rightScore - leftScore ||
+          (left[0]?.providerName ?? "").localeCompare(
+            right[0]?.providerName ?? "",
+          )
+        );
+      })
+      .flatMap((group) =>
+        group
+          .sort((left, right) =>
+            compareModelPreferences(left.ref, right.ref, preferences),
+          )
+          .map((candidate, index) => ({
+            ...candidate,
+            groupStart: index === 0,
+          })),
+      );
+  }, [preferences, props.candidates, props.catalog]);
   // Track the selection by stable model ref, not array index. The provider
   // catalog arrives asynchronously and may reorder the fallback candidates.
   const [highlightedRef, setHighlightedRef] = useState(props.model);
@@ -100,8 +164,11 @@ export function ModelDialog(props: {
     return provider
       ? {
           ref: model,
+          providerId: provider.id,
+          providerName: provider.displayName ?? provider.id,
           profileId: provider.credential.id,
           authStatus: provider.credential.status,
+          favorite: preferences.favorites.includes(model),
         }
       : undefined;
   }
@@ -145,6 +212,11 @@ export function ModelDialog(props: {
           target.profileId,
         );
       }
+      return;
+    }
+    if (key.ctrl && input === "f") {
+      const target = filtered[highlightedIndex]?.ref ?? model.trim();
+      if (target) props.onToggleFavorite?.(target);
       return;
     }
     if (key.return) {
@@ -191,6 +263,9 @@ export function ModelDialog(props: {
           auth selected provider · ctrl+l login · ctrl+o logout · ctrl+r refresh
         </Text>
       ) : null}
+      {props.onToggleFavorite ? (
+        <Text color={theme.muted}>ctrl+f toggle favorite</Text>
+      ) : null}
       <Box>
         <Text color={theme.success}>{"› "}model: </Text>
         <Text>{model || ""}</Text>
@@ -212,14 +287,19 @@ export function ModelDialog(props: {
           {visible.map((candidate, i) => {
             const selected = visibleStart + i === highlightedIndex;
             return (
-              <Text
-                key={candidate.ref}
-                color={selected ? theme.accent : undefined}
-                dimColor={!selected}
-              >
-                {selected ? "❯ " : "  "}
-                {authMark(candidate.authStatus)} {candidate.ref}
-              </Text>
+              <React.Fragment key={candidate.ref}>
+                {candidate.groupStart || i === 0 ? (
+                  <Text color={theme.muted}>{candidate.providerName}</Text>
+                ) : null}
+                <Text
+                  color={selected ? theme.accent : undefined}
+                  dimColor={!selected}
+                >
+                  {selected ? "❯ " : "  "}
+                  {candidate.favorite ? "★ " : ""}
+                  {authMark(candidate.authStatus)} {candidate.ref}
+                </Text>
+              </React.Fragment>
             );
           })}
         </Box>

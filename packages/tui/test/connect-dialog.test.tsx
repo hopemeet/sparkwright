@@ -101,6 +101,34 @@ describe("ConnectDialog", () => {
     app.unmount();
     stdin.destroy();
   });
+
+  it("refreshes the Host catalog from the provider stage", async () => {
+    const { stdin, stdout } = interactiveIo();
+    const onRefresh = vi.fn(async () => disconnectedCatalog);
+    const app = render(
+      <ConnectDialog
+        catalog={disconnectedCatalog}
+        loading={false}
+        onLoadMethods={async () => authMethods}
+        onSubmitSecret={async () => null}
+        onBeginOAuth={async () => null}
+        onOAuthStatus={async () => null}
+        onCompleteOAuth={async () => null}
+        onCancelOAuth={async () => {}}
+        onRefresh={onRefresh}
+        onCommitModel={() => {}}
+        onCancel={() => {}}
+      />,
+      { stdout, stdin, patchConsole: false, exitOnCtrlC: false },
+    );
+
+    await settle();
+    stdin.write("\x12");
+    await settle(4);
+    app.unmount();
+    stdin.destroy();
+    expect(onRefresh).toHaveBeenCalledWith();
+  });
 });
 
 const authMethods: ProviderAuthMethodsSnapshot = {
@@ -133,7 +161,7 @@ const connection: ProviderConnectionSummary = {
 };
 
 const disconnectedCatalog: ProviderCatalogSnapshot = {
-  catalogVersion: 2,
+  catalogVersion: 3,
   revision: 0,
   projection: "all",
   providers: [
@@ -245,7 +273,7 @@ const completedOAuthAttempt: ProviderAuthAttemptSummary = {
 };
 
 const oauthDisconnectedCatalog: ProviderCatalogSnapshot = {
-  catalogVersion: 2,
+  catalogVersion: 3,
   revision: 0,
   projection: "all",
   providers: [

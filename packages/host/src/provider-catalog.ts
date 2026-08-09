@@ -12,7 +12,7 @@ import {
 } from "./config/contracts.js";
 import { costToPricing } from "./config/config-implementation.js";
 
-export const BUNDLED_PROVIDER_CATALOG_VERSION = 2;
+export const BUNDLED_PROVIDER_CATALOG_VERSION = 3;
 
 export type ProviderAuthPrompt =
   | {
@@ -57,6 +57,12 @@ export interface ProviderConnectionDescriptor {
   authMethods: readonly ProviderConnectionAuthMethod[];
   /** @reserved Side-effect-free validation policy consumed by P6.2 connection status. */
   validation: { kind: "none" };
+  /** Optional code-owned authenticated metadata discovery. */
+  modelDiscovery?: {
+    kind: "openai_compatible";
+    path: string;
+    ttlMs: number;
+  };
 }
 
 export interface BundledProviderCatalogEntry {
@@ -66,7 +72,7 @@ export interface BundledProviderCatalogEntry {
 }
 
 export interface BundledProviderCatalogSnapshot {
-  version: typeof BUNDLED_PROVIDER_CATALOG_VERSION;
+  version: number;
   providers: readonly BundledProviderCatalogEntry[];
 }
 
@@ -102,6 +108,11 @@ export const BUNDLED_PROVIDER_CONNECTION_DESCRIPTORS: readonly ProviderConnectio
         },
       ],
       validation: { kind: "none" },
+      modelDiscovery: {
+        kind: "openai_compatible",
+        path: "models",
+        ttlMs: 24 * 60 * 60 * 1_000,
+      },
     },
     {
       providerId: "openai",
@@ -236,14 +247,19 @@ export function createHostProviderRegistry(input: {
   configuredProviders?: Record<string, ProviderConfig>;
   providerIds?: readonly string[];
   includeBundledProviders?: boolean;
+  catalog?: BundledProviderCatalogSnapshot;
   requestedModels?: Readonly<Record<string, readonly string[]>>;
   adapterFactories?: Readonly<
     Record<string, ProviderDefinition["createAdapter"]>
   >;
 }): ProviderRegistry {
+  const catalog = input.catalog ?? BUNDLED_PROVIDER_CATALOG;
+  const catalogProviders = new Map(
+    catalog.providers.map((provider) => [provider.id, provider]),
+  );
   const providerIds = new Set<string>(input.providerIds ?? []);
   if (input.includeBundledProviders !== false) {
-    for (const providerId of bundledProviderIds()) providerIds.add(providerId);
+    for (const provider of catalog.providers) providerIds.add(provider.id);
   }
   for (const providerId of Object.keys(input.configuredProviders ?? {})) {
     providerIds.add(providerId);
@@ -256,11 +272,12 @@ export function createHostProviderRegistry(input: {
       return {
         id: providerId,
         ...(usesBundledProviderBinding(providerId, config)
-          ? { displayName: providerDisplayName(providerId) }
+          ? { displayName: catalogProviders.get(providerId)?.displayName }
           : {}),
         models: effectiveProviderModels({
           providerId,
           config,
+          catalogProviders,
           requestedModelIds: input.requestedModels?.[providerId],
         }),
         createAdapter:
@@ -281,6 +298,7 @@ export function toRegistryModelRef(
 function effectiveProviderModels(input: {
   providerId: string;
   config: ProviderConfig | undefined;
+  catalogProviders: ReadonlyMap<string, BundledProviderCatalogEntry>;
   requestedModelIds: readonly string[] | undefined;
 }): ModelInfo[] {
   const usesBundledCatalog = usesBundledProviderBinding(
@@ -289,25 +307,33 @@ function effectiveProviderModels(input: {
   );
   const catalogModels = new Map(
     (usesBundledCatalog
-      ? (CATALOG_PROVIDERS.get(input.providerId)?.models ?? [])
+      ? (input.catalogProviders.get(input.providerId)?.models ?? [])
       : []
     ).map((model) => [model.id, model]),
   );
   const configuredModels = input.config?.models ?? {};
   const legacyAllowlist = Object.keys(configuredModels);
+  const policyAllowlist = input.config?.modelPolicy?.allow;
+  const deniedModels = new Set(input.config?.modelPolicy?.deny ?? []);
   const modelIds = new Set<string>(
-    legacyAllowlist.length > 0 ? legacyAllowlist : catalogModels.keys(),
+    legacyAllowlist.length > 0
+      ? legacyAllowlist
+      : policyAllowlist !== undefined
+        ? policyAllowlist
+        : catalogModels.keys(),
   );
 
-  if (legacyAllowlist.length === 0) {
+  if (legacyAllowlist.length === 0 && policyAllowlist === undefined) {
     for (const modelId of input.requestedModelIds ?? []) {
       if (modelId.length > 0) modelIds.add(modelId);
     }
   }
+  for (const modelId of deniedModels) modelIds.delete(modelId);
 
   return [...modelIds].sort().map((modelId) => {
     const catalogModel = catalogModels.get(modelId);
-    const configuredModel = configuredModels[modelId];
+    const configuredModel =
+      configuredModels[modelId] ?? input.config?.modelOverrides?.[modelId];
     const pricing =
       costToPricing(configuredModel?.cost) ?? catalogModel?.pricing;
     const providerOptions = configuredModel?.providerOptions;
@@ -326,6 +352,323 @@ function effectiveProviderModels(input: {
         : {}),
     };
   });
+}
+
+/**
+ * Merge metadata-only catalog inventory. Connection descriptors, packages,
+ * endpoints, authentication, and adapter factories remain code-owned.
+ */
+export function mergeProviderCatalogSnapshots(input: {
+  base: BundledProviderCatalogSnapshot;
+  providers: readonly BundledProviderCatalogEntry[];
+  version?: number;
+}): BundledProviderCatalogSnapshot {
+  const providers = new Map(
+    input.base.providers.map((provider) => [
+      provider.id,
+      cloneCatalogProvider(provider),
+    ]),
+  );
+  for (const provider of input.providers) {
+    if (!getProviderConnectionDescriptor(provider.id)) continue;
+    providers.set(provider.id, cloneCatalogProvider(provider));
+  }
+  return {
+    version: input.version ?? input.base.version + 1,
+    providers: [...providers.values()].sort((left, right) =>
+      left.id.localeCompare(right.id),
+    ),
+  };
+}
+
+/** Validate and bound data before it can become active catalog metadata. */
+export function sanitizeProviderCatalogSnapshot(
+  value: unknown,
+): BundledProviderCatalogSnapshot {
+  if (!isRecord(value)) throw new Error("Catalog snapshot must be an object.");
+  if (!Number.isSafeInteger(value.version) || (value.version as number) < 1) {
+    throw new Error("Catalog version must be a positive integer.");
+  }
+  if (!Array.isArray(value.providers) || value.providers.length > 100) {
+    throw new Error("Catalog providers must be a bounded array.");
+  }
+  const seenProviders = new Set<string>();
+  const providers = value.providers.map((candidate) => {
+    if (!isRecord(candidate))
+      throw new Error("Catalog provider must be an object.");
+    requireOnlyKeys(candidate, ["id", "displayName", "models"]);
+    const id = boundedIdentifier(candidate.id, "Catalog provider id", 128);
+    if (!getProviderConnectionDescriptor(id)) {
+      throw new Error(`Catalog provider "${id}" has no code-owned descriptor.`);
+    }
+    if (seenProviders.has(id))
+      throw new Error(`Duplicate catalog provider "${id}".`);
+    seenProviders.add(id);
+    const displayName = boundedText(
+      candidate.displayName,
+      "Catalog provider displayName",
+      256,
+    );
+    if (!displayName) {
+      throw new Error(`Catalog provider "${id}" is missing displayName.`);
+    }
+    if (!Array.isArray(candidate.models) || candidate.models.length > 20_000) {
+      throw new Error(`Catalog provider "${id}" has an invalid model array.`);
+    }
+    const seenModels = new Set<string>();
+    const models = candidate.models.map((model) => {
+      const sanitized = sanitizeCatalogModel(model, id);
+      if (seenModels.has(sanitized.id)) {
+        throw new Error(`Duplicate catalog model "${id}/${sanitized.id}".`);
+      }
+      seenModels.add(sanitized.id);
+      return sanitized;
+    });
+    return {
+      id,
+      displayName,
+      models: models.sort((left, right) => left.id.localeCompare(right.id)),
+    };
+  });
+  return {
+    version: value.version as number,
+    providers: providers.sort((left, right) => left.id.localeCompare(right.id)),
+  };
+}
+
+function sanitizeCatalogModel(value: unknown, providerId: string): ModelInfo {
+  if (!isRecord(value)) throw new Error("Catalog model must be an object.");
+  requireOnlyKeys(value, [
+    "id",
+    "providerId",
+    "displayName",
+    "description",
+    "aliases",
+    "inputModalities",
+    "outputModalities",
+    "contextWindow",
+    "maxOutputTokens",
+    "capabilities",
+    "pricing",
+  ]);
+  const id = boundedIdentifier(value.id, "Catalog model id", 256);
+  if (value.providerId !== undefined && value.providerId !== providerId) {
+    throw new Error(`Catalog model "${id}" has a mismatched providerId.`);
+  }
+  const displayName = boundedText(
+    value.displayName,
+    "Catalog model displayName",
+    512,
+  );
+  const description = boundedText(
+    value.description,
+    "Catalog model description",
+    2_048,
+  );
+  const aliases = optionalStringArray(
+    value.aliases,
+    "Catalog model aliases",
+    32,
+    256,
+  );
+  const inputModalities = optionalModalities(
+    value.inputModalities,
+    "inputModalities",
+  );
+  const outputModalities = optionalModalities(
+    value.outputModalities,
+    "outputModalities",
+  );
+  const contextWindow = optionalPositiveInteger(
+    value.contextWindow,
+    "contextWindow",
+  );
+  const maxOutputTokens = optionalPositiveInteger(
+    value.maxOutputTokens,
+    "maxOutputTokens",
+  );
+  const capabilities = sanitizeCapabilities(value.capabilities);
+  const pricing = sanitizePricing(value.pricing);
+  return {
+    id,
+    providerId,
+    ...(displayName ? { displayName } : {}),
+    ...(description ? { description } : {}),
+    ...(aliases ? { aliases } : {}),
+    ...(inputModalities ? { inputModalities } : {}),
+    ...(outputModalities ? { outputModalities } : {}),
+    ...(contextWindow ? { contextWindow } : {}),
+    ...(maxOutputTokens ? { maxOutputTokens } : {}),
+    ...(capabilities ? { capabilities } : {}),
+    ...(pricing ? { pricing } : {}),
+  };
+}
+
+function cloneCatalogProvider(
+  provider: BundledProviderCatalogEntry,
+): BundledProviderCatalogEntry {
+  return {
+    id: provider.id,
+    displayName: provider.displayName,
+    models: provider.models.map((model) => ({
+      ...model,
+      ...(model.aliases ? { aliases: [...model.aliases] } : {}),
+      ...(model.inputModalities
+        ? { inputModalities: [...model.inputModalities] }
+        : {}),
+      ...(model.outputModalities
+        ? { outputModalities: [...model.outputModalities] }
+        : {}),
+      ...(model.capabilities
+        ? { capabilities: { ...model.capabilities } }
+        : {}),
+      ...(model.pricing ? { pricing: { ...model.pricing } } : {}),
+    })),
+  };
+}
+
+function requireOnlyKeys(
+  value: Record<string, unknown>,
+  allowed: readonly string[],
+): void {
+  const allowedSet = new Set(allowed);
+  const unknown = Object.keys(value).find((key) => !allowedSet.has(key));
+  if (unknown)
+    throw new Error(
+      `Catalog metadata contains unsupported field "${unknown}".`,
+    );
+}
+
+function boundedIdentifier(value: unknown, label: string, max: number): string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > max ||
+    hasDisallowedMetadataControlCharacter(value, false) ||
+    /\s/u.test(value)
+  ) {
+    throw new Error(`${label} is invalid.`);
+  }
+  return value;
+}
+
+function boundedText(
+  value: unknown,
+  label: string,
+  max: number,
+): string | undefined {
+  if (value === undefined) return undefined;
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > max ||
+    hasDisallowedMetadataControlCharacter(value, true)
+  ) {
+    throw new Error(`${label} is invalid.`);
+  }
+  return value;
+}
+
+export function hasDisallowedMetadataControlCharacter(
+  value: string,
+  allowLineWhitespace: boolean,
+): boolean {
+  for (const character of value) {
+    const code = character.charCodeAt(0);
+    if (code === 0x7f) return true;
+    if (code >= 0x20) continue;
+    if (
+      allowLineWhitespace &&
+      (code === 0x09 || code === 0x0a || code === 0x0d)
+    ) {
+      continue;
+    }
+    return true;
+  }
+  return false;
+}
+
+function optionalStringArray(
+  value: unknown,
+  label: string,
+  maxItems: number,
+  maxLength: number,
+): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > maxItems)
+    throw new Error(`${label} is invalid.`);
+  return value.map((item) => boundedIdentifier(item, label, maxLength));
+}
+
+const MODEL_MODALITIES = new Set(["text", "image", "audio", "video", "tool"]);
+
+function optionalModalities(
+  value: unknown,
+  label: string,
+): ModelInfo["inputModalities"] {
+  const values = optionalStringArray(value, `Catalog model ${label}`, 8, 16);
+  if (!values) return undefined;
+  if (values.some((entry) => !MODEL_MODALITIES.has(entry))) {
+    throw new Error(`Catalog model ${label} is invalid.`);
+  }
+  return values as ModelInfo["inputModalities"];
+}
+
+function optionalPositiveInteger(
+  value: unknown,
+  label: string,
+): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isSafeInteger(value) || (value as number) <= 0) {
+    throw new Error(`Catalog model ${label} is invalid.`);
+  }
+  return value as number;
+}
+
+function sanitizeCapabilities(value: unknown): ModelInfo["capabilities"] {
+  if (value === undefined) return undefined;
+  if (!isRecord(value) || Object.keys(value).length > 32) {
+    throw new Error("Catalog model capabilities are invalid.");
+  }
+  const capabilities: Record<string, boolean> = {};
+  for (const [key, enabled] of Object.entries(value)) {
+    const id = boundedIdentifier(key, "Catalog capability id", 64);
+    if (typeof enabled !== "boolean") {
+      throw new Error(`Catalog capability "${id}" must be boolean.`);
+    }
+    capabilities[id] = enabled;
+  }
+  return capabilities;
+}
+
+function sanitizePricing(value: unknown): ModelInfo["pricing"] {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw new Error("Catalog model pricing is invalid.");
+  requireOnlyKeys(value, [
+    "inputPerMTokUsd",
+    "outputPerMTokUsd",
+    "cacheReadPerMTokUsd",
+    "cacheCreationPerMTokUsd",
+  ]);
+  const pricing: NonNullable<ModelInfo["pricing"]> = {};
+  for (const key of [
+    "inputPerMTokUsd",
+    "outputPerMTokUsd",
+    "cacheReadPerMTokUsd",
+    "cacheCreationPerMTokUsd",
+  ] as const) {
+    const amount = value[key];
+    if (amount === undefined) continue;
+    if (typeof amount !== "number" || !Number.isFinite(amount) || amount < 0) {
+      throw new Error(`Catalog pricing field "${key}" is invalid.`);
+    }
+    pricing[key] = amount;
+  }
+  return pricing;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function usesBundledProviderBinding(

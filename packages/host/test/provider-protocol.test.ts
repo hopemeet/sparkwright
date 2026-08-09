@@ -61,7 +61,7 @@ describe("provider protocol", () => {
         envelope: "response",
         ok: true,
         result: {
-          catalogVersion: 2,
+          catalogVersion: 3,
           projection: "all",
           providers: [
             { id: "anthropic", configured: false },
@@ -119,6 +119,67 @@ describe("provider protocol", () => {
       });
     } finally {
       pair.close();
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("refreshes catalog state for a trusted local client only", async () => {
+    const fixture = await protocolFixture();
+    const local = connectionPair();
+    const remote = connectionPair();
+    try {
+      const service = createHostService({
+        providerAuth: new ProviderAuthManager({
+          env: fixture.env,
+          statePath: fixture.statePath,
+        }),
+      });
+      serveConnection(local.hostSide, {
+        hostService: service,
+        workspaceRoot: fixture.workspace,
+        authContext: unauthenticatedConnection(
+          "local-stdio",
+          ["provider_connection.manage"],
+          "local",
+        ),
+      });
+      await handshake(local);
+      local.send(request("catalog_refresh", "provider.catalog.refresh", {}));
+      await expect(local.waitFor("catalog_refresh")).resolves.toMatchObject({
+        envelope: "response",
+        ok: true,
+        result: {
+          status: "unchanged",
+          refreshedProviders: [],
+          catalogState: { generation: 0, source: "bundled", stale: false },
+        },
+      });
+
+      serveConnection(remote.hostSide, {
+        hostService: service,
+        workspaceRoot: fixture.workspace,
+        authContext: authenticatedConnection(
+          "remote",
+          "ws-bearer",
+          "host_client",
+          ["provider_connection.manage"],
+          "remote",
+        ),
+      });
+      await handshake(remote);
+      remote.send(
+        request("remote_catalog_refresh", "provider.catalog.refresh", {}),
+      );
+      await expect(
+        remote.waitFor("remote_catalog_refresh"),
+      ).resolves.toMatchObject({
+        envelope: "response",
+        ok: false,
+        error: { code: "unauthorized" },
+      });
+    } finally {
+      local.close();
+      remote.close();
       await rm(fixture.root, { recursive: true, force: true });
     }
   });

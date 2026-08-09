@@ -131,7 +131,9 @@ policy, approvals, artifacts, and trace.
 
 Bundled providers expose their model catalog without a per-model YAML list when
 their official package and endpoint binding is retained. A non-empty provider
-`models` map remains an explicit allowlist.
+`models` map remains an explicit allowlist. New configs can use
+`modelPolicy.allow|deny` with separate `modelOverrides`. In `/model`, `Ctrl+F`
+toggles a favorite; favorites and recent usage affect picker order only.
 
 Inspect the resolved provider/model catalog and credential status without
 printing keys:
@@ -144,6 +146,8 @@ sparkwright provider login openai --workspace .
 sparkwright provider refresh openai --workspace .
 sparkwright provider logout openai --workspace .
 sparkwright provider remove openai --workspace .
+sparkwright provider catalog refresh openrouter --workspace .
+sparkwright provider migrate openai --remove-config --workspace .
 ```
 
 `disconnect` removes the workspace selection/grant; `remove` also deletes a

@@ -9,6 +9,13 @@ See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../m
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-08-09
+- Scope: TUI preference persistence reuses Agent Runtime's existing atomic text
+  writer; task, Workflow, child-agent, and coordination ownership are unchanged.
+- Read: atomic document-store export and TUI preference consumer.
+- Tests: TUI preference storage, workspace build, and the full release gate passed.
+
+- Status: Read-only
 - Date: 2026-08-08
 - Scope: Host Project Trust excludes untrusted project Agent profiles and
   Workflows before Agent Runtime assembly. Task, worktree, workflow persistence,

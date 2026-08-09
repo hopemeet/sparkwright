@@ -60,6 +60,17 @@ export type {
   ProviderCredentialStoreOptions,
 } from "./provider-credential-store.js";
 export {
+  ProviderCatalogStore,
+  providerCatalogStatePath,
+  verifySignedProviderCatalogArtifact,
+} from "./provider-catalog-store.js";
+export type {
+  ProviderCatalogStateSnapshot,
+  ProviderCatalogStoreOptions,
+  SignedProviderCatalogArtifact,
+  SignedProviderCatalogPayload,
+} from "./provider-catalog-store.js";
+export {
   PROJECT_TRUST_SCOPES,
   ProjectTrustManager,
   isProjectScopeTrusted,
@@ -271,6 +282,7 @@ export {
   configResolutionOrder,
   projectConfigCandidatePaths,
   readConfigFileObject,
+  removeLegacyProviderApiKey,
   resolveConfigWriteTarget,
   serializeConfigFileObject,
   userConfigCandidatePaths,

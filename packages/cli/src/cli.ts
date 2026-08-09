@@ -68,6 +68,7 @@ import {
   isToolUseSelector,
   projectConfigCandidatePaths,
   readConfigFileObject,
+  removeLegacyProviderApiKey,
   resolveConfigWriteTarget,
   delegateToolName,
   summarizeRunInputParts,
@@ -705,6 +706,9 @@ function parseArgs(
     command === "doctor"
   ) {
     subcommand = args.shift();
+    if (command === "provider" && subcommand === "catalog") {
+      subcommand = args.shift() === "refresh" ? "catalog-refresh" : "catalog";
+    }
   } else if (command === "run" && args[0] === "resume") {
     // `sparkwright run resume <run-id>` — distinct from the freeform
     // `sparkwright run "<goal>"` path.
@@ -750,6 +754,7 @@ function parseArgs(
   let detach = false;
   let apiKeyStdin = false;
   let authMethod: string | undefined;
+  let removeConfig = false;
   let delegateGoal: string | undefined;
   const trustScopes: ProjectTrustScope[] = [];
 
@@ -771,6 +776,13 @@ function parseArgs(
 
     if (arg === "--api-key-stdin") {
       apiKeyStdin = true;
+      args.splice(index, 1);
+      index -= 1;
+      continue;
+    }
+
+    if (arg === "--remove-config") {
+      removeConfig = true;
       args.splice(index, 1);
       index -= 1;
       continue;
@@ -1279,7 +1291,9 @@ function parseArgs(
     subcommand !== "login" &&
     subcommand !== "logout" &&
     subcommand !== "remove" &&
-    subcommand !== "refresh"
+    subcommand !== "refresh" &&
+    subcommand !== "catalog-refresh" &&
+    subcommand !== "migrate"
   ) {
     return { ok: false, message: providerUsage() };
   }
@@ -1440,6 +1454,7 @@ function parseArgs(
       trustScopes: trustScopes.length > 0 ? trustScopes : undefined,
       apiKeyStdin,
       authMethod,
+      removeConfig,
     },
   };
 }
@@ -1457,7 +1472,9 @@ async function handleProviderCommand(
     subcommand !== "login" &&
     subcommand !== "logout" &&
     subcommand !== "refresh" &&
-    subcommand !== "remove"
+    subcommand !== "remove" &&
+    subcommand !== "catalog-refresh" &&
+    subcommand !== "migrate"
   ) {
     writeLine(io.stderr, providerUsage());
     return { exitCode: 1 };
@@ -1468,6 +1485,118 @@ async function handleProviderCommand(
       parsed.workspaceRoot,
     );
     const includeProjectConfig = isProjectScopeTrusted(trust, "config");
+    if (subcommand === "catalog-refresh") {
+      const refreshed = await manager.refreshCatalog({
+        ...(parsed.target ? { providerId: parsed.target } : {}),
+        context: {
+          workspaceRoot: parsed.workspaceRoot,
+          env,
+          includeProjectConfig,
+        },
+      });
+      if (!refreshed.ok) {
+        writeLine(io.stderr, refreshed.message);
+        return { exitCode: 1 };
+      }
+      if (parsed.format === "json") {
+        writeLine(io.stdout, JSON.stringify(refreshed.result, null, 2));
+      } else {
+        const providers = refreshed.result.refreshedProviders.join(", ");
+        writeLine(
+          io.stdout,
+          `catalog ${refreshed.result.status} · generation ${refreshed.result.catalogState.generation}${providers ? ` · ${providers}` : ""}`,
+        );
+      }
+      return { exitCode: 0 };
+    }
+    if (subcommand === "migrate") {
+      const providerId = parsed.target;
+      if (!providerId) {
+        writeLine(io.stderr, providerUsage());
+        return { exitCode: 1 };
+      }
+      const loaded = await loadHostConfig(parsed.workspaceRoot, env, {
+        projectMode: includeProjectConfig ? "trusted" : "restricted",
+      });
+      const legacy = loaded.config.providers?.[providerId];
+      const source = loaded.sources.providers?.[providerId];
+      if (!legacy?.apiKey || !source) {
+        writeLine(
+          io.stderr,
+          `Provider "${providerId}" has no active legacy config apiKey to migrate.`,
+        );
+        return { exitCode: 1 };
+      }
+      const separator = source.indexOf(":");
+      const sourceLayer = separator >= 0 ? source.slice(0, separator) : source;
+      const sourcePath =
+        separator >= 0 ? source.slice(separator + 1) : undefined;
+      if (sourceLayer === "project" && !includeProjectConfig) {
+        writeLine(
+          io.stderr,
+          `Project provider credentials are ignored until project config is trusted.`,
+        );
+        return { exitCode: 1 };
+      }
+      if (parsed.removeConfig && !sourcePath) {
+        writeLine(
+          io.stderr,
+          `Cannot remove the legacy apiKey because its source file is unknown.`,
+        );
+        return { exitCode: 1 };
+      }
+      let secret = legacy.apiKey;
+      const migrated = await manager.migrateLegacyApiKey({
+        providerId,
+        secret,
+        context: {
+          workspaceRoot: parsed.workspaceRoot,
+          env,
+          includeProjectConfig,
+        },
+        publishConfig:
+          parsed.removeConfig && sourcePath
+            ? async () => {
+                await removeLegacyProviderApiKey({
+                  path: sourcePath,
+                  providerId,
+                  expectedSecret: secret,
+                });
+              }
+            : async () => {},
+      });
+      secret = "";
+      if (!migrated.ok) {
+        writeLine(io.stderr, migrated.message);
+        return { exitCode: 1 };
+      }
+      const receipt = {
+        connection: migrated.connection,
+        revision: migrated.revision,
+        migration: {
+          kind: "legacy_config_api_key",
+          providerId,
+          source: sourceLayer,
+          configRemoved: parsed.removeConfig,
+          migratedAt: new Date().toISOString(),
+        },
+      };
+      if (parsed.format === "json") {
+        writeLine(io.stdout, JSON.stringify(receipt, null, 2));
+      } else {
+        writeLine(
+          io.stdout,
+          `${providerId} · migrated · revision ${migrated.revision}${parsed.removeConfig ? " · config credential removed" : ""}`,
+        );
+        if (!parsed.removeConfig) {
+          writeLine(
+            io.stderr,
+            `The legacy config apiKey remains. Re-run with --remove-config after verifying the connection.`,
+          );
+        }
+      }
+      return { exitCode: 0 };
+    }
     const catalog = await manager.catalog({
       workspaceRoot: parsed.workspaceRoot,
       ...(parsed.modelName ? { model: parsed.modelName } : {}),
@@ -4740,6 +4869,8 @@ function usage(_env: Record<string, string | undefined>): string {
     "       sparkwright acp [--workspace path] [--session-root path] [--model provider/model] [--access-mode read-only|ask|accept-edits|bypass] [--trace-level standard|debug]",
     "       sparkwright capabilities inspect [--workspace path] [--model provider/model] [--resolve-mcp] [--format json|text]",
     "       sparkwright provider list|connect|disconnect|login|logout|remove|refresh [provider] [--api-key-stdin] [--workspace path] [--format json|text]",
+    "       sparkwright provider catalog refresh [provider] [--workspace path] [--format json|text]",
+    "       sparkwright provider migrate <provider> [--remove-config] [--workspace path] [--format json|text]",
     "       sparkwright trust status|grant|revoke [--workspace path] [--scope scope] [--format json|text]",
     "       sparkwright doctor paths [--workspace path] [--session-root path] [--format json|text]",
     '       sparkwright cron create --schedule "every 1h" --prompt "task" [--name name]',
@@ -4775,6 +4906,8 @@ function providerUsage(): string {
     "       sparkwright provider logout <provider-or-connection> [--workspace path]",
     "       sparkwright provider remove <provider-or-connection> [--workspace path]",
     "       sparkwright provider refresh <provider-or-connection> [--workspace path]",
+    "       sparkwright provider catalog refresh [provider] [--workspace path]",
+    "       sparkwright provider migrate <provider> [--remove-config] [--workspace path]",
   ].join("\n");
 }
 

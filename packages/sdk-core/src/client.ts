@@ -37,6 +37,7 @@ import {
   type ProviderSecretSubmitRequestPayload,
   type ProviderConnectionActionRequestPayload,
   type ProviderConnectionSelectRequestPayload,
+  type ProviderCatalogRefreshRequestPayload,
   type ProviderListRequestPayload,
   type ProjectTrustGrantRequestPayload,
   type ProjectTrustRevokeRequestPayload,
@@ -653,6 +654,15 @@ export class Client extends TypedEmitter<ClientEventMap> {
       "provider.connection.refresh",
       payload as unknown as Record<string, unknown>,
     ) as unknown as Promise<ResponseResults["provider.connection.refresh"]>;
+  }
+
+  refreshProviderCatalog(
+    payload: ProviderCatalogRefreshRequestPayload = {},
+  ): Promise<ResponseResults["provider.catalog.refresh"]> {
+    return this.request(
+      "provider.catalog.refresh",
+      payload as unknown as Record<string, unknown>,
+    ) as unknown as Promise<ResponseResults["provider.catalog.refresh"]>;
   }
 
   loginProvider(

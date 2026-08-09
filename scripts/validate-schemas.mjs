@@ -153,6 +153,11 @@ const instanceChecks = [
   {
     schema: "host-message.schema.json",
     instance:
+      "schemas/fixtures/host-message.request.provider-catalog-refresh.json",
+  },
+  {
+    schema: "host-message.schema.json",
+    instance:
       "schemas/fixtures/host-message.request.provider-auth-complete.json",
   },
   {

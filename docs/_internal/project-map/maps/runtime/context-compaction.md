@@ -9,6 +9,13 @@ See [../session/resume-replay.md](../session/resume-replay.md).
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-09
+- Scope: P6.4 pre-run catalog refresh and presentation-only model preferences
+  do not enter context items, compaction, follow-up evidence, or replay.
+- Read: provider control path, TUI preferences, and compaction boundary.
+- Tests: affected Host/TUI checks and the full release gate passed.
+
 - Status: Verified
 - Date: 2026-08-08
 - Scope: compaction resolves model/provider configuration through the same

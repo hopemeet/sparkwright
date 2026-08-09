@@ -2074,6 +2074,105 @@ describe.sequential("runCli", { timeout: 15_000 }, () => {
     expect(listedOutput.stdoutText()).not.toContain(secret);
   });
 
+  it("migrates a legacy config credential and removes only its apiKey", async () => {
+    const workspace = await createWorkspace("# Provider migration\n");
+    const configHome = await harness.tempDir("sparkwright-migrate-config-");
+    const stateHome = await harness.tempDir("sparkwright-migrate-state-");
+    const configDir = join(configHome, "sparkwright");
+    const configPath = join(configDir, "config.yaml");
+    const secret = "sk-cli-migrate-sentinel";
+    await mkdir(configDir, { recursive: true });
+    await writeFile(
+      configPath,
+      [
+        "# preserved provider comment",
+        "identity:",
+        "  providers:",
+        "    openai:",
+        '      npm: "@ai-sdk/openai"',
+        `      apiKey: "${secret}"`,
+        "      baseURL: https://api.openai.com/v1",
+        "ui:",
+        "  theme: dark",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const env = {
+      ...process.env,
+      XDG_CONFIG_HOME: configHome,
+      XDG_STATE_HOME: stateHome,
+      SPARKWRIGHT_CREDENTIAL_STORE: "file",
+    };
+    const firstOutput = createOutputCapture();
+    const staged = await runCli(
+      [
+        "provider",
+        "migrate",
+        "openai",
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        env,
+        io: {
+          stdout: firstOutput.stdout,
+          stderr: firstOutput.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+    expect(staged.exitCode, firstOutput.stderrText()).toBe(0);
+    expect(firstOutput.stdoutText()).toContain('"configRemoved": false');
+    expect(await readFile(configPath, "utf8")).toContain(secret);
+
+    const output = createOutputCapture();
+
+    const migrated = await runCli(
+      [
+        "provider",
+        "migrate",
+        "openai",
+        "--remove-config",
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        env,
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(migrated.exitCode, output.stderrText()).toBe(0);
+    expect(output.stdoutText()).toContain('"configRemoved": true');
+    expect(output.stdoutText()).not.toContain(secret);
+    expect(output.stderrText()).not.toContain(secret);
+    const rewritten = await readFile(configPath, "utf8");
+    expect(rewritten).toContain("# preserved provider comment");
+    expect(rewritten).toContain("baseURL: https://api.openai.com/v1");
+    expect(rewritten).toContain("theme: dark");
+    expect(rewritten).not.toContain("apiKey");
+    expect(rewritten).not.toContain(secret);
+    await expect(
+      readFile(providerCredentialFilePath(env), "utf8"),
+    ).resolves.toContain(secret);
+    await expect(
+      readFile(providerAuthStatePath(env), "utf8"),
+    ).resolves.not.toContain(secret);
+    const metadata = JSON.parse(
+      await readFile(providerAuthStatePath(env), "utf8"),
+    ) as { connections: Record<string, unknown> };
+    expect(Object.keys(metadata.connections)).toHaveLength(1);
+  });
+
   it("rejects API keys in argv before reading a credential", async () => {
     const workspace = await createWorkspace("# Provider argv safety\n");
     const output = createOutputCapture();

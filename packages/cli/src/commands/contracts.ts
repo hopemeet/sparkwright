@@ -63,4 +63,5 @@ export interface ParsedArgs {
   trustScopes?: ProjectTrustScope[];
   apiKeyStdin?: boolean;
   authMethod?: string;
+  removeConfig?: boolean;
 }

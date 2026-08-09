@@ -268,8 +268,31 @@ describe("@sparkwright/sdk-core Client", () => {
       providers: [],
     });
 
-    const login = client.loginProvider({ profileId: "credential_1" });
+    const refreshed = client.refreshProviderCatalog({ providerId: "openai" });
     request = transport.sent[1];
+    expect(request).toMatchObject({
+      envelope: "request",
+      kind: "provider.catalog.refresh",
+      payload: { providerId: "openai" },
+    });
+    transport.receive({
+      envelope: "response",
+      id: request.id,
+      timestamp: "2026-08-08T00:00:00.000Z",
+      ok: true,
+      result: {
+        status: "updated",
+        refreshedProviders: ["openai"],
+        catalogState: { generation: 1, source: "discovery", stale: false },
+      },
+    });
+    await expect(refreshed).resolves.toMatchObject({
+      status: "updated",
+      catalogState: { generation: 1 },
+    });
+
+    const login = client.loginProvider({ profileId: "credential_1" });
+    request = transport.sent[2];
     expect(request).toMatchObject({
       envelope: "request",
       kind: "provider.auth.login",

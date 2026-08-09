@@ -389,6 +389,13 @@ trace.jsonl
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-09
+- Scope: P6.4 does not add run events or change summary, timeline, integrity,
+  or verification semantics.
+- Read: provider control path and trace diagnostics boundary.
+- Tests: affected provider tests and the full release gate passed.
+
 - Status: Verified
 - Date: 2026-07-16T10:44:25+0800
 - Scope: reviewed Task tool-name consolidation; summary Task lifecycle evidence

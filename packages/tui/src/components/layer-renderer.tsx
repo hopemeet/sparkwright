@@ -36,6 +36,7 @@ import type { LayerEntry } from "../state/layer-stack.js";
 import type { UiSignal } from "../lib/ui-signal.js";
 import type { UsageSummary } from "../state/event-store.js";
 import type { TuiSkillsBrowserSnapshot } from "../lib/skills-browser.js";
+import type { ModelPreferencesSnapshot } from "../lib/model-preferences.js";
 
 export function LayerRenderer(props: {
   entry: LayerEntry;
@@ -60,6 +61,7 @@ export function LayerRenderer(props: {
   modelCandidates: string[];
   providerCatalog: ProviderCatalogSnapshot | null;
   loadingProviders: boolean;
+  modelPreferences: ModelPreferencesSnapshot;
   projectTrust: ProjectTrustSnapshot | null;
   loadingProjectTrust: boolean;
   sessionDiagnostics: SessionDiagnostics | null;
@@ -82,6 +84,7 @@ export function LayerRenderer(props: {
   onRequestRename: (id: string) => void;
   onCommitRename: (id: string, label: string) => void;
   onCommitModel: (model: string) => void;
+  onToggleFavoriteModel: (model: string) => void;
   onProviderAuth: (
     action: "login" | "logout" | "refresh",
     profileId: string,
@@ -177,6 +180,8 @@ export function LayerRenderer(props: {
           onCancel={props.onCloseTop}
           onCommit={props.onCommitModel}
           onAuth={props.onProviderAuth}
+          preferences={props.modelPreferences}
+          onToggleFavorite={props.onToggleFavoriteModel}
         />
       );
     case "connect":
@@ -192,6 +197,7 @@ export function LayerRenderer(props: {
           onCancelOAuth={props.onCancelProviderOAuth}
           onRefresh={props.onRefreshProviderCatalog}
           onCommitModel={props.onCommitModel}
+          preferences={props.modelPreferences}
           onCancel={props.onCloseTop}
         />
       );

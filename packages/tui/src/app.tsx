@@ -67,6 +67,11 @@ import { assembleTranscriptDocument } from "./lib/transcript-document.js";
 import { layoutTranscriptDocument } from "./lib/transcript-layout.js";
 import { inkScreenRows } from "./lib/terminal-screen-layout.js";
 import {
+  EMPTY_MODEL_PREFERENCES,
+  loadModelPreferences,
+  type ModelPreferences,
+} from "./lib/model-preferences.js";
+import {
   initialTranscriptViewportState,
   moveTranscriptViewportToEnd,
   moveTranscriptViewportToStart,
@@ -189,7 +194,15 @@ function modelCandidates(providers: Resolved["providers"]): string[] {
   if (!providers) return [];
   const refs: string[] = [];
   for (const [providerKey, provider] of Object.entries(providers)) {
-    for (const modelId of Object.keys(provider.models ?? {})) {
+    const legacyIds = Object.keys(provider.models ?? {});
+    const modelIds =
+      legacyIds.length > 0
+        ? legacyIds
+        : (provider.modelPolicy?.allow ??
+          Object.keys(provider.modelOverrides ?? {}));
+    const denied = new Set(provider.modelPolicy?.deny ?? []);
+    for (const modelId of modelIds) {
+      if (denied.has(modelId)) continue;
       refs.push(`${providerKey}/${modelId}`);
     }
   }
@@ -307,6 +320,21 @@ function AppReady(
   const effModel = modelOverride ? modelOverride.modelName : resolved.modelName;
   const [providerCatalog, setProviderCatalog] =
     useState<ProviderCatalogSnapshot | null>(null);
+  const modelPreferencesRef = useRef<ModelPreferences | null>(null);
+  const [modelPreferences, setModelPreferences] = useState(
+    EMPTY_MODEL_PREFERENCES,
+  );
+  useEffect(() => {
+    let active = true;
+    void loadModelPreferences().then((preferences) => {
+      if (!active) return;
+      modelPreferencesRef.current = preferences;
+      setModelPreferences(preferences.snapshot());
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
   const [loadingProviders, setLoadingProviders] = useState(false);
   const [projectTrust, setProjectTrust] = useState<ProjectTrustSnapshot | null>(
     null,
@@ -1099,6 +1127,9 @@ function AppReady(
     const changed = nextModelName !== modelLabel;
     setModelOverride({ modelName: nextModelName });
     controller.updateModel(nextModelName, "request");
+    void modelPreferencesRef.current
+      ?.recordRecent(nextModelName)
+      .then(setModelPreferences);
     // A committed switch leaves one durable transcript row; no transient toast
     // on top of it (an unchanged pick just closes the dialog silently).
     if (changed) store.appendNotice(`model -> ${nextModelName} (next run)`);
@@ -1106,7 +1137,21 @@ function AppReady(
     layers.pop("connect");
   }
 
-  async function refreshProviderCatalog(): Promise<ProviderCatalogSnapshot | null> {
+  function toggleFavoriteModel(modelName: string): void {
+    void modelPreferencesRef.current
+      ?.toggleFavorite(modelName)
+      .then(setModelPreferences);
+  }
+
+  async function refreshProviderCatalog(
+    providerId?: string,
+  ): Promise<ProviderCatalogSnapshot | null> {
+    const refreshed = await controller.refreshProviderCatalog(providerId);
+    if (refreshed) {
+      store.appendNotice(
+        `provider catalog -> ${refreshed.status} (generation ${refreshed.catalogState.generation})`,
+      );
+    }
     const catalog = await controller.listProviders(
       effModel,
       topLayer?.name === "connect" ? "all" : "available",
@@ -1192,6 +1237,7 @@ function AppReady(
     modelCandidates: modelCandidates(resolved.providers),
     providerCatalog,
     loadingProviders,
+    modelPreferences,
     projectTrust,
     loadingProjectTrust,
     sessionDiagnostics: sessionActions.sessionDiagnostics,
@@ -1209,6 +1255,7 @@ function AppReady(
     onRefreshWorkflows: () => void workflowActions.refreshWorkflows(),
     onSelectWorkflow: workflowActions.selectWorkflow,
     onCommitModel: commitModelSelection,
+    onToggleFavoriteModel: toggleFavoriteModel,
     onProviderAuth: updateProviderAuth,
     onLoadProviderAuthMethods: (providerId: string) =>
       controller.listProviderAuthMethods(providerId),

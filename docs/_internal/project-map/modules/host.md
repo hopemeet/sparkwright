@@ -13,6 +13,18 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 
 - Status: Verified
 - Date: 2026-08-09
+- Scope: P6.4 adds the Host-owned ProviderCatalogStore with signed metadata
+  verification, authenticated official-driver discovery, TTL/LKG fallback and
+  generation-CAS publication. Config gains non-widening model policy and an
+  explicit transactional legacy-credential migration path.
+- Read: catalog store/composition/auth discovery, config schema/merge/model
+  resolution/file publication, Host runtime/server authority, SDK bridge, and
+  A20-A24-focused tests.
+- Tests: focused provider catalog/store/auth/protocol/config checks, Host
+  617/617, and the full release gate passed.
+
+- Status: Verified
+- Date: 2026-08-09
 - Scope: P6.3 keeps OAuth inside ProviderAuthManager and adds code-owned
   drivers, local principal/client-bound attempt state, TTL/cancel/replay
   protection, credential-envelope persistence, and cross-process refresh

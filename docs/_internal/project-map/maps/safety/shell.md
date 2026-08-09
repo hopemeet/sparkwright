@@ -9,6 +9,13 @@ See [workspace-writes.md](workspace-writes.md) and [../../modules/coding-tools.m
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-09
+- Scope: P6.4 catalog network I/O is a bounded Host fetch and config migration
+  uses atomic file publication; neither routes through or changes shell policy.
+- Read: catalog/auth/config file owners and shell execution boundary.
+- Tests: affected security/config tests and the full release gate passed.
+
 - Status: Verified
 - Date: 2026-08-08
 - Scope: project command interpolation and any inline process launch now sit

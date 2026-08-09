@@ -1,13 +1,14 @@
 import { createHash, randomBytes } from "node:crypto";
 import { readFile, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type {
   ProviderAuthMethodsSnapshot,
   ProviderAuthAttemptSummary,
   ProviderAuthStatus,
   ProviderCatalogEntry,
   ProviderCatalogProjection,
+  ProviderCatalogRefreshResult,
   ProviderCatalogSnapshot,
   ProviderConnectionBindingSummary,
   ProviderConnectionGrantScope,
@@ -16,6 +17,7 @@ import type {
   ProviderCredentialProfileSummary,
 } from "@sparkwright/protocol";
 import { atomicWriteText } from "@sparkwright/agent-runtime";
+import type { ModelInfo } from "@sparkwright/provider-registry";
 import type { ProviderConfig } from "./config-zod-schema.js";
 import {
   loadHostConfig,
@@ -26,13 +28,22 @@ import {
   type ModelSelection,
 } from "./config/contracts.js";
 import {
-  BUNDLED_PROVIDER_CATALOG_VERSION,
   bundledProviderIds,
   createHostProviderRegistry,
   getProviderConnectionDescriptor,
+  hasDisallowedMetadataControlCharacter,
+  mergeProviderCatalogSnapshots,
   providerNpm,
+  type BundledProviderCatalogEntry,
+  type BundledProviderCatalogSnapshot,
   type ProviderConnectionAuthMethod,
 } from "./provider-catalog.js";
+import {
+  ProviderCatalogStore,
+  verifySignedProviderCatalogArtifact,
+  type ProviderCatalogStateSnapshot,
+  type SignedProviderCatalogArtifact,
+} from "./provider-catalog-store.js";
 import {
   createProviderCredentialStore,
   type ProviderCredentialStore,
@@ -175,6 +186,11 @@ export interface ProviderAuthManagerOptions {
   oauthAttemptTtlMs?: number;
   oauthDrivers?: Iterable<ProviderOAuthDriver>;
   oauthFetch?: typeof fetch;
+  catalogStore?: ProviderCatalogStore;
+  catalogPath?: string;
+  catalogFetch?: typeof fetch;
+  signedCatalogSource?: () => Promise<SignedProviderCatalogArtifact>;
+  catalogTrustedKeys?: Readonly<Record<string, string>>;
 }
 
 export interface ProviderAuthContext {
@@ -207,6 +223,13 @@ export class ProviderAuthManager {
   private readonly now: () => Date;
   private readonly oauthAttemptTtlMs: number;
   private readonly oauthDrivers: ReadonlyMap<string, ProviderOAuthDriver>;
+  private catalogStore: ProviderCatalogStore | undefined;
+  private readonly catalogPath: string;
+  private readonly catalogFetch: typeof fetch;
+  private readonly signedCatalogSource:
+    | (() => Promise<SignedProviderCatalogArtifact>)
+    | undefined;
+  private readonly catalogTrustedKeys: Readonly<Record<string, string>>;
   private credentialStore: ProviderCredentialStore | undefined;
   private readonly listeners = new Map<string, Set<() => void>>();
   private readonly oauthAttempts = new Map<string, ProviderOAuthAttempt>();
@@ -227,6 +250,13 @@ export class ProviderAuthManager {
     this.oauthDrivers = new Map(
       drivers.map((driver) => [driver.implementationId, driver]),
     );
+    this.catalogStore = options.catalogStore;
+    this.catalogPath =
+      options.catalogPath ??
+      join(dirname(this.statePath), "provider-catalog.json");
+    this.catalogFetch = options.catalogFetch ?? fetch;
+    this.signedCatalogSource = options.signedCatalogSource;
+    this.catalogTrustedKeys = options.catalogTrustedKeys ?? {};
   }
 
   async catalog(
@@ -234,11 +264,13 @@ export class ProviderAuthManager {
   ): Promise<ProviderCatalogSnapshot> {
     const loaded = await this.loadContext(context, context.model);
     const state = await this.readState();
+    const catalogState = await this.getCatalogStore().current();
     const selected = loaded.selectedModel
       ? splitSelectedModel(loaded.selectedModel)
       : undefined;
     const registry = createHostProviderRegistry({
       configuredProviders: loaded.catalogProviders,
+      catalog: catalogState.catalog,
       ...(selected
         ? { requestedModels: { [selected.providerId]: [selected.modelId] } }
         : {}),
@@ -364,10 +396,121 @@ export class ProviderAuthManager {
     }
     return {
       ...(loaded.selectedModel ? { selectedModel: loaded.selectedModel } : {}),
-      catalogVersion: BUNDLED_PROVIDER_CATALOG_VERSION,
+      catalogVersion: catalogState.catalog.version,
       revision: state.revision,
+      catalogState: publicCatalogState(catalogState),
       ...(context.projection ? { projection: context.projection } : {}),
       providers: providers.sort((a, b) => a.id.localeCompare(b.id)),
+    };
+  }
+
+  async refreshCatalog(input: {
+    providerId?: string;
+    context: ProviderAuthContext;
+  }): Promise<
+    | { ok: true; result: ProviderCatalogRefreshResult }
+    | { ok: false; message: string }
+  > {
+    const loaded = await this.loadContext(input.context);
+    const store = this.getCatalogStore();
+    const current = await store.current();
+    let nextCatalog: BundledProviderCatalogSnapshot = current.catalog;
+    const refreshedProviders: string[] = [];
+    let signedExpiresAt: string | undefined;
+
+    try {
+      if (!input.providerId && this.signedCatalogSource) {
+        const artifact = await this.signedCatalogSource();
+        const verified = verifySignedProviderCatalogArtifact({
+          artifact,
+          trustedKeys: this.catalogTrustedKeys,
+          now: this.now(),
+        });
+        nextCatalog = verified.catalog;
+        signedExpiresAt = verified.expiresAt;
+      }
+
+      const targetIds = input.providerId
+        ? [input.providerId]
+        : bundledProviderIds().filter(
+            (providerId) =>
+              getProviderConnectionDescriptor(providerId)?.modelDiscovery !==
+              undefined,
+          );
+      for (const providerId of targetIds) {
+        const descriptor = getProviderConnectionDescriptor(providerId);
+        if (!descriptor) {
+          return {
+            ok: false,
+            message: `Provider "${providerId}" has no code-owned catalog descriptor.`,
+          };
+        }
+        if (!descriptor.modelDiscovery) {
+          if (input.providerId) {
+            return {
+              ok: false,
+              message: `Provider "${providerId}" does not support authenticated model discovery.`,
+            };
+          }
+          continue;
+        }
+        const discovered = await this.discoverProviderModels({
+          providerId,
+          loaded,
+        });
+        if (!discovered.ok) {
+          if (input.providerId) return discovered;
+          continue;
+        }
+        nextCatalog = mergeProviderCatalogSnapshots({
+          base: nextCatalog,
+          providers: [discovered.provider],
+        });
+        refreshedProviders.push(providerId);
+      }
+    } catch {
+      return {
+        ok: false,
+        message:
+          "Provider catalog refresh failed; the last-known-good catalog remains active.",
+      };
+    }
+
+    if (
+      refreshedProviders.length === 0 &&
+      (!this.signedCatalogSource || input.providerId !== undefined)
+    ) {
+      return {
+        ok: true,
+        result: {
+          status: "unchanged",
+          refreshedProviders,
+          catalogState: publicCatalogState(current),
+        },
+      };
+    }
+
+    const now = this.now();
+    const ttlMs = refreshTtlMs(refreshedProviders);
+    const ttlExpiresAt = new Date(now.getTime() + ttlMs).toISOString();
+    const expiresAt =
+      signedExpiresAt && Date.parse(signedExpiresAt) < Date.parse(ttlExpiresAt)
+        ? signedExpiresAt
+        : ttlExpiresAt;
+    const published = await store.publish({
+      expectedGeneration: current.generation,
+      source: refreshedProviders.length > 0 ? "discovery" : "signed",
+      fetchedAt: now.toISOString(),
+      expiresAt,
+      catalog: nextCatalog,
+    });
+    return {
+      ok: true,
+      result: {
+        status: published.published ? "updated" : "superseded",
+        refreshedProviders,
+        catalogState: publicCatalogState(published.snapshot),
+      },
     };
   }
 
@@ -671,6 +814,46 @@ export class ProviderAuthManager {
         recoverableConnectionId?: string;
       }
   > {
+    const loaded = await this.loadContext(input.context);
+    const binding = this.connectionBinding(
+      input.providerId,
+      loaded.configuredProviders[input.providerId],
+      loaded.env,
+      input.methodId ?? "api_key",
+    );
+    const current = await this.readState();
+    const selectedId =
+      current.selections[selectionKey(loaded.workspaceId, input.providerId)];
+    const selected = selectedId ? current.connections[selectedId] : undefined;
+    if (
+      binding &&
+      selected &&
+      sameEndpointBinding(selected.binding, binding) &&
+      hasConnectionGrant(current, selected.id, loaded.workspaceId) &&
+      (await this.getCredentialStore()
+        .get(selected.id)
+        .catch(() => undefined)) === input.secret
+    ) {
+      try {
+        await input.publishConfig();
+        return {
+          ok: true,
+          connection: storedConnectionSummary({
+            connection: selected,
+            state: current,
+            workspaceId: loaded.workspaceId,
+            expectedBinding: binding,
+          }),
+          revision: current.revision,
+        };
+      } catch {
+        return {
+          ok: false,
+          message:
+            "Legacy config publication failed; the existing stored connection was retained and the original config remains active.",
+        };
+      }
+    }
     const submitted = await this.submitSecret({
       providerId: input.providerId,
       methodId: input.methodId ?? "api_key",
@@ -1779,6 +1962,160 @@ export class ProviderAuthManager {
     }
   }
 
+  private async discoverProviderModels(input: {
+    providerId: string;
+    loaded: LoadedProviderContext;
+  }): Promise<
+    | { ok: true; provider: BundledProviderCatalogEntry }
+    | { ok: false; message: string }
+  > {
+    const descriptor = getProviderConnectionDescriptor(input.providerId);
+    const discovery = descriptor?.modelDiscovery;
+    if (!descriptor || !discovery) {
+      return {
+        ok: false,
+        message: `Provider "${input.providerId}" does not support authenticated model discovery.`,
+      };
+    }
+    const configured = input.loaded.configuredProviders[input.providerId];
+    const binding = this.connectionBinding(
+      input.providerId,
+      configured,
+      input.loaded.env,
+    );
+    if (
+      !binding ||
+      binding.driverId !== descriptor.driverId ||
+      binding.normalizedEndpoint !==
+        normalizeProviderEndpoint(descriptor.officialEndpoint)
+    ) {
+      return {
+        ok: false,
+        message:
+          "Authenticated model discovery is available only for the built-in official endpoint binding.",
+      };
+    }
+
+    const state = await this.readState();
+    const selectedId =
+      state.selections[
+        selectionKey(input.loaded.workspaceId, input.providerId)
+      ];
+    let apiKey: string | undefined;
+    if (selectedId) {
+      const connection = state.connections[selectedId];
+      if (
+        !connection ||
+        !sameEndpointBinding(connection.binding, binding) ||
+        !hasConnectionGrant(state, connection.id, input.loaded.workspaceId) ||
+        !isUsableConnectionStatus(connection.status)
+      ) {
+        return {
+          ok: false,
+          message:
+            "The selected provider connection cannot be used for catalog discovery.",
+        };
+      }
+      const secret = await this.getCredentialStore().get(connection.id);
+      if (secret) apiKey = decodeOAuthCredential(secret)?.accessToken ?? secret;
+    } else {
+      const npm = providerNpm(input.providerId, configured);
+      const ambient = availableCredential({
+        providerId: input.providerId,
+        npm,
+        configuredApiKey: configured?.apiKey,
+        env: input.loaded.env,
+      });
+      if (
+        ambient &&
+        !isSuppressed(
+          state,
+          input.loaded.workspaceId,
+          binding.endpointFingerprint,
+        )
+      ) {
+        apiKey = ambient.apiKey;
+      }
+    }
+    if (!apiKey) {
+      return {
+        ok: false,
+        message: `Provider "${input.providerId}" needs an active connection before catalog discovery.`,
+      };
+    }
+
+    const endpoint = new URL(
+      discovery.path,
+      `${descriptor.officialEndpoint.replace(/\/+$/, "")}/`,
+    );
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30_000);
+    timer.unref?.();
+    let response: Response;
+    try {
+      response = await this.catalogFetch(endpoint, {
+        method: "GET",
+        headers: {
+          accept: "application/json",
+          authorization: `Bearer ${apiKey}`,
+        },
+        redirect: "error",
+        signal: controller.signal,
+      });
+    } catch {
+      return {
+        ok: false,
+        message:
+          "Authenticated model discovery failed; the last-known-good catalog remains active.",
+      };
+    } finally {
+      clearTimeout(timer);
+      apiKey = undefined;
+    }
+    if (!response.ok) {
+      return {
+        ok: false,
+        message:
+          "Authenticated model discovery was rejected; the last-known-good catalog remains active.",
+      };
+    }
+    let text: string;
+    try {
+      text = await readBoundedResponseText(response, 16 * 1024 * 1024);
+    } catch {
+      return {
+        ok: false,
+        message:
+          "Authenticated model discovery returned an unreadable response; the last-known-good catalog remains active.",
+      };
+    }
+    try {
+      return {
+        ok: true,
+        provider: {
+          id: input.providerId,
+          displayName: descriptor.displayName,
+          models: parseOpenAICompatibleModelList(text, input.providerId),
+        },
+      };
+    } catch {
+      return {
+        ok: false,
+        message:
+          "Authenticated model discovery returned invalid metadata; the last-known-good catalog remains active.",
+      };
+    }
+  }
+
+  private getCatalogStore(): ProviderCatalogStore {
+    this.catalogStore ??= new ProviderCatalogStore({
+      env: this.env,
+      path: this.catalogPath,
+      now: this.now,
+    });
+    return this.catalogStore;
+  }
+
   private getCredentialStore(): ProviderCredentialStore {
     this.credentialStore ??= createProviderCredentialStore({
       env: this.env,
@@ -1865,6 +2202,160 @@ export function providerAuthStatePath(
       ? env.XDG_STATE_HOME
       : join(homedir(), ".local", "state");
   return join(stateBase, "sparkwright", "provider-auth.json");
+}
+
+function publicCatalogState(state: ProviderCatalogStateSnapshot) {
+  return {
+    generation: state.generation,
+    source: state.source,
+    stale: state.stale,
+    ...(state.fetchedAt ? { fetchedAt: state.fetchedAt } : {}),
+    ...(state.expiresAt ? { expiresAt: state.expiresAt } : {}),
+  };
+}
+
+function refreshTtlMs(providerIds: readonly string[]): number {
+  const ttls = providerIds
+    .map(
+      (providerId) =>
+        getProviderConnectionDescriptor(providerId)?.modelDiscovery?.ttlMs,
+    )
+    .filter((ttl): ttl is number => ttl !== undefined);
+  return ttls.length > 0 ? Math.min(...ttls) : 24 * 60 * 60 * 1_000;
+}
+
+function parseOpenAICompatibleModelList(
+  text: string,
+  providerId: string,
+): ModelInfo[] {
+  const parsed = JSON.parse(text) as unknown;
+  if (!isRecordValue(parsed) || !Array.isArray(parsed.data)) {
+    throw new Error("Model discovery response must contain a data array.");
+  }
+  if (parsed.data.length > 20_000) {
+    throw new Error("Model discovery response contains too many models.");
+  }
+  const seen = new Set<string>();
+  const models: ModelInfo[] = [];
+  for (const value of parsed.data) {
+    if (!isRecordValue(value)) continue;
+    const id = boundedDiscoveryText(value.id, 256, false);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const displayName = boundedDiscoveryText(value.name, 512, true);
+    const description = boundedDiscoveryText(value.description, 2_048, true);
+    const contextWindow = positiveDiscoveryInteger(value.context_length);
+    const maxOutputTokens = positiveDiscoveryInteger(
+      value.max_completion_tokens,
+    );
+    const pricing = discoveryPricing(value.pricing);
+    models.push({
+      id,
+      providerId,
+      ...(displayName ? { displayName } : {}),
+      ...(description ? { description } : {}),
+      ...(contextWindow ? { contextWindow } : {}),
+      ...(maxOutputTokens ? { maxOutputTokens } : {}),
+      ...(pricing ? { pricing } : {}),
+    });
+  }
+  if (models.length === 0) {
+    throw new Error("Model discovery response contains no usable models.");
+  }
+  return models.sort((left, right) => left.id.localeCompare(right.id));
+}
+
+async function readBoundedResponseText(
+  response: Response,
+  maxBytes: number,
+): Promise<string> {
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    throw new Error("Model discovery response is too large.");
+  }
+  if (!response.body) return await response.text();
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      length += next.value.byteLength;
+      if (length > maxBytes) {
+        await reader.cancel();
+        throw new Error("Model discovery response is too large.");
+      }
+      chunks.push(next.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+}
+
+function discoveryPricing(value: unknown): ModelInfo["pricing"] {
+  if (!isRecordValue(value)) return undefined;
+  const prompt = perTokenPriceToPerMillion(value.prompt);
+  const completion = perTokenPriceToPerMillion(value.completion);
+  const cacheRead = perTokenPriceToPerMillion(value.input_cache_read);
+  const cacheWrite = perTokenPriceToPerMillion(value.input_cache_write);
+  if (
+    prompt === undefined &&
+    completion === undefined &&
+    cacheRead === undefined &&
+    cacheWrite === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    ...(prompt !== undefined ? { inputPerMTokUsd: prompt } : {}),
+    ...(completion !== undefined ? { outputPerMTokUsd: completion } : {}),
+    ...(cacheRead !== undefined ? { cacheReadPerMTokUsd: cacheRead } : {}),
+    ...(cacheWrite !== undefined
+      ? { cacheCreationPerMTokUsd: cacheWrite }
+      : {}),
+  };
+}
+
+function perTokenPriceToPerMillion(value: unknown): number | undefined {
+  if (typeof value !== "string" && typeof value !== "number") return undefined;
+  const price = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(price) || price < 0) return undefined;
+  return price * 1_000_000;
+}
+
+function positiveDiscoveryInteger(value: unknown): number | undefined {
+  return Number.isSafeInteger(value) && (value as number) > 0
+    ? (value as number)
+    : undefined;
+}
+
+function boundedDiscoveryText(
+  value: unknown,
+  maxLength: number,
+  allowWhitespace: boolean,
+): string | undefined {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > maxLength ||
+    hasDisallowedMetadataControlCharacter(value, false) ||
+    (!allowWhitespace && /\s/u.test(value))
+  ) {
+    return undefined;
+  }
+  return value;
+}
+
+function isRecordValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function normalizeProviderEndpoint(endpoint: string): string {

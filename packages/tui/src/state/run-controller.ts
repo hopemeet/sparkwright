@@ -25,6 +25,7 @@ import type {
   ProjectCommandReference,
   ProviderCatalogSnapshot,
   ProviderCatalogProjection,
+  ProviderCatalogRefreshResult,
   ProviderAuthMethodsSnapshot,
   ProviderAuthAttemptSummary,
   ProviderConnectionSummary,
@@ -617,6 +618,24 @@ export class RunController {
       });
     } catch (err) {
       this.reportFailure("PanelLoadFailure", "provider list failed", err);
+      return null;
+    }
+  }
+
+  async refreshProviderCatalog(
+    providerId?: string,
+  ): Promise<ProviderCatalogRefreshResult | null> {
+    try {
+      const client = await this.ensureClient();
+      return await client.refreshProviderCatalog({
+        ...(providerId ? { providerId } : {}),
+      });
+    } catch (err) {
+      this.reportFailure(
+        "ActionFailure",
+        "provider catalog refresh failed",
+        err,
+      );
       return null;
     }
   }

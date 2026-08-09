@@ -72,6 +72,7 @@
             "provider.connection.logout",
             "provider.connection.remove",
             "provider.connection.refresh",
+            "provider.catalog.refresh",
             "project.trust.inspect",
             "project.trust.grant",
             "project.trust.revoke",
@@ -344,6 +345,18 @@
           "then": {
             "properties": {
               "payload": { "$ref": "#/$defs/ProviderListRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "kind": { "const": "provider.catalog.refresh" } }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/ProviderCatalogRefreshRequestPayload"
+              }
             }
           }
         },
@@ -1317,6 +1330,13 @@
       },
       "additionalProperties": false
     },
+    "ProviderCatalogRefreshRequestPayload": {
+      "type": "object",
+      "properties": {
+        "providerId": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
     "ProviderAuthActionRequestPayload": {
       "type": "object",
       "required": ["profileId"],
@@ -1750,11 +1770,24 @@
         "selectedModel": { "type": "string", "minLength": 1 },
         "catalogVersion": { "type": "integer", "minimum": 1 },
         "revision": { "type": "integer", "minimum": 0 },
+        "catalogState": { "$ref": "#/$defs/ProviderCatalogStateSummary" },
         "projection": { "enum": ["all", "connected", "available"] },
         "providers": {
           "type": "array",
           "items": { "$ref": "#/$defs/ProviderCatalogEntry" }
         }
+      },
+      "additionalProperties": false
+    },
+    "ProviderCatalogStateSummary": {
+      "type": "object",
+      "required": ["generation", "source", "stale"],
+      "properties": {
+        "generation": { "type": "integer", "minimum": 0 },
+        "source": { "enum": ["bundled", "signed", "discovery"] },
+        "stale": { "type": "boolean" },
+        "fetchedAt": { "type": "string" },
+        "expiresAt": { "type": "string" }
       },
       "additionalProperties": false
     },

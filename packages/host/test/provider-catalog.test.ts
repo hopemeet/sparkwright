@@ -50,6 +50,41 @@ describe("Host provider catalog", () => {
     ).rejects.toThrow("does not define model");
   });
 
+  it("applies modelPolicy before modelOverrides and requested models", async () => {
+    const registry = createHostProviderRegistry({
+      configuredProviders: {
+        openai: {
+          modelPolicy: {
+            allow: ["gpt-5.4-mini", "gpt-5.4-nano"],
+            deny: ["gpt-5.4-nano"],
+          },
+          modelOverrides: {
+            "gpt-5.4-mini": {
+              cost: { input: 2 },
+              providerOptions: { openai: { reasoningEffort: "low" } },
+            },
+            unlisted: { cost: { input: 99 } },
+          },
+        },
+      },
+      providerIds: ["openai"],
+      includeBundledProviders: false,
+      requestedModels: { openai: ["unlisted"] },
+    });
+
+    await expect(
+      registry.listModels({ providerId: "openai" }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        id: "gpt-5.4-mini",
+        pricing: expect.objectContaining({ inputPerMTokUsd: 2 }),
+        metadata: expect.objectContaining({
+          providerOptions: { openai: { reasoningEffort: "low" } },
+        }),
+      }),
+    ]);
+  });
+
   it("does not project the official model catalog onto a custom endpoint", async () => {
     const registry = createHostProviderRegistry({
       configuredProviders: {
@@ -69,7 +104,7 @@ describe("Host provider catalog", () => {
   it("uses the bundled snapshot when no external catalog state exists", async () => {
     const registry = createHostProviderRegistry({});
 
-    expect(BUNDLED_PROVIDER_CATALOG_VERSION).toBe(2);
+    expect(BUNDLED_PROVIDER_CATALOG_VERSION).toBe(3);
     expect(registry.listProviders().map((provider) => provider.id)).toEqual([
       "anthropic",
       "google",

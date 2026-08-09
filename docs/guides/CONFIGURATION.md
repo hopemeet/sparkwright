@@ -52,12 +52,12 @@ weaken access, approval, sandbox, confidentiality, tool, or write policy.
 SparkWright keeps installation, configuration, state, and project artifacts in
 separate locations:
 
-| What                                       | Default path                 | Notes                                                                                                                                                    |
-| ------------------------------------------ | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Program install                            | `~/.sparkwright`             | Used by source installs for `versions/`, `current`, and `bin/sparkwright`.                                                                               |
-| User config and user-authored capabilities | `~/.config/sparkwright`      | Personal `config.{json,yaml,yml}`, user Skills, agents, and commands.                                                                                    |
-| User runtime state                         | `~/.local/state/sparkwright` | Project trust pins, non-secret provider connection metadata, cron jobs/output, IM gateway routing state, host crash logs, and other machine-local state. |
-| Project data                               | `<workspace>/.sparkwright`   | Project config, project Skills/agents/commands, sessions, tasks, and exports.                                                                            |
+| What                                       | Default path                 | Notes                                                                                                                                                                                              |
+| ------------------------------------------ | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Program install                            | `~/.sparkwright`             | Used by source installs for `versions/`, `current`, and `bin/sparkwright`.                                                                                                                         |
+| User config and user-authored capabilities | `~/.config/sparkwright`      | Personal `config.{json,yaml,yml}`, user Skills, agents, and commands.                                                                                                                              |
+| User runtime state                         | `~/.local/state/sparkwright` | Project trust pins, non-secret provider connection/catalog metadata, TUI model favorites/recent usage, cron jobs/output, IM gateway routing state, host crash logs, and other machine-local state. |
+| Project data                               | `<workspace>/.sparkwright`   | Project config, project Skills/agents/commands, sessions, tasks, and exports.                                                                                                                      |
 
 `~/.sparkwright` is not a config or state directory. Treat it as replaceable
 program files owned by source install and uninstall scripts.
@@ -186,6 +186,26 @@ outside that map remain unavailable. A custom package or endpoint does not
 inherit official catalog metadata; when it has no allowlist, an explicitly
 typed `provider/model` remains valid.
 
+For new configuration, separate selection policy from metadata:
+
+```yaml
+identity:
+  providers:
+    openai:
+      modelPolicy:
+        allow: [gpt-5.4-mini, gpt-5.4-nano]
+        deny: [gpt-5.4-nano]
+      modelOverrides:
+        gpt-5.4-mini:
+          cost:
+            input: 1.25
+```
+
+`modelPolicy.allow` is an allowlist when present; `deny` is applied afterward.
+`modelOverrides` changes cost/provider options but never admits a model. A
+provider cannot mix legacy `models` with either new field. Trusted project
+policy may narrow a user policy but cannot widen it.
+
 Connect without adding a key to config:
 
 ```bash
@@ -217,6 +237,29 @@ Completed OAuth credentials use the same OS/headless credential-store boundary
 as stored API keys. Refresh is serialized per connection and a refresh failure
 does not fall back to an environment key.
 
+Refresh code-owned model metadata with
+`sparkwright provider catalog refresh [provider] --workspace .`. The Host
+keeps a versioned last-known-good cache at
+`$XDG_STATE_HOME/sparkwright/provider-catalog.json`; invalid, stale, failed, or
+superseded refreshes cannot overwrite newer valid data. Authenticated discovery
+is available only where a built-in official driver declares it.
+
+If an older personal config still contains `apiKey`, migrate it explicitly:
+
+```bash
+sparkwright provider migrate openai --workspace .
+# After verifying the stored connection:
+sparkwright provider migrate openai --remove-config --workspace .
+```
+
+The removal form checks the exact source value under a cross-process lock,
+writes and verifies the credential first, preserves unrelated YAML comments,
+and rolls back the new connection if config publication fails.
+
+TUI `/model` groups models by provider. Favorites (`Ctrl+F`) and recent usage
+only change picker ordering; they do not change `identity.model`, CLI defaults,
+or non-interactive selection.
+
 ### Provider Request Options
 
 Use `providerOptions` when an AI SDK provider exposes request-level controls
@@ -225,8 +268,9 @@ model under that provider; model-level options shallow-override the matching
 provider namespace.
 
 Keep these options in the same personal provider entry as the provider's
-`apiKey`/`baseURL`. Across config layers, a later `providers.openai` entry
-replaces the earlier provider entry rather than inheriting its secrets.
+`baseURL`. Across config layers, a later `providers.openai` entry replaces the
+earlier provider entry rather than inheriting its secrets; project
+`modelPolicy` is the exception and is conservatively narrowed with user policy.
 
 For OpenAI reasoning summaries:
 
@@ -237,15 +281,22 @@ For OpenAI reasoning summaries:
     "providers": {
       "openai": {
         "baseURL": "https://api.openai.com/v1",
-        "apiKey": "replace-me",
         "providerOptions": {
           "openai": {
-            "reasoningEffort": "low",
             "reasoningSummary": "auto"
           }
         },
-        "models": {
-          "gpt-5.4-mini": {}
+        "modelPolicy": {
+          "allow": ["gpt-5.4-mini"]
+        },
+        "modelOverrides": {
+          "gpt-5.4-mini": {
+            "providerOptions": {
+              "openai": {
+                "reasoningEffort": "low"
+              }
+            }
+          }
         }
       }
     }

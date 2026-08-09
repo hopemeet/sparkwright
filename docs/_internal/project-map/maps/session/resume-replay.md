@@ -9,6 +9,13 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-09
+- Scope: Favorite/Recent state affects picker ordering only and catalog refresh
+  affects future model resolution; neither changes resume or replay records.
+- Read: TUI preference owner, Host catalog owner, and resume path.
+- Tests: affected TUI/Host tests and the full release gate passed.
+
 - Status: Verified
 - Date: 2026-08-08
 - Scope: a queued process-local follow-up augments normal completed-turn

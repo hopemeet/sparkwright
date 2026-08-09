@@ -299,6 +299,7 @@ export type RequestKind =
   | "provider.connection.logout"
   | "provider.connection.remove"
   | "provider.connection.refresh"
+  | "provider.catalog.refresh"
   | "project.trust.inspect"
   | "project.trust.grant"
   | "project.trust.revoke"
@@ -898,9 +899,30 @@ export interface ProviderCatalogSnapshot {
   catalogVersion?: number;
   /** Monotonic Host connection-state revision. */
   revision?: number;
+  /** Non-secret active catalog cache state. */
+  catalogState?: ProviderCatalogStateSummary;
   /** Explicit projection requested by the client; omitted for legacy behavior. */
   projection?: ProviderCatalogProjection;
   providers: ProviderCatalogEntry[];
+}
+
+export interface ProviderCatalogStateSummary {
+  generation: number;
+  source: "bundled" | "signed" | "discovery";
+  stale: boolean;
+  fetchedAt?: string;
+  expiresAt?: string;
+}
+
+export interface ProviderCatalogRefreshRequestPayload {
+  /** Omit to refresh every code-owned source currently available. */
+  providerId?: string;
+}
+
+export interface ProviderCatalogRefreshResult {
+  status: "updated" | "unchanged" | "superseded";
+  refreshedProviders: string[];
+  catalogState: ProviderCatalogStateSummary;
 }
 
 export interface ProviderListRequestPayload {
@@ -1094,6 +1116,10 @@ export type HostRequest =
       "provider.connection.refresh",
       ProviderConnectionActionRequestPayload
     >
+  | HostRequestBase<
+      "provider.catalog.refresh",
+      ProviderCatalogRefreshRequestPayload
+    >
   | HostRequestBase<"project.trust.inspect", ProjectTrustInspectRequestPayload>
   | HostRequestBase<"project.trust.grant", ProjectTrustGrantRequestPayload>
   | HostRequestBase<"project.trust.revoke", ProjectTrustRevokeRequestPayload>
@@ -1283,6 +1309,7 @@ export interface ResponseResults {
     connection: ProviderConnectionSummary;
     revision: number;
   };
+  "provider.catalog.refresh": ProviderCatalogRefreshResult;
   "project.trust.inspect": ProjectTrustSnapshot;
   "project.trust.grant": ProjectTrustSnapshot;
   "project.trust.revoke": ProjectTrustSnapshot;

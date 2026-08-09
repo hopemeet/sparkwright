@@ -197,6 +197,56 @@ describe("ModelDialog provider catalog", () => {
     );
     expect(text).toContain("loading provider catalog");
   });
+
+  it("groups providers and orders favorites before recent models", async () => {
+    const text = await renderToText(
+      <ModelDialog
+        model=""
+        candidates={["anthropic/recent", "openai/other", "openai/favorite"]}
+        preferences={{
+          favorites: ["openai/favorite"],
+          recent: [
+            {
+              ref: "anthropic/recent",
+              lastUsedAt: Date.now(),
+              useCount: 10,
+            },
+          ],
+        }}
+        onCommit={() => {}}
+        onCancel={() => {}}
+        onToggleFavorite={() => {}}
+      />,
+    );
+
+    expect(text).toContain("ctrl+f toggle favorite");
+    expect(text).toContain("★   openai/favorite");
+    expect(text.indexOf("openai/favorite")).toBeLessThan(
+      text.indexOf("anthropic/recent"),
+    );
+  });
+
+  it("toggles the highlighted favorite with ctrl+f", async () => {
+    const { stdout, stdin } = interactiveIo();
+    const onToggleFavorite = vi.fn();
+    const app = render(
+      <ModelDialog
+        model="openai/current"
+        candidates={["openai/current", "openai/other"]}
+        onCommit={() => {}}
+        onCancel={() => {}}
+        onToggleFavorite={onToggleFavorite}
+      />,
+      { stdout, stdin, patchConsole: false, exitOnCtrlC: false },
+    );
+    await settle();
+    stdin.write("\x06");
+    await settle();
+    app.unmount();
+    stdin.destroy();
+
+    expect(onToggleFavorite).toHaveBeenCalledWith("openai/current");
+  });
 });
 
 async function renderToText(element: React.ReactElement): Promise<string> {

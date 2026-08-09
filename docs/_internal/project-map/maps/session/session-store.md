@@ -9,6 +9,13 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-09
+- Scope: P6.4 adds separate XDG catalog and TUI preference state; session-store
+  schemas, append ownership, and recovery are unchanged.
+- Read: new provider/preference stores and session-store boundary.
+- Tests: storage-focused P6.4 tests and the full release gate passed.
+
 - Status: Verified
 - Date: 2026-08-08
 - Scope: session fork now uses stable before/after run boundaries and

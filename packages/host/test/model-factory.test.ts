@@ -19,16 +19,25 @@ describe("model factory pricing diagnostics", () => {
       },
     });
     try {
+      const env = {
+        ...process.env,
+        XDG_CONFIG_HOME: join(workspace, "xdg-config"),
+      };
       const manager = new ProviderAuthManager({
         statePath: join(workspace, "provider-auth.json"),
       });
       await manager.catalog({
         workspaceRoot: workspace,
         model: "openai/gpt-5.4-mini",
+        env,
       });
 
       await expect(
-        createModel({ workspaceRoot: workspace, goal: "stable default" }),
+        createModel({
+          workspaceRoot: workspace,
+          goal: "stable default",
+          env,
+        }),
       ).resolves.toMatchObject({
         ok: true,
         resolved: { modelRef: "openai/gpt-4o-mini" },

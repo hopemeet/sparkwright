@@ -253,6 +253,7 @@ async function handleRequest(
                   "provider.connection.logout",
                   "provider.connection.remove",
                   "provider.connection.refresh",
+                  "provider.catalog.refresh",
                 ]
               : []),
             ...(hasAuthority(authorities, "provider_secret.submit") &&
@@ -615,6 +616,29 @@ async function handleRequest(
       } else {
         respondError(conn, req.id, r.error);
       }
+      return false;
+    }
+    case "provider.catalog.refresh": {
+      if (
+        transport === "remote" ||
+        !hasAuthority(authorities, "provider_connection.manage")
+      ) {
+        respondError(conn, req.id, {
+          code: "unauthorized",
+          message: "provider catalog refresh requires a trusted local client",
+        });
+        return false;
+      }
+      const result = await runtime.refreshProviderCatalog(
+        req.payload.providerId,
+      );
+      if (result.ok) {
+        respondOk(
+          conn,
+          req.id,
+          result.result as unknown as Record<string, unknown>,
+        );
+      } else respondError(conn, req.id, result.error);
       return false;
     }
     case "provider.auth.methods": {
@@ -1140,6 +1164,11 @@ function validateRequestPayload(req: HostRequest): string | undefined {
           "connected",
           "available",
         ])
+      );
+    case "provider.catalog.refresh":
+      return (
+        requireOnly(req.payload, ["providerId"]) ??
+        optionalString(req.payload, "providerId")
       );
     case "provider.auth.methods":
       return (

@@ -9,6 +9,14 @@ See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runti
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-09
+- Scope: Explicit legacy credential cleanup targets the resolved config file
+  under an exact-value lock; it is a local management command, not run-time
+  workspace.write authority. Workspace mutation policy is unchanged.
+- Read: config file migration and workspace-write boundary.
+- Tests: YAML preservation/rollback tests and the full release gate passed.
+
 - Status: Verified
 - Date: 2026-08-08
 - Scope: Extension tools that reach the Host catalog are wrapped by the

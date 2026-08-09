@@ -115,12 +115,11 @@ follow the active maps below for the current contract.
   use raw refs with parent-model inheritance. Logical aliases, model
   allowlists/budgets, and per-logical model usage keying are deferred out of the
   MVP. Active model construction contract: [modules/host.md](modules/host.md).
-- [designs/provider-connections.md](designs/provider-connections.md) — P6.0
-  design baseline plus implemented P6.1 registry/catalog compatibility and
-  P6.2 API-key connections. P6.3 adds code-owned OAuth drivers, principal-bound
-  attempts, replay-safe completion, serialized refresh, and CLI/TUI progress.
-  Dynamic catalog refresh, picker preferences, and final migration assistance
-  remain in P6.4.
+- [designs/provider-connections.md](designs/provider-connections.md) — Completed
+  P6 design and implementation history: registry/catalog compatibility,
+  API-key and OAuth connections, signed dynamic catalog refresh, model policy,
+  transactional legacy migration, and TUI model preferences. Active contracts
+  remain in the routed Host, Protocol, CLI, TUI, and Edge Package maps.
 
 ## Archived Reviews
 
@@ -152,7 +151,7 @@ unsourced [QA convergence stub](../reviews/qa-convergence-plan.md).
 - `packages/host/src/config.ts` or `packages/host/src/config-zod-schema.ts`: [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
 - `packages/host/src/config/*`: [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
 - `packages/host/src/tool-identities.ts`, `packages/host/src/tool-catalog.ts`, `packages/host/src/tool-selectors.ts`, or `packages/host/src/tool-surface.ts`: [modules/host.md](modules/host.md), [modules/coding-tools.md](modules/coding-tools.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/capabilities/README.md](maps/capabilities/README.md)
-- `packages/host/src/provider-catalog.ts`, `packages/host/src/provider-auth.ts`, `packages/host/src/provider-oauth.ts`, `packages/host/src/provider-credential-store.ts`, `packages/host/src/model-builder.ts`, `packages/host/src/model-factory.ts`, or `packages/tui/src/components/connect-dialog.tsx`: [modules/host.md](modules/host.md), [modules/protocol.md](modules/protocol.md), [modules/cli.md](modules/cli.md), [modules/tui.md](modules/tui.md), [modules/edge-packages.md](modules/edge-packages.md), [designs/provider-connections.md](designs/provider-connections.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md)
+- `packages/host/src/provider-catalog.ts`, `packages/host/src/provider-catalog-store.ts`, `packages/host/src/provider-auth.ts`, `packages/host/src/provider-oauth.ts`, `packages/host/src/provider-credential-store.ts`, `packages/host/src/model-builder.ts`, `packages/host/src/model-factory.ts`, `packages/tui/src/components/connect-dialog.tsx`, or `packages/tui/src/lib/model-preferences.ts`: [modules/host.md](modules/host.md), [modules/protocol.md](modules/protocol.md), [modules/cli.md](modules/cli.md), [modules/tui.md](modules/tui.md), [modules/edge-packages.md](modules/edge-packages.md), [designs/provider-connections.md](designs/provider-connections.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md)
 - `packages/host/src/runtime.ts`, `packages/host/src/run-access.ts`, `packages/host/src/run-security-plan.ts`, or `packages/host/src/run-policy.ts`: [modules/host.md](modules/host.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/host/src/runtime/*`, including interaction/control routing in `execution-interaction-operations.ts`, run preparation in `run-preparation-operations.ts`, Agent/Delegate assembly in `agent-runtime-assembly.ts`, Workflow durable ownership in `workflow-runtime-operations.ts`, and live episode ownership in `workflow-episode-runtime.ts`: [modules/host.md](modules/host.md), [modules/agent-runtime.md](modules/agent-runtime.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/capabilities/agents.md](maps/capabilities/agents.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/approvals.md](maps/safety/approvals.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/safety/shell.md](maps/safety/shell.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/host/src/session-queries.ts` or `packages/host/src/session-compaction.ts`: [modules/host.md](modules/host.md), [maps/session/session-store.md](maps/session/session-store.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
@@ -227,6 +226,23 @@ TUI events; it is not a trace diagnostic report and must not replace
 trace/session inspection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-08-09
+- Scope: P6.4 routes signed/authenticated model metadata refresh, catalog
+  LKG/TTL/generation-CAS storage, model policy compatibility, transactional
+  config-credential migration, and TUI Favorite/Recent ordering through the
+  existing Host provider owner and product surfaces. Dynamic metadata cannot
+  supply packages, endpoints, authentication, or drivers.
+- Read: ProviderCatalogStore/AuthManager, config policy and migration I/O,
+  Host authority/dispatch, Protocol/schema/SDK, CLI/TUI pickers, public docs,
+  provider module maps, and A20-A24 regressions.
+- Route review: Core run-loop/tool orchestration, Agent/MCP capabilities,
+  approvals/workspace/shell, session/resume, compaction, and trace semantics are
+  unchanged; catalog refresh is a local pre-run control path and preferences
+  are presentation-only user state.
+- Tests: full release gate passed, including Host 617/617, CLI 177/177, TUI
+  559/559, project-trust and 16-case regressions, and both install smokes.
 
 - Status: Verified
 - Date: 2026-08-09

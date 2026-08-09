@@ -222,6 +222,13 @@ session trace.jsonl
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-09
+- Scope: P6.4 provider management emits non-secret CLI/TUI results and does not
+  alter transcript export or trace diagnostic projections.
+- Read: provider response DTOs, CLI/TUI rendering, and export boundary.
+- Tests: secret-sentinel, affected UI tests, and the full release gate passed.
+
 - Status: Verified
 - Date: 2026-07-19
 - Scope: reviewed TUI/export consumers for the assessment migration. Committed

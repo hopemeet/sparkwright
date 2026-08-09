@@ -10,6 +10,17 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 
 - Status: Verified
 - Date: 2026-08-09
+- Scope: P6.4 adds `provider catalog refresh [provider]` and explicit
+  `provider migrate <provider> [--remove-config]`. Migration reuses an already
+  verified matching stored connection, atomically removes only the exact legacy
+  value when requested, and emits a non-secret receipt.
+- Read: provider parser/handler/help, Host catalog/migration owner, config file
+  publication, and focused CLI sentinel/YAML preservation tests.
+- Tests: focused CLI migration/provider checks, CLI 177/177, and the full
+  release gate passed.
+
+- Status: Verified
+- Date: 2026-08-09
 - Scope: P6.3 adds `--auth-method` selection and interactive OAuth progress to
   `provider connect`. Browser/device attempts display bounded instructions and
   poll Host status; code flows use hidden input; errors and interruption cancel

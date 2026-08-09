@@ -6,6 +6,12 @@ major; breaking changes bump the major.
 
 ## Unreleased
 
+- Add P6.4 catalog refresh and cache state: trusted-local-only
+  `provider.catalog.refresh`, signed-artifact verification, authenticated
+  code-owned model discovery, generation-CAS publication, LKG/TTL fallback,
+  and non-secret `catalogState` projections. Dynamic data remains metadata-only
+  and cannot alter provider packages, endpoints, auth methods, or drivers.
+
 - Add P6.3 OAuth attempts:
   `provider.auth.begin|status|complete|cancel`, bounded browser/device/code
   presentations, principal/client binding, PKCE/state/nonce validation,

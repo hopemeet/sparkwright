@@ -10,6 +10,11 @@ import { isBackInput } from "../lib/input-key.js";
 import { windowAroundCursor } from "../lib/list-window.js";
 import { useTheme } from "../lib/theme-context.js";
 import { DialogFrame } from "./dialog-frame.js";
+import {
+  compareModelPreferences,
+  EMPTY_MODEL_PREFERENCES,
+  type ModelPreferencesSnapshot,
+} from "../lib/model-preferences.js";
 
 type ConnectStage = "provider" | "method" | "secret" | "oauth" | "model";
 
@@ -36,9 +41,10 @@ export function ConnectDialog(props: {
     code: string,
   ) => Promise<ProviderAuthAttemptSummary | null>;
   onCancelOAuth: (attemptId: string) => Promise<void>;
-  onRefresh: () => Promise<ProviderCatalogSnapshot | null>;
+  onRefresh: (providerId?: string) => Promise<ProviderCatalogSnapshot | null>;
   onCommitModel: (model: string) => void;
   onCancel: () => void;
+  preferences?: ModelPreferencesSnapshot;
 }): React.ReactElement {
   const theme = useTheme();
   const [stage, setStage] = useState<ConnectStage>("provider");
@@ -60,10 +66,18 @@ export function ConnectDialog(props: {
   const selectedMethod = methodItems.find((method) => method.id === methodId);
   const models = useMemo(
     () =>
-      (connectedCatalog ?? props.catalog)?.providers
-        .find((provider) => provider.id === providerId)
-        ?.models.filter((model) => model.available !== false) ?? [],
-    [connectedCatalog, props.catalog, providerId],
+      [
+        ...((connectedCatalog ?? props.catalog)?.providers
+          .find((provider) => provider.id === providerId)
+          ?.models.filter((model) => model.available !== false) ?? []),
+      ].sort((left, right) =>
+        compareModelPreferences(
+          left.ref,
+          right.ref,
+          props.preferences ?? EMPTY_MODEL_PREFERENCES,
+        ),
+      ),
+    [connectedCatalog, props.catalog, props.preferences, providerId],
   );
   const displayItems =
     stage === "provider"
@@ -77,7 +91,10 @@ export function ConnectDialog(props: {
             label: method.label,
           }))
         : stage === "model"
-          ? models.map((model) => ({ key: model.ref, label: model.ref }))
+          ? models.map((model) => ({
+              key: model.ref,
+              label: `${props.preferences?.favorites.includes(model.ref) ? "★ " : ""}${model.ref}`,
+            }))
           : [];
   const boundedCursor =
     displayItems.length === 0 ? 0 : Math.min(cursor, displayItems.length - 1);
@@ -103,7 +120,7 @@ export function ConnectDialog(props: {
       }
       if (next.status === "completed" && next.connection) {
         setBusy(true);
-        const catalog = await props.onRefresh();
+        const catalog = await props.onRefresh(providerId);
         if (!active) return;
         setOauthAttempt(next);
         if (catalog) setConnectedCatalog(catalog);
@@ -203,7 +220,7 @@ export function ConnectDialog(props: {
               );
               return;
             }
-            const catalog = await props.onRefresh();
+            const catalog = await props.onRefresh(providerId);
             if (catalog) setConnectedCatalog(catalog);
             setCursor(0);
             setStage("model");
@@ -221,6 +238,17 @@ export function ConnectDialog(props: {
       }
       if (!key.ctrl && !key.meta && input)
         setSecret((current) => current + input);
+      return;
+    }
+    if (stage === "provider" && key.ctrl && input === "r") {
+      setBusy(true);
+      setError(undefined);
+      void props
+        .onRefresh()
+        .then((catalog) => {
+          if (catalog) setConnectedCatalog(catalog);
+        })
+        .finally(() => setBusy(false));
       return;
     }
     if (key.upArrow) {
@@ -375,7 +403,9 @@ export function ConnectDialog(props: {
         <Text color={theme.muted}>(no available entries)</Text>
       ) : null}
       {stage !== "secret" && stage !== "oauth" ? (
-        <Text color={theme.muted}>↑↓ select · enter continue · esc back</Text>
+        <Text color={theme.muted}>
+          ↑↓ select · enter continue · ctrl+r refresh catalog · esc back
+        </Text>
       ) : null}
     </DialogFrame>
   );

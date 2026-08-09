@@ -206,6 +206,152 @@ describe("loadHostConfig", () => {
     });
   });
 
+  it("enforces modelPolicy while applying modelOverrides metadata", () => {
+    const config = {
+      providers: {
+        openai: {
+          apiKey: "sk-test",
+          modelPolicy: {
+            allow: ["gpt-5.4-mini", "gpt-5.4-nano"],
+            deny: ["gpt-5.4-nano"],
+          },
+          modelOverrides: {
+            "gpt-5.4-mini": {
+              cost: { input: 1.25 },
+              providerOptions: { openai: { reasoningEffort: "low" } },
+            },
+          },
+        },
+      },
+    };
+
+    expect(resolveModelSelection(config, "openai/gpt-5.4-mini")).toMatchObject({
+      kind: "configured",
+      cost: { input: 1.25 },
+      providerOptions: { openai: { reasoningEffort: "low" } },
+    });
+    expect(resolveModelSelection(config, "openai/gpt-5.4-nano")).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("modelPolicy"),
+    });
+    expect(resolveModelSelection(config, "openai/unlisted")).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("modelPolicy"),
+    });
+  });
+
+  it("reports legacy models mixed with the new model policy fields", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        identity: {
+          providers: {
+            openai: {
+              models: { legacy: {} },
+              modelPolicy: { allow: ["modern"] },
+              modelOverrides: { modern: {} },
+            },
+          },
+        },
+      });
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+      expect(loaded.errors).toContainEqual(
+        expect.objectContaining({
+          field: "providers.openai.models",
+          message: expect.stringContaining("cannot be combined"),
+        }),
+      );
+      expect(loaded.config.providers?.openai?.models).toEqual({ legacy: {} });
+      expect(loaded.config.providers?.openai?.modelPolicy).toBeUndefined();
+      expect(loaded.config.providers?.openai?.modelOverrides).toBeUndefined();
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("lets trusted project modelPolicy narrow but not widen user policy", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        identity: {
+          providers: {
+            openai: {
+              modelPolicy: {
+                allow: ["shared", "user-only"],
+                deny: ["blocked-by-user"],
+              },
+            },
+          },
+        },
+      });
+      await writeProjectConfig(cwd, {
+        identity: {
+          providers: {
+            openai: {
+              modelPolicy: {
+                allow: ["shared", "project-only"],
+                deny: ["blocked-by-project"],
+              },
+            },
+          },
+        },
+      });
+
+      const loaded = await loadHostConfig(
+        cwd,
+        { XDG_CONFIG_HOME: xdg },
+        { projectMode: "trusted" },
+      );
+      expect(loaded.errors).toEqual([]);
+      expect(loaded.config.providers?.openai?.modelPolicy).toEqual({
+        allow: ["shared"],
+        deny: ["blocked-by-user", "blocked-by-project"],
+      });
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("does not let project policy widen a user legacy models allowlist", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        identity: {
+          providers: {
+            openai: { models: { shared: {}, "user-only": {} } },
+          },
+        },
+      });
+      await writeProjectConfig(cwd, {
+        identity: {
+          providers: {
+            openai: { modelPolicy: { allow: ["shared", "project-only"] } },
+          },
+        },
+      });
+
+      const loaded = await loadHostConfig(
+        cwd,
+        { XDG_CONFIG_HOME: xdg },
+        { projectMode: "trusted" },
+      );
+      expect(loaded.errors).toEqual([]);
+      expect(loaded.config.providers?.openai?.models).toBeUndefined();
+      expect(loaded.config.providers?.openai?.modelPolicy).toEqual({
+        allow: ["shared"],
+      });
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("validates provider options as provider-keyed objects", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();

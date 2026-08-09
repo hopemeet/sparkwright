@@ -64,6 +64,7 @@ import {
   type TaskRecordSnapshot,
   type CapabilitySnapshot,
   type ProviderCatalogSnapshot,
+  type ProviderCatalogRefreshResult,
   type ProviderCredentialProfileSummary,
   type ProviderListRequestPayload,
   type ProviderAuthMethodsSnapshot,
@@ -398,6 +399,32 @@ export class HostRuntime {
           message: error instanceof Error ? error.message : String(error),
         },
       };
+    }
+  }
+
+  async refreshProviderCatalog(
+    providerId?: string,
+  ): Promise<
+    | { ok: true; result: ProviderCatalogRefreshResult }
+    | { ok: false; error: ProtocolError }
+  > {
+    try {
+      const includeProjectConfig = await this.providerProjectConfigAllowed();
+      const result = await this.opts.providerAuth.refreshCatalog({
+        ...(providerId ? { providerId } : {}),
+        context: {
+          workspaceRoot: this.opts.workspaceRoot,
+          includeProjectConfig,
+        },
+      });
+      return result.ok
+        ? result
+        : {
+            ok: false,
+            error: { code: "invalid_payload", message: result.message },
+          };
+    } catch (error) {
+      return { ok: false, error: providerOperationError(error) };
     }
   }
 

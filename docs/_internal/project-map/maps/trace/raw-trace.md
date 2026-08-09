@@ -558,6 +558,14 @@ EventLog emits full event
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-09
+- Scope: Catalog artifacts, discovery headers, credentials, and preference
+  state do not enter raw run events or trace payloads; raw-trace contracts are
+  unchanged.
+- Read: Host provider control path, Protocol DTOs, and trace boundary.
+- Tests: secret-sentinel/provider protocol tests and the full release gate passed.
+
 - Status: Verified
 - Date: 2026-07-16T10:44:25+0800
 - Scope: Task terminal evidence now recognizes only canonical `task_create` and

@@ -823,7 +823,9 @@ variables to reconstruct it.
 | `projection` | `all` \| `connected` \| `available` | no       | Explicit catalog projection; omission preserves the configured view. |
 
 **Response result:** `ProviderCatalogSnapshot`. `catalogVersion` identifies the
-bundled metadata snapshot. An omitted projection preserves the compatibility
+active metadata snapshot. `catalogState` reports the non-secret cache
+generation, source (`bundled`, `signed`, or authenticated `discovery`), TTL,
+and stale state. An omitted projection preserves the compatibility
 view of configured providers. `all` includes bundled and configured providers,
 `connected` includes providers with an active credential source, and
 `available` further requires at least one connected model admitted by config
@@ -832,8 +834,10 @@ provider YAML entry. Provider entries expose `configured`, `connected`,
 and `available` booleans; model entries expose their own `available` result.
 
 Model enumeration comes from the Host-composed `ProviderRegistry`. A non-empty
-legacy `models` map remains an allowlist; otherwise bundled catalog models and
-a valid explicitly typed model can participate. Official bundled metadata is
+legacy `models` map remains an allowlist. New config separates
+`modelPolicy.allow|deny` from `modelOverrides`; overrides can change cost or
+provider options but cannot widen an allowlist. Otherwise catalog models and a
+valid explicitly typed model can participate. Official bundled metadata is
 not projected onto a provider whose configured package or endpoint changes its
 driver binding. Each provider contains a compatibility credential profile plus
 non-secret connection summaries. A summary can expose opaque id, status,
@@ -841,6 +845,24 @@ source category, exact driver/endpoint/method binding, selection, grant scope,
 generation, and timestamps, but never credential material. `revision` is the
 monotonic connection-metadata revision clients can poll for cross-process
 changes.
+
+### `provider.catalog.refresh`
+
+Refresh the Host-owned model metadata cache. The optional payload
+`{ "providerId": string }` targets one code-owned authenticated discovery
+driver; omission refreshes every currently available code-owned source. The
+request requires `provider_connection.manage` on a trusted local transport.
+Remote transports are rejected even when they advertise that authority.
+
+Signed artifacts are verified against code-owned trusted keys before strict,
+bounded metadata validation. Authenticated discovery uses only a selected or
+ambient credential whose exact official driver/endpoint binding applies; the
+credential and request headers never appear in the result. Publication uses a
+generation compare-and-swap. An invalid, slow, failed, or oversized refresh
+cannot replace the bundled or last-known-good catalog.
+
+**Response result:**
+`{ status: "updated" | "unchanged" | "superseded", refreshedProviders: string[], catalogState: ProviderCatalogStateSummary }`.
 
 ### Provider authentication methods and attempts
 

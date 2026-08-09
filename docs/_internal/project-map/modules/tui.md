@@ -12,6 +12,17 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 
 - Status: Verified
 - Date: 2026-08-09
+- Scope: P6.4 groups `/model` by provider, orders Favorite and Recent models,
+  persists presentation-only preference state, exposes `Ctrl+F`, and routes
+  explicit catalog refresh through the SDK. `/connect` refreshes after login
+  and opens only the connected provider's policy-filtered models.
+- Read: App preference/catalog state, ModelDialog, ConnectDialog, LayerRenderer,
+  RunController, and focused Ink/state tests.
+- Tests: focused TUI preference/model/connect checks, TUI 559/559, and the full
+  release gate passed.
+
+- Status: Verified
+- Date: 2026-08-09
 - Scope: P6.3 extends `/connect` with generic OAuth presentation, browser/code
   progress, status polling, cancellation on Escape, and post-completion catalog
   refresh/model selection. TUI never owns provider-specific endpoints or

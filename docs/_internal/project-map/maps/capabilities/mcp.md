@@ -9,6 +9,13 @@ See [../../modules/mcp-adapter.md](../../modules/mcp-adapter.md).
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-09
+- Scope: P6.4 provider catalog and local login control paths do not change MCP
+  discovery, schema loading, transport, or tool execution authority.
+- Read: Host provider dispatch and MCP capability boundary.
+- Tests: affected Host/schema checks and the full release gate passed.
+
 - Status: Verified
 - Date: 2026-08-08
 - Scope: project MCP configuration is excluded from config merge and MCP

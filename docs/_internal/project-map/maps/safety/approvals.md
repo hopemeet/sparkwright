@@ -9,6 +9,13 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-09
+- Scope: Provider catalog refresh remains trusted-local and pre-run; P6.4 does
+  not widen run approvals or create a model-facing credential action.
+- Read: Host connection authority, migration boundary, and approval map.
+- Tests: local/remote provider protocol tests and the full release gate passed.
+
 - Status: Verified
 - Date: 2026-08-08
 - Scope: governed Extension tools reuse the ordinary tool approval gate.

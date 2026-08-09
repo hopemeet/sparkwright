@@ -12,6 +12,16 @@ See also [../maps/safety/approvals.md](../maps/safety/approvals.md) and [../maps
 
 - Status: Verified
 - Date: 2026-08-09
+- Scope: P6.4 adds trusted-local `provider.catalog.refresh`, non-secret catalog
+  cache state/result DTOs, schema fixtures, Host dispatch validation, and SDK
+  forwarding. The remote mutation boundary remains closed.
+- Read: Protocol request/result maps, Host authority/validators, JSON schema,
+  SDK Core, reference protocol, and local/remote provider protocol tests.
+- Tests: focused Protocol/Host/SDK checks, schema generation, and the full
+  release gate passed.
+
+- Status: Verified
+- Date: 2026-08-09
 - Scope: P6.3 adds generic `provider.auth.begin|status|complete|cancel`
   requests and bounded OAuth attempt/method DTOs. Host dispatch binds attempt
   ownership to the transport principal and client connection; remote

@@ -31,8 +31,9 @@ describe("ProviderAuthManager", () => {
         projection: "all",
       });
       expect(all).toMatchObject({
-        catalogVersion: 2,
+        catalogVersion: 3,
         projection: "all",
+        catalogState: { generation: 0, source: "bundled", stale: false },
       });
       expect(all.providers.map((provider) => provider.id)).toEqual([
         "anthropic",
@@ -408,6 +409,102 @@ describe("ProviderAuthManager", () => {
       ).toHaveLength(1);
     } finally {
       await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refreshes authenticated model discovery and keeps its last-known-good catalog on failure", async () => {
+    const fixture = await cleanProviderFixture("catalog-discovery");
+    const credentialStore = new MemoryProviderCredentialStore();
+    const secret = "catalog-discovery-secret";
+    const authorizations: string[] = [];
+    const manager = new ProviderAuthManager({
+      env: fixture.env,
+      statePath: fixture.statePath,
+      credentialStore,
+      catalogFetch: async (_url, init) => {
+        authorizations.push(
+          new Headers(init?.headers).get("authorization") ?? "",
+        );
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: "vendor/new-model",
+                name: "New Model",
+                context_length: 128_000,
+                pricing: { prompt: "0.000001", completion: "0.000002" },
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+      now: () => new Date("2026-08-09T00:00:00.000Z"),
+    });
+    try {
+      await manager.submitSecret({
+        providerId: "openrouter",
+        methodId: "api_key",
+        secret,
+        context: { workspaceRoot: fixture.workspace },
+      });
+      const refreshed = await manager.refreshCatalog({
+        providerId: "openrouter",
+        context: { workspaceRoot: fixture.workspace },
+      });
+      expect(refreshed).toMatchObject({
+        ok: true,
+        result: {
+          status: "updated",
+          refreshedProviders: ["openrouter"],
+          catalogState: { generation: 1, source: "discovery", stale: false },
+        },
+      });
+      expect(authorizations).toEqual([`Bearer ${secret}`]);
+
+      const catalog = await manager.catalog({
+        workspaceRoot: fixture.workspace,
+        projection: "available",
+      });
+      expect(catalog.catalogState).toMatchObject({
+        generation: 1,
+        source: "discovery",
+      });
+      expect(catalog.providers[0]?.models).toEqual([
+        expect.objectContaining({
+          ref: "openrouter/vendor/new-model",
+          available: true,
+        }),
+      ]);
+      expect(JSON.stringify({ refreshed, catalog })).not.toContain(secret);
+
+      const failing = new ProviderAuthManager({
+        env: fixture.env,
+        statePath: fixture.statePath,
+        credentialStore,
+        catalogFetch: async () => {
+          throw new Error(`network failed for ${secret}`);
+        },
+      });
+      await expect(
+        failing.refreshCatalog({
+          providerId: "openrouter",
+          context: { workspaceRoot: fixture.workspace },
+        }),
+      ).resolves.toMatchObject({
+        ok: false,
+        message: expect.stringContaining("last-known-good"),
+      });
+      const retained = await failing.catalog({
+        workspaceRoot: fixture.workspace,
+        projection: "available",
+      });
+      expect(retained.catalogState?.generation).toBe(1);
+      expect(retained.providers[0]?.models[0]?.ref).toBe(
+        "openrouter/vendor/new-model",
+      );
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
     }
   });
 

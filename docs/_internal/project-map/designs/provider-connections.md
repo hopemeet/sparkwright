@@ -1,6 +1,6 @@
 # Design: Provider Connections and Model Catalog
 
-> **Status: P6.1-P6.3 implemented; P6.4 remains planned.**
+> **Status: P6.1-P6.4 implemented and release-verified.**
 > This document locks the ownership, security, compatibility, migration, and
 > acceptance decisions for P6. Active behavior remains defined by
 > [Host](../modules/host.md), [Protocol](../modules/protocol.md),
@@ -817,6 +817,11 @@ reject replay through the same connection/grant boundary as API keys.
 
 ### P6.4: Dynamic catalog and product polish
 
+Implemented 2026-08-09. ProviderAuthManager remains the single provider owner;
+ProviderCatalogStore is its metadata persistence port. Dynamic inputs are
+strictly bounded metadata and cannot alter code-owned connection descriptors,
+packages, endpoints, auth methods, or drivers.
+
 - Add signed catalog refresh, LKG/TTL behavior, and authenticated model
   discovery where a built-in driver supports it.
 - Add Favorite/Recent ordering, provider grouping, and post-connect filtered
@@ -913,6 +918,16 @@ implementation:
 - provider fallback/routing based on price, latency, or availability.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-08-09
+- Scope: P6.1-P6.4 are implemented. P6.4 adds signed/authenticated metadata
+  refresh, generation-CAS LKG/TTL storage, new model policy fields, explicit
+  reversible legacy migration, and presentation-only Favorite/Recent ordering.
+- Read: catalog/auth/store/config/migration owners, Host authority/dispatch,
+  Protocol/schema/SDK, CLI/TUI, public docs, and A20-A24 regressions.
+- Tests: full release gate passed, including all workspace tests, production
+  audit, project-trust and 16-case regressions, and source/release install smokes.
 
 - Status: Verified
 - Date: 2026-08-09

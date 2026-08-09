@@ -9,6 +9,13 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-09
+- Scope: P6.4 resolves provider metadata/policy before model construction; the
+  Core run loop, step budget, steering, and terminal semantics are unchanged.
+- Read: Host model resolution and Core run-loop handoff.
+- Tests: affected Host/config tests and the full release gate passed.
+
 - Status: Verified
 - Date: 2026-08-08
 - Scope: run preparation now assesses Project Trust before executable project
