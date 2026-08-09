@@ -51,6 +51,9 @@ contracts, and focused checklists that no longer fit here.
 - `sdk-core` exposes provider catalog and auth-action request methods without
   introducing its own provider or credential shapes. Node/browser transports
   remain unaware of credential material.
+- `sdk-core` forwards the P6.3 OAuth attempt lifecycle using Protocol-owned
+  DTOs. It does not interpret provider-specific prompts, retain temporary
+  secrets, or implement credential refresh.
 - Provider packages adapt external model ecosystems into core `ModelAdapter`
   and model registry shapes. Host model construction, config loading, pricing,
   and capability diagnostics still own product behavior.
@@ -173,6 +176,18 @@ contracts, and focused checklists that no longer fit here.
   source exports. It should not be used as the sole authority for behavior.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-08-09
+- Scope: SDK Core forwards the Protocol-owned OAuth attempt lifecycle while
+  provider packages remain adapter-only. Provider-specific authorization,
+  exchange, refresh, and secret handling remain Host-owned.
+- Read: SDK Core client/exports/tests, Protocol OAuth DTOs, Host OAuth owner,
+  and provider adapter boundaries.
+- Tests: focused SDK Core and Host OAuth routes passed; full
+  `npm run release:check` passed with SDK Core 15/15, Host 608/608, Protocol
+  6/6, all workspace suites/typechecks, production audit, and both install
+  smokes.
 
 - Status: Verified
 - Date: 2026-08-09

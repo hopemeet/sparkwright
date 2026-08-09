@@ -12,7 +12,38 @@ import {
 } from "./config/contracts.js";
 import { costToPricing } from "./config/config-implementation.js";
 
-export const BUNDLED_PROVIDER_CATALOG_VERSION = 1;
+export const BUNDLED_PROVIDER_CATALOG_VERSION = 2;
+
+export type ProviderAuthPrompt =
+  | {
+      id: string;
+      kind: "text" | "secret";
+      label: string;
+      required?: boolean;
+    }
+  | {
+      id: string;
+      kind: "select";
+      label: string;
+      required?: boolean;
+      options: ReadonlyArray<{ value: string; label: string }>;
+    };
+
+export type ProviderConnectionAuthMethod =
+  | {
+      id: "api_key";
+      kind: "api_key";
+      label?: string;
+      environmentVariables: readonly string[];
+    }
+  | {
+      id: string;
+      kind: "oauth";
+      label: string;
+      flow: "browser" | "device" | "code";
+      implementationId: string;
+      prompts?: readonly ProviderAuthPrompt[];
+    };
 
 export interface ProviderConnectionDescriptor {
   providerId: string;
@@ -21,12 +52,9 @@ export interface ProviderConnectionDescriptor {
   driverId: string;
   npm: string;
   officialEndpoint: string;
-  /** @reserved Bounded login-method declarations consumed by the P6.2 connection flow. */
-  authMethods: ReadonlyArray<{
-    id: "api_key";
-    kind: "api_key";
-    environmentVariables: readonly string[];
-  }>;
+  baseUrlEnvironmentVariables?: readonly string[];
+  /** Code-owned bounded login declarations. Remote catalog/config cannot add implementations. */
+  authMethods: readonly ProviderConnectionAuthMethod[];
   /** @reserved Side-effect-free validation policy consumed by P6.2 connection status. */
   validation: { kind: "none" };
 }
@@ -52,11 +80,36 @@ const OPENAI_MODELS = [
 export const BUNDLED_PROVIDER_CONNECTION_DESCRIPTORS: readonly ProviderConnectionDescriptor[] =
   [
     {
+      providerId: "openrouter",
+      displayName: "OpenRouter",
+      driverId: "ai-sdk-openrouter.v1",
+      npm: "@ai-sdk/openai",
+      officialEndpoint: "https://openrouter.ai/api/v1",
+      baseUrlEnvironmentVariables: ["OPENROUTER_BASE_URL"],
+      authMethods: [
+        {
+          id: "oauth_pkce",
+          kind: "oauth",
+          label: "Browser login",
+          flow: "browser",
+          implementationId: "openrouter.pkce-key.v1",
+        },
+        {
+          id: "api_key",
+          kind: "api_key",
+          label: "API key",
+          environmentVariables: ["OPENROUTER_API_KEY"],
+        },
+      ],
+      validation: { kind: "none" },
+    },
+    {
       providerId: "openai",
       displayName: "OpenAI",
       driverId: "ai-sdk-openai.v1",
       npm: "@ai-sdk/openai",
       officialEndpoint: "https://api.openai.com/v1",
+      baseUrlEnvironmentVariables: ["OPENAI_BASE_URL"],
       authMethods: [
         {
           id: "api_key",
@@ -107,6 +160,14 @@ export const BUNDLED_PROVIDER_CONNECTION_DESCRIPTORS: readonly ProviderConnectio
 export const BUNDLED_PROVIDER_CATALOG: BundledProviderCatalogSnapshot = {
   version: BUNDLED_PROVIDER_CATALOG_VERSION,
   providers: [
+    {
+      id: "openrouter",
+      displayName: "OpenRouter",
+      models: ["openrouter/auto"].map((id) => ({
+        id,
+        displayName: id,
+      })),
+    },
     {
       id: "openai",
       displayName: "OpenAI",

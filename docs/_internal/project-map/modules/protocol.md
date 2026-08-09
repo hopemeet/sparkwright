@@ -12,6 +12,18 @@ See also [../maps/safety/approvals.md](../maps/safety/approvals.md) and [../maps
 
 - Status: Verified
 - Date: 2026-08-09
+- Scope: P6.3 adds generic `provider.auth.begin|status|complete|cancel`
+  requests and bounded OAuth attempt/method DTOs. Host dispatch binds attempt
+  ownership to the transport principal and client connection; remote
+  transports cannot use the OAuth mutation surface.
+- Read: Protocol DTO/request maps, Host validators/dispatch/authority, JSON
+  schema fixtures, SDK forwarding, and protocol reference/changelog.
+- Tests: full `npm run release:check` passed, including Protocol 6/6, SDK Core
+  15/15, Host 608/608, 22 schemas / 23 instances plus protocol consistency,
+  16/16 regression cases, and both install smokes.
+
+- Status: Verified
+- Date: 2026-08-09
 - Scope: P6.2 adds auth-method discovery, a trusted-local-only secret-submit
   request, stored connection summaries, revision/grant/binding metadata, and
   select/disconnect/logout/remove/refresh mutations. Secret submission and

@@ -403,11 +403,12 @@ TaskManager/root, and route generic/live MCP preparation through the canonical
 run-preparation helper behind one narrow port. Run the import/internal-import
 gates.
 
-For `provider-auth.ts`, `provider-credential-store.ts`, `model-builder.ts`,
-`model-factory.ts`, `/connect`, or provider protocol methods, run:
+For `provider-auth.ts`, `provider-oauth.ts`, `provider-credential-store.ts`,
+`model-builder.ts`, `model-factory.ts`, `/connect`, or provider protocol
+methods, run:
 
 ```bash
-npm --workspace @sparkwright/host test -- test/provider-auth.test.ts test/provider-credential-store.test.ts test/provider-protocol.test.ts test/model-factory.test.ts test/protocol.test.ts
+npm --workspace @sparkwright/host test -- test/provider-auth.test.ts test/provider-oauth.test.ts test/provider-credential-store.test.ts test/provider-protocol.test.ts test/model-factory.test.ts test/protocol.test.ts
 npm --workspace @sparkwright/sdk-core test -- test/client.test.ts
 npm --workspace @sparkwright/cli test -- test/cli.test.ts -t provider
 npm --workspace @sparkwright/tui test -- test/connect-dialog.test.tsx test/model-dialog.test.tsx test/sdk-cutover.test.ts test/build-command-registry.test.ts
@@ -420,8 +421,9 @@ and timestamps; catalog/protocol/CLI/TUI output must not contain credential
 material. Cover 0600/corruption behavior, cross-manager writes and revision
 observation, local secret submission, remote denial, exact endpoint binding,
 no ambient fallback, ambient suppression, transactional migration rollback,
-masked TUI input, adapter replacement, abortable waits, and fail-fast behavior
-for clients that did not advertise interactive auth.
+masked TUI input, principal/client-bound OAuth attempts, TTL/cancel/replay,
+serialized refresh and removal, adapter replacement, abortable waits, and
+fail-fast behavior for clients that did not advertise interactive auth.
 
 For `project-trust.ts`, project-source admission, or trust protocol/UI changes,
 run:

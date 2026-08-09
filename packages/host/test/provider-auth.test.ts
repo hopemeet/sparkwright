@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import { createModel } from "../src/model-factory.js";
 import { ProviderAuthManager } from "../src/provider-auth.js";
 import { MemoryProviderCredentialStore } from "../src/provider-credential-store.js";
+import type { ProviderOAuthDriver } from "../src/provider-oauth.js";
 
 describe("ProviderAuthManager", () => {
   it("projects all, connected, and available providers without exposing secrets", async () => {
@@ -30,13 +31,14 @@ describe("ProviderAuthManager", () => {
         projection: "all",
       });
       expect(all).toMatchObject({
-        catalogVersion: 1,
+        catalogVersion: 2,
         projection: "all",
       });
       expect(all.providers.map((provider) => provider.id)).toEqual([
         "anthropic",
         "google",
         "openai",
+        "openrouter",
       ]);
       expect(
         all.providers.find((provider) => provider.id === "openai"),
@@ -546,7 +548,342 @@ describe("ProviderAuthManager", () => {
       await rm(fixture.root, { recursive: true, force: true });
     }
   });
+
+  it("binds OAuth attempts to the initiating principal and rejects state mismatch and replay", async () => {
+    const fixture = await cleanProviderFixture("oauth-attempt");
+    const credentialStore = new MemoryProviderCredentialStore();
+    const driver = fakeOAuthDriver();
+    const manager = new ProviderAuthManager({
+      env: fixture.env,
+      statePath: fixture.statePath,
+      credentialStore,
+      oauthDrivers: [driver],
+    });
+    const owner = oauthContext(
+      fixture.workspace,
+      "principal-one",
+      "client-one",
+    );
+    try {
+      const started = await manager.beginOAuth({
+        providerId: "openrouter",
+        methodId: "oauth_pkce",
+        context: owner,
+      });
+      expect(started).toMatchObject({
+        ok: true,
+        attempt: {
+          providerId: "openrouter",
+          flow: "browser",
+          status: "pending",
+        },
+      });
+      if (!started.ok) return;
+      const state = new URL(started.attempt.authorizationUrl!).searchParams.get(
+        "state",
+      )!;
+
+      await expect(
+        manager.oauthStatus({
+          attemptId: started.attempt.id,
+          context: oauthContext(
+            fixture.workspace,
+            "principal-two",
+            "client-one",
+          ),
+        }),
+      ).resolves.toMatchObject({ ok: false });
+      await expect(
+        manager.completeOAuth({
+          attemptId: started.attempt.id,
+          proof: { code: "valid-code", state: "wrong-state" },
+          context: owner,
+        }),
+      ).resolves.toMatchObject({
+        ok: false,
+        message: expect.stringContaining("state"),
+      });
+
+      const completed = await manager.completeOAuth({
+        attemptId: started.attempt.id,
+        proof: { code: "valid-code", state },
+        context: owner,
+      });
+      expect(completed).toMatchObject({
+        ok: true,
+        attempt: {
+          status: "completed",
+          connection: {
+            providerId: "openrouter",
+            binding: { authMethodId: "oauth_pkce" },
+            selected: true,
+          },
+        },
+      });
+      await expect(
+        manager.completeOAuth({
+          attemptId: started.attempt.id,
+          proof: { code: "valid-code", state },
+          context: owner,
+        }),
+      ).resolves.toMatchObject({
+        ok: false,
+        message: expect.stringContaining("consumed"),
+      });
+      expect(await readFile(fixture.statePath, "utf8")).not.toContain(
+        "oauth-access-token",
+      );
+      await expect(
+        manager.resolveModelConnection({
+          workspaceRoot: fixture.workspace,
+          modelRef: "openrouter/openrouter/auto",
+          env: fixture.env,
+        }),
+      ).resolves.toMatchObject({
+        ok: true,
+        resolved: { lease: { apiKey: "oauth-access-token" } },
+      });
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("removes temporary OAuth state on cancellation and expiry", async () => {
+    const fixture = await cleanProviderFixture("oauth-terminal");
+    let now = new Date("2026-08-09T00:00:00.000Z");
+    const manager = new ProviderAuthManager({
+      env: fixture.env,
+      statePath: fixture.statePath,
+      credentialStore: new MemoryProviderCredentialStore(),
+      oauthDrivers: [fakeOAuthDriver()],
+      oauthAttemptTtlMs: 1_000,
+      now: () => now,
+    });
+    const context = oauthContext(fixture.workspace, "principal", "client");
+    try {
+      const cancelled = await manager.beginOAuth({
+        providerId: "openrouter",
+        methodId: "oauth_pkce",
+        context,
+      });
+      if (!cancelled.ok) return;
+      const cancelledResult = await manager.cancelOAuth({
+        attemptId: cancelled.attempt.id,
+        context,
+      });
+      expect(cancelledResult).toMatchObject({
+        ok: true,
+        attempt: { status: "cancelled" },
+      });
+      if (cancelledResult.ok) {
+        expect(cancelledResult.attempt).not.toHaveProperty("authorizationUrl");
+      }
+
+      const expiring = await manager.beginOAuth({
+        providerId: "openrouter",
+        methodId: "oauth_pkce",
+        context,
+      });
+      if (!expiring.ok) return;
+      now = new Date("2026-08-09T00:00:02.000Z");
+      const expiredResult = await manager.oauthStatus({
+        attemptId: expiring.attempt.id,
+        context,
+      });
+      expect(expiredResult).toMatchObject({
+        ok: true,
+        attempt: { status: "expired" },
+      });
+      if (expiredResult.ok) {
+        expect(expiredResult.attempt).not.toHaveProperty("authorizationUrl");
+      }
+      const catalog = await manager.catalog({
+        workspaceRoot: fixture.workspace,
+        projection: "all",
+      });
+      expect(
+        catalog.providers.find((provider) => provider.id === "openrouter")
+          ?.connections,
+      ).toHaveLength(0);
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("single-flights OAuth refresh and never falls back to an ambient key after failure", async () => {
+    const fixture = await cleanProviderFixture("oauth-refresh");
+    const credentialStore = new MemoryProviderCredentialStore();
+    let refreshCount = 0;
+    let releaseRefresh!: () => void;
+    const refreshGate = new Promise<void>((resolveGate) => {
+      releaseRefresh = resolveGate;
+    });
+    const driver = fakeOAuthDriver({
+      refresh: async (credential) => {
+        refreshCount += 1;
+        await refreshGate;
+        return { ...credential, accessToken: "oauth-refreshed-token" };
+      },
+    });
+    const first = new ProviderAuthManager({
+      env: fixture.env,
+      statePath: fixture.statePath,
+      credentialStore,
+      oauthDrivers: [driver],
+    });
+    const second = new ProviderAuthManager({
+      env: fixture.env,
+      statePath: fixture.statePath,
+      credentialStore,
+      oauthDrivers: [driver],
+    });
+    const context = oauthContext(fixture.workspace, "principal", "client");
+    try {
+      const connection = await connectFakeOAuth(first, context);
+      const one = first.manageConnection({
+        action: "refresh",
+        connectionId: connection.id,
+        context: { workspaceRoot: fixture.workspace },
+      });
+      const two = second.manageConnection({
+        action: "refresh",
+        connectionId: connection.id,
+        context: { workspaceRoot: fixture.workspace },
+      });
+      while (refreshCount === 0) {
+        await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+      }
+      releaseRefresh();
+      const [firstResult, secondResult] = await Promise.all([one, two]);
+      expect(refreshCount).toBe(1);
+      expect(firstResult).toMatchObject({ ok: true });
+      expect(secondResult).toMatchObject({ ok: true });
+      if (firstResult.ok && secondResult.ok) {
+        expect(firstResult.revision).toBe(secondResult.revision);
+        expect(firstResult.connection?.generation).toBe(
+          secondResult.connection?.generation,
+        );
+      }
+
+      const failingDriver = fakeOAuthDriver({
+        refresh: async () => {
+          throw new Error("token refresh sentinel");
+        },
+      });
+      const failing = new ProviderAuthManager({
+        env: {
+          ...fixture.env,
+          OPENROUTER_API_KEY: "ambient-key-must-not-win",
+        },
+        statePath: fixture.statePath,
+        credentialStore,
+        oauthDrivers: [failingDriver],
+      });
+      await expect(
+        failing.manageConnection({
+          action: "refresh",
+          connectionId: connection.id,
+          context: { workspaceRoot: fixture.workspace },
+        }),
+      ).resolves.toMatchObject({
+        ok: false,
+        message: expect.stringContaining("no ambient credential"),
+      });
+      await expect(
+        failing.resolveModelConnection({
+          workspaceRoot: fixture.workspace,
+          modelRef: "openrouter/openrouter/auto",
+        }),
+      ).resolves.toMatchObject({
+        ok: false,
+        message: expect.stringContaining("needs_refresh"),
+      });
+    } finally {
+      releaseRefresh();
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
 });
+
+async function cleanProviderFixture(label: string): Promise<{
+  root: string;
+  workspace: string;
+  statePath: string;
+  env: Record<string, string | undefined>;
+}> {
+  const root = await mkdtemp(join(tmpdir(), `sparkwright-${label}-`));
+  const workspace = join(root, "workspace");
+  await mkdir(workspace, { recursive: true });
+  return {
+    root,
+    workspace,
+    statePath: join(root, "state", "auth.json"),
+    env: { XDG_CONFIG_HOME: join(root, "config") },
+  };
+}
+
+function oauthContext(
+  workspaceRoot: string,
+  principalId: string,
+  clientConnectionId: string,
+) {
+  return { workspaceRoot, principalId, clientConnectionId };
+}
+
+function fakeOAuthDriver(
+  input: {
+    refresh?: NonNullable<ProviderOAuthDriver["refresh"]>;
+  } = {},
+): ProviderOAuthDriver {
+  return {
+    implementationId: "openrouter.pkce-key.v1",
+    issuer: "https://openrouter.ai",
+    async begin(begin) {
+      return {
+        presentation: {
+          flow: "browser",
+          authorizationUrl: `https://auth.example/authorize?state=${begin.state}`,
+        },
+      };
+    },
+    async complete() {
+      return {
+        accessToken: "oauth-access-token",
+        refreshToken: "oauth-refresh-token",
+      };
+    },
+    refresh:
+      input.refresh ??
+      (async ({ credential }) => ({
+        ...credential,
+        accessToken: "oauth-refreshed-token",
+      })),
+  };
+}
+
+async function connectFakeOAuth(
+  manager: ProviderAuthManager,
+  context: ReturnType<typeof oauthContext>,
+) {
+  const started = await manager.beginOAuth({
+    providerId: "openrouter",
+    methodId: "oauth_pkce",
+    context,
+  });
+  if (!started.ok) throw new Error(started.message);
+  const state = new URL(started.attempt.authorizationUrl!).searchParams.get(
+    "state",
+  )!;
+  const completed = await manager.completeOAuth({
+    attemptId: started.attempt.id,
+    proof: { code: "valid-code", state },
+    context,
+  });
+  if (!completed.ok || !completed.attempt.connection) {
+    throw new Error(completed.ok ? "missing connection" : completed.message);
+  }
+  return completed.attempt.connection;
+}
 
 async function providerFixture(apiKey: string | undefined): Promise<{
   root: string;

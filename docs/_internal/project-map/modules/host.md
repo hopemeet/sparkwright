@@ -13,6 +13,18 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 
 - Status: Verified
 - Date: 2026-08-09
+- Scope: P6.3 keeps OAuth inside ProviderAuthManager and adds code-owned
+  drivers, local principal/client-bound attempt state, TTL/cancel/replay
+  protection, credential-envelope persistence, and cross-process refresh
+  serialization. Stored OAuth failure never falls through to ambient keys.
+- Read: provider OAuth driver/auth/catalog/model resolution, credential store
+  and lock use, Host runtime/server authority, and A15-A19 regressions.
+- Tests: OAuth driver/auth/protocol and endpoint-precedence regressions passed;
+  full `npm run release:check` passed with Host 608/608, Core 687/687, CLI
+  176/176, TUI 554/554, 16/16 regression cases, and both install smokes.
+
+- Status: Verified
+- Date: 2026-08-09
 - Scope: P6.2 adds Host-owned stored provider connections: OS-backed or
   explicitly opted-in 0600 credential storage, non-secret revisioned metadata,
   exact driver/endpoint/method bindings, workspace/user grants, ambient-source

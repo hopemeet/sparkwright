@@ -36,9 +36,18 @@ export {
 export type {
   ProviderAuthAction,
   ProviderAuthContext,
+  ProviderAuthAttemptContext,
   ProviderAuthManagerOptions,
   ProviderCredentialLease,
 } from "./provider-auth.js";
+export type {
+  ProviderOAuthBeginResult,
+  ProviderOAuthCredential,
+  ProviderOAuthDriver,
+  ProviderOAuthFlow,
+  ProviderOAuthPresentation,
+  ProviderOAuthProof,
+} from "./provider-oauth.js";
 export {
   FileProviderCredentialStore,
   MacOsKeychainCredentialStore,

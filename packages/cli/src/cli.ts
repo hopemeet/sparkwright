@@ -749,6 +749,7 @@ function parseArgs(
   let compaction = false;
   let detach = false;
   let apiKeyStdin = false;
+  let authMethod: string | undefined;
   let delegateGoal: string | undefined;
   const trustScopes: ProjectTrustScope[] = [];
 
@@ -781,6 +782,20 @@ function parseArgs(
         message:
           "API keys are not accepted in argv. Use --api-key-stdin or the hidden interactive prompt.",
       };
+    }
+
+    if (arg === "--auth-method") {
+      const value = args[index + 1];
+      if (!value || value.startsWith("--")) {
+        return {
+          ok: false,
+          message: "Usage: --auth-method requires a method id",
+        };
+      }
+      authMethod = value;
+      args.splice(index, 2);
+      index -= 1;
+      continue;
     }
 
     if (arg === "--trace-level") {
@@ -1424,6 +1439,7 @@ function parseArgs(
       delegateGoal,
       trustScopes: trustScopes.length > 0 ? trustScopes : undefined,
       apiKeyStdin,
+      authMethod,
     },
   };
 }
@@ -1514,6 +1530,119 @@ async function handleProviderCommand(
       includeProjectConfig,
     };
     if (subcommand === "connect") {
+      const method = parsed.authMethod
+        ? provider.authMethods?.find(
+            (candidate) => candidate.id === parsed.authMethod,
+          )
+        : parsed.apiKeyStdin
+          ? provider.authMethods?.find(
+              (candidate) => candidate.type === "api_key",
+            )
+          : provider.authMethods?.[0];
+      if (!method) {
+        writeLine(
+          io.stderr,
+          parsed.authMethod
+            ? `Provider "${provider.id}" has no connection method "${parsed.authMethod}".`
+            : `Provider "${provider.id}" has no supported connection method.`,
+        );
+        return { exitCode: 1 };
+      }
+      if (method.type === "oauth") {
+        if (parsed.apiKeyStdin) {
+          writeLine(
+            io.stderr,
+            "--api-key-stdin cannot be combined with an OAuth auth method.",
+          );
+          return { exitCode: 1 };
+        }
+        if (io.stdinIsTTY !== true) {
+          writeLine(
+            io.stderr,
+            "OAuth provider connect requires an interactive terminal.",
+          );
+          return { exitCode: 1 };
+        }
+        const oauthContext = {
+          ...context,
+          principalId: `cli:${process.pid}`,
+          clientConnectionId: `cli:${process.pid}`,
+        };
+        const started = await manager.beginOAuth({
+          providerId: provider.id,
+          methodId: method.id,
+          context: oauthContext,
+        });
+        if (!started.ok) {
+          writeLine(io.stderr, started.message);
+          return { exitCode: 1 };
+        }
+        let attempt = started.attempt;
+        try {
+          if (attempt.authorizationUrl) {
+            writeLine(
+              io.stderr,
+              "Open this authorization URL in your browser:",
+            );
+            writeLine(io.stderr, attempt.authorizationUrl);
+          }
+          if (attempt.verificationUrl) {
+            writeLine(io.stderr, `Open: ${attempt.verificationUrl}`);
+          }
+          if (attempt.userCode) {
+            writeLine(io.stderr, `Enter code: ${attempt.userCode}`);
+          }
+          if (attempt.instructions) writeLine(io.stderr, attempt.instructions);
+          if (attempt.flow === "code" && io.question) {
+            const code = await io.question("Authorization code: ");
+            const completed = await manager.completeOAuth({
+              attemptId: attempt.id,
+              proof: { code },
+              context: oauthContext,
+            });
+            if (!completed.ok) {
+              writeLine(io.stderr, completed.message);
+              return { exitCode: 1 };
+            }
+            attempt = completed.attempt;
+          }
+          while (attempt.status === "pending") {
+            await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+            const inspected = await manager.oauthStatus({
+              attemptId: attempt.id,
+              context: oauthContext,
+            });
+            if (!inspected.ok) {
+              writeLine(io.stderr, inspected.message);
+              return { exitCode: 1 };
+            }
+            attempt = inspected.attempt;
+          }
+          if (attempt.status !== "completed" || !attempt.connection) {
+            writeLine(
+              io.stderr,
+              attempt.message ?? `OAuth login ${attempt.status}.`,
+            );
+            return { exitCode: 1 };
+          }
+          if (parsed.format === "json") {
+            writeLine(io.stdout, JSON.stringify({ attempt }, null, 2));
+          } else {
+            writeLine(
+              io.stdout,
+              `${attempt.connection.providerId} · ${attempt.connection.status} · ${attempt.connection.id}`,
+            );
+          }
+          return { exitCode: 0 };
+        } finally {
+          if (attempt.status === "pending") {
+            await manager.cancelOAuth({
+              attemptId: attempt.id,
+              context: oauthContext,
+            });
+          }
+        }
+      }
       if (!io.readSecret) {
         writeLine(
           io.stderr,
@@ -1528,10 +1657,7 @@ async function handleProviderCommand(
         );
         return { exitCode: 1 };
       }
-      const method = provider.authMethods?.find(
-        (candidate) => candidate.type === "api_key",
-      );
-      if (!method) {
+      if (method.type !== "api_key") {
         writeLine(
           io.stderr,
           `Provider "${provider.id}" has no API-key connection method.`,
@@ -4643,7 +4769,7 @@ function usage(_env: Record<string, string | undefined>): string {
 function providerUsage(): string {
   return [
     "Usage: sparkwright provider list [--workspace path] [--format json|text]",
-    "       sparkwright provider connect <provider> [--api-key-stdin] [--workspace path]",
+    "       sparkwright provider connect <provider> [--auth-method id] [--api-key-stdin] [--workspace path]",
     "       sparkwright provider disconnect <provider-or-connection> [--workspace path]",
     "       sparkwright provider login <provider> [--workspace path]",
     "       sparkwright provider logout <provider-or-connection> [--workspace path]",

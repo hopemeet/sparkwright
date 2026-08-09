@@ -115,6 +115,10 @@ export function serveConnection(
   });
 
   conn.onClose(() => {
+    void runtime.cancelProviderOAuthAttempts({
+      principalId: principal.id,
+      clientConnectionId: conn.id,
+    });
     hostService.releaseRuntime(runtime);
   });
 
@@ -240,6 +244,10 @@ async function handleRequest(
             "provider.auth.methods",
             ...(hasAuthority(authorities, "provider_connection.manage")
               ? [
+                  "provider.auth.begin",
+                  "provider.auth.status",
+                  "provider.auth.complete",
+                  "provider.auth.cancel",
                   "provider.connection.select",
                   "provider.connection.disconnect",
                   "provider.connection.logout",
@@ -620,6 +628,42 @@ async function handleRequest(
           result.methods as unknown as Record<string, unknown>,
         );
       } else respondError(conn, req.id, result.error);
+      return false;
+    }
+    case "provider.auth.begin":
+    case "provider.auth.status":
+    case "provider.auth.complete":
+    case "provider.auth.cancel": {
+      if (
+        transport === "remote" ||
+        !hasAuthority(authorities, "provider_connection.manage")
+      ) {
+        respondError(conn, req.id, {
+          code: "unauthorized",
+          message: "OAuth login requires a trusted local client",
+        });
+        return false;
+      }
+      const owner = {
+        principalId: principal.id,
+        clientConnectionId: conn.id,
+      };
+      const result =
+        req.kind === "provider.auth.begin"
+          ? await runtime.beginProviderOAuth({ ...req.payload, ...owner })
+          : req.kind === "provider.auth.status"
+            ? await runtime.inspectProviderOAuth({ ...req.payload, ...owner })
+            : req.kind === "provider.auth.complete"
+              ? await runtime.completeProviderOAuth({
+                  ...req.payload,
+                  ...owner,
+                })
+              : await runtime.cancelProviderOAuth({
+                  ...req.payload,
+                  ...owner,
+                });
+      if (result.ok) respondOk(conn, req.id, { attempt: result.attempt });
+      else respondError(conn, req.id, result.error);
       return false;
     }
     case "provider.auth.submit_secret": {
@@ -1102,6 +1146,33 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         requireOnly(req.payload, ["providerId"]) ??
         requireString(req.payload, "providerId")
       );
+    case "provider.auth.begin":
+      return (
+        requireOnly(req.payload, [
+          "providerId",
+          "methodId",
+          "promptValues",
+          "grantScope",
+        ]) ??
+        requireString(req.payload, "providerId") ??
+        requireString(req.payload, "methodId") ??
+        optionalStringRecord(req.payload, "promptValues") ??
+        optionalEnum(req.payload, "grantScope", ["workspace", "user"])
+      );
+    case "provider.auth.status":
+    case "provider.auth.cancel":
+      return (
+        requireOnly(req.payload, ["attemptId"]) ??
+        requireString(req.payload, "attemptId")
+      );
+    case "provider.auth.complete":
+      return (
+        requireOnly(req.payload, ["attemptId", "code", "state", "nonce"]) ??
+        requireString(req.payload, "attemptId") ??
+        requireString(req.payload, "code") ??
+        optionalString(req.payload, "state") ??
+        optionalString(req.payload, "nonce")
+      );
     case "provider.auth.submit_secret":
       return (
         requireOnly(req.payload, [
@@ -1268,6 +1339,21 @@ function optionalRecord(
   const value = record[key];
   if (value === undefined) return undefined;
   return isRecord(value) ? undefined : `${key} must be an object`;
+}
+
+function optionalStringRecord(
+  record: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const recordError = optionalRecord(record, key);
+  if (recordError) return recordError;
+  const value = record[key];
+  if (value === undefined) return undefined;
+  return Object.values(value as Record<string, unknown>).every(
+    (entry) => typeof entry === "string",
+  )
+    ? undefined
+    : `${key} values must be strings`;
 }
 
 const RESERVED_IDENTITY_FIELDS = new Set([

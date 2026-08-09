@@ -55,6 +55,18 @@ reference in `provider/model` form. Connect without editing config:
 sparkwright provider connect openai --workspace .
 ```
 
+For browser OAuth, use an interactive terminal and keep the command or TUI
+open until the local callback completes:
+
+```bash
+sparkwright provider connect openrouter --auth-method oauth_pkce --workspace .
+```
+
+If the attempt expires or is cancelled, start `/connect` or the command again.
+If a stored OAuth connection reports `needs_refresh`, run
+`sparkwright provider refresh <connection-id>`; SparkWright will not replace
+that selected connection with an unrelated environment key.
+
 Environment credentials remain supported:
 
 ```bash

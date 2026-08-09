@@ -6,6 +6,12 @@ major; breaking changes bump the major.
 
 ## Unreleased
 
+- Add P6.3 OAuth attempts:
+  `provider.auth.begin|status|complete|cancel`, bounded browser/device/code
+  presentations, principal/client binding, PKCE/state/nonce validation,
+  expiration, cancellation, replay rejection, and connection-scoped
+  single-flight refresh. OAuth mutations remain trusted-local-only and reuse
+  the stored connection/grant/revision boundary.
 - Add P6.2 provider connections: `provider.auth.methods`, trusted-local-only
   `provider.auth.submit_secret`, and
   `provider.connection.select|disconnect|logout|remove|refresh`. Provider

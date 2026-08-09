@@ -2105,6 +2105,34 @@ describe.sequential("runCli", { timeout: 15_000 }, () => {
     expect(output.stderrText()).not.toContain("sk-argv-sentinel");
   });
 
+  it("requires an interactive terminal for OAuth provider connect", async () => {
+    const workspace = await createWorkspace("# Provider OAuth\n");
+    const output = createOutputCapture();
+    const result = await runCli(
+      [
+        "provider",
+        "connect",
+        "openrouter",
+        "--auth-method",
+        "oauth_pkce",
+        "--workspace",
+        workspace,
+      ],
+      {
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(output.stderrText()).toContain(
+      "OAuth provider connect requires an interactive terminal",
+    );
+  });
+
   it("rejects a model ref that is not in provider/model form", async () => {
     const output = createOutputCapture();
     const workspace = await createWorkspace("# Demo\n");

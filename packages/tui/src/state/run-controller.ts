@@ -26,6 +26,7 @@ import type {
   ProviderCatalogSnapshot,
   ProviderCatalogProjection,
   ProviderAuthMethodsSnapshot,
+  ProviderAuthAttemptSummary,
   ProviderConnectionSummary,
   ProviderCredentialProfileSummary,
   ProjectTrustScope,
@@ -633,6 +634,71 @@ export class RunController {
         err,
       );
       return null;
+    }
+  }
+
+  async beginProviderOAuth(
+    providerId: string,
+    methodId: string,
+    promptValues?: Record<string, string>,
+  ): Promise<ProviderAuthAttemptSummary | null> {
+    try {
+      const client = await this.ensureClient();
+      const result = await client.beginProviderOAuth({
+        providerId,
+        methodId,
+        ...(promptValues ? { promptValues } : {}),
+      });
+      return result.attempt;
+    } catch (err) {
+      this.reportFailure("ActionFailure", "provider OAuth start failed", err);
+      return null;
+    }
+  }
+
+  async inspectProviderOAuth(
+    attemptId: string,
+  ): Promise<ProviderAuthAttemptSummary | null> {
+    try {
+      const client = await this.ensureClient();
+      return (await client.inspectProviderOAuth({ attemptId })).attempt;
+    } catch (err) {
+      this.reportFailure(
+        "PanelLoadFailure",
+        "provider OAuth status failed",
+        err,
+      );
+      return null;
+    }
+  }
+
+  async completeProviderOAuth(
+    attemptId: string,
+    code: string,
+  ): Promise<ProviderAuthAttemptSummary | null> {
+    try {
+      const client = await this.ensureClient();
+      return (await client.completeProviderOAuth({ attemptId, code })).attempt;
+    } catch (err) {
+      this.reportFailure(
+        "ActionFailure",
+        "provider OAuth completion failed",
+        err,
+      );
+      return null;
+    }
+  }
+
+  async cancelProviderOAuth(attemptId: string): Promise<void> {
+    try {
+      const client = await this.ensureClient();
+      await client.cancelProviderOAuth({ attemptId });
+    } catch (err) {
+      this.reportFailure(
+        "ActionFailure",
+        "provider OAuth cancellation failed",
+        err,
+      );
     }
   }
 

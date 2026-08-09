@@ -842,13 +842,37 @@ generation, and timestamps, but never credential material. `revision` is the
 monotonic connection-metadata revision clients can poll for cross-process
 changes.
 
-### `provider.auth.methods`, `provider.auth.submit_secret`
+### Provider authentication methods and attempts
 
 `provider.auth.methods` accepts `{ "providerId": string }` and returns the
 code-owned auth methods and exact non-secret binding that will be used. In
-P6.2, built-in methods are API-key methods.
+addition to API-key methods, a method may declare a bounded `oauth` flow of
+`browser`, `device`, or `code`. Endpoint, issuer, client behavior, and token
+exchange remain code-owned; config and catalog data cannot inject them.
 
-`provider.auth.submit_secret` creates a stored connection and grant:
+OAuth uses four local-only requests guarded by `provider_connection.manage`:
+
+| Request                  | Payload                                                | Result        |
+| ------------------------ | ------------------------------------------------------ | ------------- |
+| `provider.auth.begin`    | `{ providerId, methodId, promptValues?, grantScope? }` | `{ attempt }` |
+| `provider.auth.status`   | `{ attemptId }`                                        | `{ attempt }` |
+| `provider.auth.complete` | `{ attemptId, code, state?, nonce? }`                  | `{ attempt }` |
+| `provider.auth.cancel`   | `{ attemptId }`                                        | `{ attempt }` |
+
+An attempt is bound to the initiating Host principal and client connection,
+expires after ten minutes by default, and can be consumed only once. Host
+validates the method binding, TTL, state/nonce where applicable, and PKCE proof
+before persisting a credential. Browser callbacks and device polling finish in
+Host; a client-submitted code is only proof input and cannot assert success.
+Terminal attempt summaries expose status, bounded presentation instructions,
+and an optional non-secret connection summary. They never expose an access or
+refresh token, authorization code, verifier, or nonce. Pending authorization
+URLs are returned only to the initiating trusted local connection and are
+removed from terminal summaries. Closing that connection cancels its pending
+attempts.
+
+`provider.auth.submit_secret` remains the dedicated API-key path and creates a
+stored connection and grant:
 
 | Field        | Type                  | Required | Notes                                       |
 | ------------ | --------------------- | -------- | ------------------------------------------- |
@@ -871,7 +895,10 @@ removes selection/workspace access without deleting a stored credential.
 `logout` and `remove` delete stored credential material and metadata. For an
 environment/config source, disconnect/logout records an exact-binding
 suppression and does not claim to remove the external value. `refresh`
-increments connection generation.
+revalidates API-key connections or refreshes OAuth. OAuth refresh is
+single-flight per connection across processes and publishes one monotonic
+generation. A failed OAuth refresh marks the selected connection
+`needs_refresh`; it never falls back to an ambient API key.
 
 Stored connections are bound to provider id, code-owned driver identity,
 normalized endpoint, and auth method. A changed endpoint cannot reuse the old

@@ -67,6 +67,7 @@ import {
   type ProviderCredentialProfileSummary,
   type ProviderListRequestPayload,
   type ProviderAuthMethodsSnapshot,
+  type ProviderAuthAttemptSummary,
   type ProviderConnectionGrantScope,
   type ProviderConnectionSummary,
   type ProjectTrustScope,
@@ -454,6 +455,141 @@ export class HostRuntime {
     } catch (error) {
       return { ok: false, error: providerOperationError(error) };
     }
+  }
+
+  async beginProviderOAuth(input: {
+    providerId: string;
+    methodId: string;
+    promptValues?: Record<string, string>;
+    grantScope?: ProviderConnectionGrantScope;
+    principalId: string;
+    clientConnectionId: string;
+  }): Promise<
+    | { ok: true; attempt: ProviderAuthAttemptSummary }
+    | { ok: false; error: ProtocolError }
+  > {
+    try {
+      const includeProjectConfig = await this.providerProjectConfigAllowed();
+      const result = await this.opts.providerAuth.beginOAuth({
+        providerId: input.providerId,
+        methodId: input.methodId,
+        ...(input.promptValues ? { promptValues: input.promptValues } : {}),
+        ...(input.grantScope ? { grantScope: input.grantScope } : {}),
+        context: {
+          workspaceRoot: this.opts.workspaceRoot,
+          includeProjectConfig,
+          principalId: input.principalId,
+          clientConnectionId: input.clientConnectionId,
+        },
+      });
+      return result.ok
+        ? result
+        : {
+            ok: false,
+            error: { code: "invalid_payload", message: result.message },
+          };
+    } catch (error) {
+      return { ok: false, error: providerOperationError(error) };
+    }
+  }
+
+  async inspectProviderOAuth(input: {
+    attemptId: string;
+    principalId: string;
+    clientConnectionId: string;
+  }): Promise<
+    | { ok: true; attempt: ProviderAuthAttemptSummary }
+    | { ok: false; error: ProtocolError }
+  > {
+    try {
+      const result = await this.opts.providerAuth.oauthStatus({
+        attemptId: input.attemptId,
+        context: {
+          workspaceRoot: this.opts.workspaceRoot,
+          principalId: input.principalId,
+          clientConnectionId: input.clientConnectionId,
+        },
+      });
+      return result.ok
+        ? result
+        : {
+            ok: false,
+            error: { code: "invalid_payload", message: result.message },
+          };
+    } catch (error) {
+      return { ok: false, error: providerOperationError(error) };
+    }
+  }
+
+  async completeProviderOAuth(input: {
+    attemptId: string;
+    code: string;
+    state?: string;
+    nonce?: string;
+    principalId: string;
+    clientConnectionId: string;
+  }): Promise<
+    | { ok: true; attempt: ProviderAuthAttemptSummary }
+    | { ok: false; error: ProtocolError }
+  > {
+    try {
+      const result = await this.opts.providerAuth.completeOAuth({
+        attemptId: input.attemptId,
+        proof: {
+          code: input.code,
+          ...(input.state ? { state: input.state } : {}),
+          ...(input.nonce ? { nonce: input.nonce } : {}),
+        },
+        context: {
+          workspaceRoot: this.opts.workspaceRoot,
+          principalId: input.principalId,
+          clientConnectionId: input.clientConnectionId,
+        },
+      });
+      return result.ok
+        ? result
+        : {
+            ok: false,
+            error: { code: "invalid_payload", message: result.message },
+          };
+    } catch (error) {
+      return { ok: false, error: providerOperationError(error) };
+    }
+  }
+
+  async cancelProviderOAuth(input: {
+    attemptId: string;
+    principalId: string;
+    clientConnectionId: string;
+  }): Promise<
+    | { ok: true; attempt: ProviderAuthAttemptSummary }
+    | { ok: false; error: ProtocolError }
+  > {
+    try {
+      const result = await this.opts.providerAuth.cancelOAuth({
+        attemptId: input.attemptId,
+        context: {
+          workspaceRoot: this.opts.workspaceRoot,
+          principalId: input.principalId,
+          clientConnectionId: input.clientConnectionId,
+        },
+      });
+      return result.ok
+        ? result
+        : {
+            ok: false,
+            error: { code: "invalid_payload", message: result.message },
+          };
+    } catch (error) {
+      return { ok: false, error: providerOperationError(error) };
+    }
+  }
+
+  async cancelProviderOAuthAttempts(input: {
+    principalId: string;
+    clientConnectionId: string;
+  }): Promise<void> {
+    await this.opts.providerAuth.cancelOAuthAttemptsForConnection(input);
   }
 
   async submitProviderSecret(input: {

@@ -1213,6 +1213,14 @@ function AppReady(
     onLoadProviderAuthMethods: (providerId: string) =>
       controller.listProviderAuthMethods(providerId),
     onSubmitProviderSecret: submitProviderSecret,
+    onBeginProviderOAuth: (providerId: string, methodId: string) =>
+      controller.beginProviderOAuth(providerId, methodId),
+    onInspectProviderOAuth: (attemptId: string) =>
+      controller.inspectProviderOAuth(attemptId),
+    onCompleteProviderOAuth: (attemptId: string, code: string) =>
+      controller.completeProviderOAuth(attemptId, code),
+    onCancelProviderOAuth: (attemptId: string) =>
+      controller.cancelProviderOAuth(attemptId),
     onRefreshProviderCatalog: refreshProviderCatalog,
     onGrantProjectTrust: grantProjectTrust,
     onRevokeProjectTrust: revokeProjectTrust,

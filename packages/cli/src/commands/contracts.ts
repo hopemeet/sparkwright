@@ -62,4 +62,5 @@ export interface ParsedArgs {
   delegateGoal?: string;
   trustScopes?: ProjectTrustScope[];
   apiKeyStdin?: boolean;
+  authMethod?: string;
 }

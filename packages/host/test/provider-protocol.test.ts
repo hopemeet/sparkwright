@@ -15,6 +15,7 @@ import {
   type ProviderCredentialStore,
 } from "../src/provider-credential-store.js";
 import { serveConnection } from "../src/server.js";
+import type { ProviderOAuthDriver } from "../src/provider-oauth.js";
 
 describe("provider protocol", () => {
   it("lists only non-secret profiles and lets a local client change auth state", async () => {
@@ -60,12 +61,13 @@ describe("provider protocol", () => {
         envelope: "response",
         ok: true,
         result: {
-          catalogVersion: 1,
+          catalogVersion: 2,
           projection: "all",
           providers: [
             { id: "anthropic", configured: false },
             { id: "google", configured: false },
             { id: "openai", configured: true },
+            { id: "openrouter", configured: false },
           ],
         },
       });
@@ -183,6 +185,147 @@ describe("provider protocol", () => {
       });
       expect(JSON.stringify(pair.messages())).not.toContain(secret);
       expect(await readFile(fixture.statePath, "utf8")).not.toContain(secret);
+    } finally {
+      pair.close();
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("completes a principal-bound OAuth attempt once without exposing credentials", async () => {
+    const fixture = await protocolFixture();
+    const pair = connectionPair();
+    const token = "oauth-protocol-token-sentinel";
+    const oauthDriver: ProviderOAuthDriver = {
+      implementationId: "openrouter.pkce-key.v1",
+      issuer: "https://openrouter.ai",
+      async begin(input) {
+        return {
+          presentation: {
+            flow: "browser",
+            authorizationUrl: `https://auth.example/?state=${input.state}`,
+          },
+        };
+      },
+      async complete() {
+        return { accessToken: token, refreshToken: "refresh-sentinel" };
+      },
+    };
+    try {
+      const service = createHostService({
+        providerAuth: new ProviderAuthManager({
+          env: fixture.env,
+          statePath: fixture.statePath,
+          credentialStore: new MemoryProviderCredentialStore(),
+          oauthDrivers: [oauthDriver],
+        }),
+      });
+      serveConnection(pair.hostSide, {
+        hostService: service,
+        workspaceRoot: fixture.workspace,
+        authContext: unauthenticatedConnection(
+          "local-stdio",
+          ["provider_catalog.read", "provider_connection.manage"],
+          "local",
+        ),
+      });
+      await handshake(pair);
+      pair.send(
+        request("oauth_begin", "provider.auth.begin", {
+          providerId: "openrouter",
+          methodId: "oauth_pkce",
+        }),
+      );
+      const begun = await pair.waitFor("oauth_begin");
+      expect(begun).toMatchObject({
+        envelope: "response",
+        ok: true,
+        result: { attempt: { status: "pending", flow: "browser" } },
+      });
+      if (begun.envelope !== "response" || !begun.ok) return;
+      const attempt = begun.result.attempt as {
+        id: string;
+        authorizationUrl: string;
+      };
+      const state = new URL(attempt.authorizationUrl).searchParams.get("state");
+
+      pair.send(
+        request("oauth_wrong_state", "provider.auth.complete", {
+          attemptId: attempt.id,
+          code: "authorization-code",
+          state: "wrong-state",
+        }),
+      );
+      await expect(pair.waitFor("oauth_wrong_state")).resolves.toMatchObject({
+        envelope: "response",
+        ok: false,
+        error: { code: "invalid_payload" },
+      });
+
+      pair.send(
+        request("oauth_complete", "provider.auth.complete", {
+          attemptId: attempt.id,
+          code: "authorization-code",
+          state,
+        }),
+      );
+      await expect(pair.waitFor("oauth_complete")).resolves.toMatchObject({
+        envelope: "response",
+        ok: true,
+        result: {
+          attempt: {
+            status: "completed",
+            connection: { providerId: "openrouter", selected: true },
+          },
+        },
+      });
+
+      pair.send(
+        request("oauth_replay", "provider.auth.complete", {
+          attemptId: attempt.id,
+          code: "authorization-code",
+          state,
+        }),
+      );
+      await expect(pair.waitFor("oauth_replay")).resolves.toMatchObject({
+        envelope: "response",
+        ok: false,
+        error: { code: "invalid_payload" },
+      });
+      expect(JSON.stringify(pair.messages())).not.toContain(token);
+      expect(await readFile(fixture.statePath, "utf8")).not.toContain(token);
+    } finally {
+      pair.close();
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("denies OAuth attempts on a remote transport even with mutation authority", async () => {
+    const fixture = await protocolFixture();
+    const pair = connectionPair();
+    try {
+      serveConnection(pair.hostSide, {
+        hostService: createHostService(),
+        workspaceRoot: fixture.workspace,
+        authContext: authenticatedConnection(
+          "remote",
+          "ws-bearer",
+          "host_client",
+          ["provider_connection.manage"],
+          "remote",
+        ),
+      });
+      await handshake(pair);
+      pair.send(
+        request("remote_oauth", "provider.auth.begin", {
+          providerId: "openrouter",
+          methodId: "oauth_pkce",
+        }),
+      );
+      await expect(pair.waitFor("remote_oauth")).resolves.toMatchObject({
+        envelope: "response",
+        ok: false,
+        error: { code: "unauthorized" },
+      });
     } finally {
       pair.close();
       await rm(fixture.root, { recursive: true, force: true });

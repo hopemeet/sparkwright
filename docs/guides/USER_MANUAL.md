@@ -99,9 +99,23 @@ printf '%s\n' "$OPENAI_API_KEY" | \
 ```
 
 In the TUI, run `/connect`, choose a provider and method, enter the masked API
-key, then choose a model. The connection is shared with CLI/Host state, so
+key or complete the displayed browser/device/code login, then choose a model.
+The connection is shared with CLI/Host state, so
 `/model` immediately sees models from connected providers. No YAML model list
 or API-key field is required.
+
+For a browser OAuth login that does not require a provider YAML entry:
+
+```bash
+sparkwright provider connect openrouter --workspace .
+```
+
+Open the printed authorization URL. The CLI waits for the local callback,
+stores the resulting credential in the configured credential store, and
+selects the new connection. Use `--auth-method api_key` to choose the masked
+API-key flow explicitly, or `--auth-method oauth_pkce` to select OAuth. OAuth
+connect requires an interactive terminal; API-key automation continues to use
+`--api-key-stdin`.
 
 Environment keys remain supported for one-off runs:
 
@@ -136,7 +150,9 @@ sparkwright provider remove openai --workspace .
 stored credential. For environment/config sources, disconnect creates a local
 suppression and does not claim to delete the external source. Legacy
 `login|refresh|logout` remains available for those sources. API keys are never
-accepted in argv.
+accepted in argv. Pending OAuth attempts expire, can be cancelled with Escape
+in the TUI, and do not write temporary codes or verifiers to connection
+metadata.
 
 ## Project Trust
 

@@ -10,6 +10,18 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 
 - Status: Verified
 - Date: 2026-08-09
+- Scope: P6.3 adds `--auth-method` selection and interactive OAuth progress to
+  `provider connect`. Browser/device attempts display bounded instructions and
+  poll Host status; code flows use hidden input; errors and interruption cancel
+  the outstanding attempt. Non-interactive OAuth fails closed.
+- Read: CLI parser/provider handler/help, Host OAuth lifecycle, and focused CLI
+  provider tests.
+- Tests: focused provider and endpoint-precedence routes passed; full
+  `npm run release:check` passed with CLI 176/176, Host 608/608, TUI 554/554,
+  16/16 regression cases, and both install smokes.
+
+- Status: Verified
+- Date: 2026-08-09
 - Scope: P6.2 adds `provider connect|disconnect|remove` and connection-aware
   refresh/logout. Interactive keys use a no-echo prompt; pipelines require
   `--api-key-stdin`; key values are rejected in argv. A connected bundled

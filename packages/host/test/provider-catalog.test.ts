@@ -69,11 +69,12 @@ describe("Host provider catalog", () => {
   it("uses the bundled snapshot when no external catalog state exists", async () => {
     const registry = createHostProviderRegistry({});
 
-    expect(BUNDLED_PROVIDER_CATALOG_VERSION).toBe(1);
+    expect(BUNDLED_PROVIDER_CATALOG_VERSION).toBe(2);
     expect(registry.listProviders().map((provider) => provider.id)).toEqual([
       "anthropic",
       "google",
       "openai",
+      "openrouter",
     ]);
     await expect(
       registry.listModels({ providerId: "google" }),
@@ -85,14 +86,26 @@ describe("Host provider catalog", () => {
   });
 
   it("keeps connection descriptors code-owned and model-free", () => {
-    expect(BUNDLED_PROVIDER_CONNECTION_DESCRIPTORS).toHaveLength(3);
+    expect(BUNDLED_PROVIDER_CONNECTION_DESCRIPTORS).toHaveLength(4);
     for (const descriptor of BUNDLED_PROVIDER_CONNECTION_DESCRIPTORS) {
       expect(descriptor.driverId).toMatch(/\.v1$/);
       expect(descriptor).not.toHaveProperty("models");
-      expect(descriptor.authMethods).toEqual([
+      expect(descriptor.authMethods).toContainEqual(
         expect.objectContaining({ id: "api_key", kind: "api_key" }),
-      ]);
+      );
     }
+    expect(
+      BUNDLED_PROVIDER_CONNECTION_DESCRIPTORS.find(
+        (descriptor) => descriptor.providerId === "openrouter",
+      )?.authMethods,
+    ).toContainEqual(
+      expect.objectContaining({
+        id: "oauth_pkce",
+        kind: "oauth",
+        flow: "browser",
+        implementationId: "openrouter.pkce-key.v1",
+      }),
+    );
   });
 });
 

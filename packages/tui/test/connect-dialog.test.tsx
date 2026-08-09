@@ -1,6 +1,7 @@
 import { PassThrough } from "node:stream";
 import type {
   ProviderAuthMethodsSnapshot,
+  ProviderAuthAttemptSummary,
   ProviderCatalogSnapshot,
   ProviderConnectionSummary,
 } from "@sparkwright/protocol";
@@ -23,6 +24,10 @@ describe("ConnectDialog", () => {
         loading={false}
         onLoadMethods={async () => authMethods}
         onSubmitSecret={onSubmitSecret}
+        onBeginOAuth={async () => null}
+        onOAuthStatus={async () => null}
+        onCompleteOAuth={async () => null}
+        onCancelOAuth={async () => {}}
         onRefresh={async () => connectedCatalog}
         onCommitModel={onCommitModel}
         onCancel={() => {}}
@@ -53,6 +58,45 @@ describe("ConnectDialog", () => {
     stdin.write("\r");
     await settle();
     expect(onCommitModel).toHaveBeenCalledWith("openai/gpt-test");
+
+    app.unmount();
+    stdin.destroy();
+  });
+
+  it("shows browser OAuth progress and advances after Host completion", async () => {
+    const { stdin, stdout, text } = interactiveIo();
+    const onOAuthStatus = vi.fn(
+      async (): Promise<ProviderAuthAttemptSummary> => completedOAuthAttempt,
+    );
+    const app = render(
+      <ConnectDialog
+        catalog={oauthDisconnectedCatalog}
+        loading={false}
+        onLoadMethods={async () => oauthMethods}
+        onSubmitSecret={async () => null}
+        onBeginOAuth={async () => pendingOAuthAttempt}
+        onOAuthStatus={onOAuthStatus}
+        onCompleteOAuth={async () => null}
+        onCancelOAuth={async () => {}}
+        onRefresh={async () => oauthConnectedCatalog}
+        onCommitModel={() => {}}
+        onCancel={() => {}}
+      />,
+      { stdout, stdin, patchConsole: false, exitOnCtrlC: false },
+    );
+
+    await settle();
+    stdin.write("\r");
+    await settle();
+    stdin.write("\r");
+    await settle();
+    expect(text()).toContain("https://auth.example/authorize");
+    expect(text()).toContain("waiting for authorization");
+
+    await settle(18);
+    expect(onOAuthStatus).toHaveBeenCalledWith("oauth_test");
+    expect(text()).toContain("Connected. Choose the model for the next run.");
+    expect(text()).toContain("openrouter/openrouter/auto");
 
     app.unmount();
     stdin.destroy();
@@ -89,7 +133,7 @@ const connection: ProviderConnectionSummary = {
 };
 
 const disconnectedCatalog: ProviderCatalogSnapshot = {
-  catalogVersion: 1,
+  catalogVersion: 2,
   revision: 0,
   projection: "all",
   providers: [
@@ -145,6 +189,113 @@ const connectedCatalog: ProviderCatalogSnapshot = {
         status: "unverified",
         source: "stored",
         sourceLabel: "credential store",
+        generation: 1,
+      },
+    },
+  ],
+};
+
+const oauthMethods: ProviderAuthMethodsSnapshot = {
+  providerId: "openrouter",
+  binding: {
+    providerId: "openrouter",
+    driverId: "ai-sdk-openrouter.v1",
+    endpoint: "https://openrouter.ai/api/v1",
+    endpointFingerprint: "sha256:openrouter",
+    authMethodId: "api_key",
+  },
+  methods: [
+    {
+      id: "oauth_pkce",
+      type: "oauth",
+      label: "Browser login",
+      flow: "browser",
+    },
+  ],
+};
+
+const oauthConnection: ProviderConnectionSummary = {
+  id: "connection_oauth",
+  providerId: "openrouter",
+  status: "unverified",
+  source: "stored",
+  sourceLabel: "stored:connection_oauth",
+  binding: { ...oauthMethods.binding, authMethodId: "oauth_pkce" },
+  selected: true,
+  grantScope: "workspace",
+  generation: 1,
+};
+
+const pendingOAuthAttempt: ProviderAuthAttemptSummary = {
+  id: "oauth_test",
+  providerId: "openrouter",
+  methodId: "oauth_pkce",
+  flow: "browser",
+  status: "pending",
+  createdAt: "2026-08-09T00:00:00.000Z",
+  expiresAt: "2026-08-09T00:10:00.000Z",
+  authorizationUrl: "https://auth.example/authorize",
+};
+
+const completedOAuthAttempt: ProviderAuthAttemptSummary = {
+  ...pendingOAuthAttempt,
+  status: "completed",
+  authorizationUrl: undefined,
+  connection: oauthConnection,
+};
+
+const oauthDisconnectedCatalog: ProviderCatalogSnapshot = {
+  catalogVersion: 2,
+  revision: 0,
+  projection: "all",
+  providers: [
+    {
+      id: "openrouter",
+      displayName: "OpenRouter",
+      npm: "@ai-sdk/openai",
+      configured: false,
+      connected: false,
+      available: false,
+      authMethods: oauthMethods.methods,
+      connections: [],
+      models: [
+        {
+          ref: "openrouter/openrouter/auto",
+          providerId: "openrouter",
+          modelId: "openrouter/auto",
+          selected: false,
+          available: false,
+        },
+      ],
+      credential: {
+        id: "credential_openrouter",
+        providerId: "openrouter",
+        status: "missing",
+        generation: 0,
+      },
+    },
+  ],
+};
+
+const oauthConnectedCatalog: ProviderCatalogSnapshot = {
+  ...oauthDisconnectedCatalog,
+  revision: 1,
+  providers: [
+    {
+      ...oauthDisconnectedCatalog.providers[0]!,
+      connected: true,
+      available: true,
+      connections: [oauthConnection],
+      models: oauthDisconnectedCatalog.providers[0]!.models.map((model) => ({
+        ...model,
+        available: true,
+      })),
+      credential: {
+        id: oauthConnection.id,
+        providerId: "openrouter",
+        status: "unverified",
+        source: "stored",
+        sourceLabel: "stored:connection_oauth",
         generation: 1,
       },
     },

@@ -1,7 +1,8 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import type {
   ProviderAuthMethodsSnapshot,
+  ProviderAuthAttemptSummary,
   ProviderCatalogSnapshot,
   ProviderConnectionSummary,
 } from "@sparkwright/protocol";
@@ -10,7 +11,7 @@ import { windowAroundCursor } from "../lib/list-window.js";
 import { useTheme } from "../lib/theme-context.js";
 import { DialogFrame } from "./dialog-frame.js";
 
-type ConnectStage = "provider" | "method" | "secret" | "model";
+type ConnectStage = "provider" | "method" | "secret" | "oauth" | "model";
 
 export function ConnectDialog(props: {
   catalog: ProviderCatalogSnapshot | null;
@@ -23,6 +24,18 @@ export function ConnectDialog(props: {
     methodId: string,
     secret: string,
   ) => Promise<ProviderConnectionSummary | null>;
+  onBeginOAuth: (
+    providerId: string,
+    methodId: string,
+  ) => Promise<ProviderAuthAttemptSummary | null>;
+  onOAuthStatus: (
+    attemptId: string,
+  ) => Promise<ProviderAuthAttemptSummary | null>;
+  onCompleteOAuth: (
+    attemptId: string,
+    code: string,
+  ) => Promise<ProviderAuthAttemptSummary | null>;
+  onCancelOAuth: (attemptId: string) => Promise<void>;
   onRefresh: () => Promise<ProviderCatalogSnapshot | null>;
   onCommitModel: (model: string) => void;
   onCancel: () => void;
@@ -34,6 +47,9 @@ export function ConnectDialog(props: {
   const [methods, setMethods] = useState<ProviderAuthMethodsSnapshot>();
   const [methodId, setMethodId] = useState<string>();
   const [secret, setSecret] = useState("");
+  const [oauthCode, setOauthCode] = useState("");
+  const [oauthAttempt, setOauthAttempt] =
+    useState<ProviderAuthAttemptSummary>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [connectedCatalog, setConnectedCatalog] =
@@ -41,6 +57,7 @@ export function ConnectDialog(props: {
 
   const providers = props.catalog?.providers ?? [];
   const methodItems = methods?.methods ?? [];
+  const selectedMethod = methodItems.find((method) => method.id === methodId);
   const models = useMemo(
     () =>
       (connectedCatalog ?? props.catalog)?.providers
@@ -66,20 +83,107 @@ export function ConnectDialog(props: {
     displayItems.length === 0 ? 0 : Math.min(cursor, displayItems.length - 1);
   const { start, visible } = windowAroundCursor(displayItems, boundedCursor, 8);
 
+  useEffect(() => {
+    if (
+      stage !== "oauth" ||
+      !oauthAttempt ||
+      oauthAttempt.status !== "pending"
+    ) {
+      return;
+    }
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      const next = await props.onOAuthStatus(oauthAttempt.id);
+      if (!active) return;
+      if (!next) {
+        setError("OAuth status is unavailable. You can retry or go back.");
+        timer = setTimeout(poll, 1_000);
+        return;
+      }
+      if (next.status === "completed" && next.connection) {
+        setBusy(true);
+        const catalog = await props.onRefresh();
+        if (!active) return;
+        setOauthAttempt(next);
+        if (catalog) setConnectedCatalog(catalog);
+        setCursor(0);
+        setStage("model");
+        setBusy(false);
+        return;
+      }
+      setOauthAttempt(next);
+      if (next.status !== "pending") {
+        setError(next.message ?? `OAuth login ${next.status}.`);
+        return;
+      }
+      timer = setTimeout(poll, 500);
+    };
+    timer = setTimeout(poll, 250);
+    return () => {
+      active = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [stage, oauthAttempt?.id, oauthAttempt?.status]);
+
   useInput((input, key) => {
     if (busy) return;
     if (isBackInput(input, key)) {
       if (stage === "provider") props.onCancel();
       else {
+        if (stage === "oauth" && oauthAttempt?.status === "pending") {
+          void props.onCancelOAuth(oauthAttempt.id);
+          setOauthAttempt(undefined);
+          setOauthCode("");
+        }
         setError(undefined);
         setCursor(0);
         setStage(
           stage === "model"
-            ? "secret"
-            : stage === "secret"
+            ? selectedMethod?.type === "oauth"
               ? "method"
-              : "provider",
+              : "secret"
+            : stage === "oauth"
+              ? "method"
+              : stage === "secret"
+                ? "method"
+                : "provider",
         );
+      }
+      return;
+    }
+    if (stage === "oauth") {
+      if (oauthAttempt?.flow !== "code" || oauthAttempt.status !== "pending") {
+        return;
+      }
+      if (key.return) {
+        if (!oauthCode) return;
+        const code = oauthCode;
+        setOauthCode("");
+        setBusy(true);
+        setError(undefined);
+        void props
+          .onCompleteOAuth(oauthAttempt.id, code)
+          .then((next) => {
+            if (!next) {
+              setError("OAuth completion failed. Check the code and retry.");
+              return;
+            }
+            setOauthAttempt(next);
+          })
+          .finally(() => setBusy(false));
+        return;
+      }
+      if (key.backspace || key.delete) {
+        setOauthCode((current) => [...current].slice(0, -1).join(""));
+        return;
+      }
+      if (key.ctrl && input === "u") {
+        setOauthCode("");
+        return;
+      }
+      if (!key.ctrl && !key.meta && input) {
+        setOauthCode((current) => current + input);
       }
       return;
     }
@@ -161,7 +265,25 @@ export function ConnectDialog(props: {
       if (!method) return;
       setMethodId(method.id);
       setCursor(0);
-      setStage("secret");
+      if (method.type === "oauth") {
+        if (!providerId) return;
+        setBusy(true);
+        setError(undefined);
+        void props
+          .onBeginOAuth(providerId, method.id)
+          .then((attempt) => {
+            if (!attempt) {
+              setError("OAuth login could not be started.");
+              return;
+            }
+            setOauthAttempt(attempt);
+            setOauthCode("");
+            setStage("oauth");
+          })
+          .finally(() => setBusy(false));
+      } else {
+        setStage("secret");
+      }
       return;
     }
     const model = models[boundedCursor];
@@ -196,6 +318,36 @@ export function ConnectDialog(props: {
             enter connect · ctrl+u clear · esc back
           </Text>
         </>
+      ) : stage === "oauth" && oauthAttempt ? (
+        <Box flexDirection="column">
+          <Text color={theme.muted}>
+            {oauthAttempt.instructions ??
+              "Complete authorization, then return here."}
+          </Text>
+          {oauthAttempt.authorizationUrl ? (
+            <Text color={theme.accent}>{oauthAttempt.authorizationUrl}</Text>
+          ) : null}
+          {oauthAttempt.verificationUrl ? (
+            <Text color={theme.accent}>{oauthAttempt.verificationUrl}</Text>
+          ) : null}
+          {oauthAttempt.userCode ? (
+            <Text color={theme.success}>code: {oauthAttempt.userCode}</Text>
+          ) : null}
+          {oauthAttempt.flow === "code" && oauthAttempt.status === "pending" ? (
+            <Box>
+              <Text color={theme.success}>{"› "}authorization code: </Text>
+              <Text>{"•".repeat(Math.min([...oauthCode].length, 48))}</Text>
+              <Text color={theme.accent}>▎</Text>
+            </Box>
+          ) : (
+            <Text color={theme.muted}>waiting for authorization…</Text>
+          )}
+          <Text color={theme.muted}>
+            {oauthAttempt.flow === "code"
+              ? "enter submit · ctrl+u clear · esc cancel"
+              : "esc cancel"}
+          </Text>
+        </Box>
       ) : stage === "model" ? (
         <Text color={theme.success}>
           Connected. Choose the model for the next run.
@@ -203,7 +355,7 @@ export function ConnectDialog(props: {
       ) : null}
       {props.loading || busy ? <Text color={theme.muted}>working…</Text> : null}
       {error ? <Text color={theme.error}>{error}</Text> : null}
-      {stage !== "secret" && visible.length > 0 ? (
+      {stage !== "secret" && stage !== "oauth" && visible.length > 0 ? (
         <Box flexDirection="column" marginTop={1}>
           {visible.map((item, index) => {
             const selected = start + index === boundedCursor;
@@ -219,10 +371,10 @@ export function ConnectDialog(props: {
             );
           })}
         </Box>
-      ) : stage !== "secret" && !props.loading && !busy ? (
+      ) : stage !== "secret" && stage !== "oauth" && !props.loading && !busy ? (
         <Text color={theme.muted}>(no available entries)</Text>
       ) : null}
-      {stage !== "secret" ? (
+      {stage !== "secret" && stage !== "oauth" ? (
         <Text color={theme.muted}>↑↓ select · enter continue · esc back</Text>
       ) : null}
     </DialogFrame>

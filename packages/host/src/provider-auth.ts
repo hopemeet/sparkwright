@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type {
   ProviderAuthMethodsSnapshot,
+  ProviderAuthAttemptSummary,
   ProviderAuthStatus,
   ProviderCatalogEntry,
   ProviderCatalogProjection,
@@ -30,17 +31,32 @@ import {
   createHostProviderRegistry,
   getProviderConnectionDescriptor,
   providerNpm,
+  type ProviderConnectionAuthMethod,
 } from "./provider-catalog.js";
 import {
   createProviderCredentialStore,
   type ProviderCredentialStore,
   withExclusiveFileLock,
 } from "./provider-credential-store.js";
+import {
+  createBuiltInProviderOAuthDrivers,
+  createPkceChallenge,
+  createPkceVerifier,
+  oauthOpaqueValue,
+  sameOpaqueValue,
+  validateOAuthProof,
+  type ProviderOAuthCredential,
+  type ProviderOAuthDriver,
+  type ProviderOAuthProof,
+} from "./provider-oauth.js";
 
 const PROVIDER_CONNECTION_STATE_VERSION = 2;
 const LEGACY_PROVIDER_AUTH_STATE_VERSION = 1;
 const MAX_SECRET_BYTES = 64 * 1024;
 const REVISION_POLL_MS = 250;
+const DEFAULT_OAUTH_ATTEMPT_TTL_MS = 10 * 60 * 1_000;
+const OAUTH_TERMINAL_RETENTION_MS = 60 * 1_000;
+const OAUTH_CREDENTIAL_PREFIX = "sparkwright.oauth.v1:";
 
 interface LegacyProviderAuthStateRecord {
   providerId: string;
@@ -67,6 +83,35 @@ interface StoredProviderConnection {
   generation: number;
   createdAt: string;
   updatedAt: string;
+}
+
+interface ProviderOAuthAttempt {
+  id: string;
+  principalId: string;
+  clientConnectionId: string;
+  providerId: string;
+  methodId: string;
+  flow: "browser" | "device" | "code";
+  driver: ProviderOAuthDriver;
+  binding: ProviderConnectionBinding;
+  workspaceId: string;
+  grantScope: ProviderConnectionGrantScope;
+  promptValues: Readonly<Record<string, string>>;
+  state: string;
+  nonce?: string;
+  codeVerifier?: string;
+  createdAt: string;
+  expiresAt: string;
+  status: "pending" | "completed" | "failed" | "expired" | "cancelled";
+  consuming: boolean;
+  authorizationUrl?: string;
+  verificationUrl?: string;
+  userCode?: string;
+  instructions?: string;
+  connection?: ProviderConnectionSummary;
+  message?: string;
+  terminalAt?: number;
+  cancel?: () => Promise<void> | void;
 }
 
 type ConnectionGrant =
@@ -127,6 +172,9 @@ export interface ProviderAuthManagerOptions {
   statePath?: string;
   credentialStore?: ProviderCredentialStore;
   now?: () => Date;
+  oauthAttemptTtlMs?: number;
+  oauthDrivers?: Iterable<ProviderOAuthDriver>;
+  oauthFetch?: typeof fetch;
 }
 
 export interface ProviderAuthContext {
@@ -134,6 +182,11 @@ export interface ProviderAuthContext {
   env?: Record<string, string | undefined>;
   includeProjectConfig?: boolean;
   projection?: ProviderCatalogProjection;
+}
+
+export interface ProviderAuthAttemptContext extends ProviderAuthContext {
+  principalId: string;
+  clientConnectionId: string;
 }
 
 export type ProviderAuthAction = "login" | "logout" | "refresh";
@@ -152,14 +205,28 @@ export class ProviderAuthManager {
   private readonly env: Record<string, string | undefined>;
   private readonly statePath: string;
   private readonly now: () => Date;
+  private readonly oauthAttemptTtlMs: number;
+  private readonly oauthDrivers: ReadonlyMap<string, ProviderOAuthDriver>;
   private credentialStore: ProviderCredentialStore | undefined;
   private readonly listeners = new Map<string, Set<() => void>>();
+  private readonly oauthAttempts = new Map<string, ProviderOAuthAttempt>();
 
   constructor(options: ProviderAuthManagerOptions = {}) {
     this.env = options.env ?? process.env;
     this.statePath = options.statePath ?? providerAuthStatePath(this.env);
     this.credentialStore = options.credentialStore;
     this.now = options.now ?? (() => new Date());
+    this.oauthAttemptTtlMs =
+      options.oauthAttemptTtlMs ?? DEFAULT_OAUTH_ATTEMPT_TTL_MS;
+    const drivers = [
+      ...createBuiltInProviderOAuthDrivers({
+        fetch: options.oauthFetch,
+      }).values(),
+      ...(options.oauthDrivers ?? []),
+    ];
+    this.oauthDrivers = new Map(
+      drivers.map((driver) => [driver.implementationId, driver]),
+    );
   }
 
   async catalog(
@@ -199,6 +266,7 @@ export class ProviderAuthManager {
       });
       const persistedProfile = state.profiles[profileId];
       const ambient = availableCredential({
+        providerId,
         npm,
         configuredApiKey: config?.apiKey,
         env: loaded.env,
@@ -214,7 +282,7 @@ export class ProviderAuthManager {
       const storedApplicable =
         stored !== undefined &&
         binding !== undefined &&
-        sameBinding(stored.binding, binding) &&
+        sameEndpointBinding(stored.binding, binding) &&
         hasConnectionGrant(state, stored.id, loaded.workspaceId);
       const ambientStatus: ProviderAuthStatus = !ambient
         ? "missing"
@@ -282,7 +350,11 @@ export class ProviderAuthManager {
         connected,
         available: usable,
         ...(descriptor
-          ? { authMethods: authMethodSummaries(descriptor.authMethods) }
+          ? {
+              authMethods: authMethodSummaries(
+                this.availableAuthMethods(descriptor.authMethods, binding),
+              ),
+            }
           : {}),
         connections: connectionSummaries.sort(compareConnections),
         models: models.map((model) => ({ ...model, available: usable })),
@@ -331,9 +403,207 @@ export class ProviderAuthManager {
         providerId,
         displayName: descriptor.displayName,
         binding: publicBinding(binding),
-        methods: authMethodSummaries(descriptor.authMethods),
+        methods: authMethodSummaries(
+          this.availableAuthMethods(descriptor.authMethods, binding),
+        ),
       },
     };
+  }
+
+  async beginOAuth(input: {
+    providerId: string;
+    methodId: string;
+    promptValues?: Record<string, string>;
+    grantScope?: ProviderConnectionGrantScope;
+    context: ProviderAuthAttemptContext;
+  }): Promise<
+    | { ok: true; attempt: ProviderAuthAttemptSummary }
+    | { ok: false; message: string }
+  > {
+    this.cleanupOAuthAttempts();
+    const descriptor = getProviderConnectionDescriptor(input.providerId);
+    const method = descriptor?.authMethods.find(
+      (candidate) => candidate.id === input.methodId,
+    );
+    if (!descriptor || !method || method.kind !== "oauth") {
+      return {
+        ok: false,
+        message: `Provider "${input.providerId}" does not support OAuth method "${input.methodId}".`,
+      };
+    }
+    const driver = this.oauthDrivers.get(method.implementationId);
+    if (!driver) {
+      return {
+        ok: false,
+        message: `OAuth method "${input.methodId}" is unavailable in this Host build.`,
+      };
+    }
+    const promptValues = input.promptValues ?? {};
+    const promptError = validateOAuthPromptValues(method, promptValues);
+    if (promptError) return { ok: false, message: promptError };
+    const loaded = await this.loadContext(input.context);
+    const binding = this.connectionBinding(
+      input.providerId,
+      loaded.configuredProviders[input.providerId],
+      loaded.env,
+      input.methodId,
+      driver.issuer,
+    );
+    if (
+      !binding ||
+      binding.driverId !== descriptor.driverId ||
+      binding.normalizedEndpoint !==
+        normalizeProviderEndpoint(descriptor.officialEndpoint)
+    ) {
+      return {
+        ok: false,
+        message:
+          "OAuth login is available only for the built-in official endpoint binding.",
+      };
+    }
+    const createdAt = this.now();
+    const expiresAt = new Date(createdAt.getTime() + this.oauthAttemptTtlMs);
+    const attemptId = `oauth_${randomBytes(24).toString("base64url")}`;
+    const state = oauthOpaqueValue();
+    const codeVerifier = createPkceVerifier();
+    let started;
+    try {
+      started = await driver.begin({
+        attemptId,
+        state,
+        codeChallenge: createPkceChallenge(codeVerifier),
+        expiresAt: expiresAt.toISOString(),
+        promptValues,
+      });
+    } catch {
+      return {
+        ok: false,
+        message: "OAuth authorization could not be started.",
+      };
+    }
+    if (started.presentation.flow !== method.flow) {
+      await started.cancel?.();
+      return {
+        ok: false,
+        message: "OAuth driver returned an incompatible authorization flow.",
+      };
+    }
+    const attempt: ProviderOAuthAttempt = {
+      id: attemptId,
+      principalId: input.context.principalId,
+      clientConnectionId: input.context.clientConnectionId,
+      providerId: input.providerId,
+      methodId: input.methodId,
+      flow: method.flow,
+      driver,
+      binding,
+      workspaceId: loaded.workspaceId,
+      grantScope: input.grantScope ?? "workspace",
+      promptValues: { ...promptValues },
+      state,
+      codeVerifier,
+      createdAt: createdAt.toISOString(),
+      expiresAt: expiresAt.toISOString(),
+      status: "pending",
+      consuming: false,
+      ...(started.presentation.authorizationUrl
+        ? { authorizationUrl: started.presentation.authorizationUrl }
+        : {}),
+      ...(started.presentation.verificationUrl
+        ? { verificationUrl: started.presentation.verificationUrl }
+        : {}),
+      ...(started.presentation.userCode
+        ? { userCode: started.presentation.userCode }
+        : {}),
+      ...(started.presentation.instructions
+        ? { instructions: started.presentation.instructions }
+        : {}),
+      ...(started.cancel ? { cancel: started.cancel } : {}),
+    };
+    this.oauthAttempts.set(attempt.id, attempt);
+    const expirationTimer = setTimeout(() => {
+      void this.expireOAuthAttempt(attempt);
+    }, this.oauthAttemptTtlMs);
+    expirationTimer.unref?.();
+    if (started.completion) {
+      void started.completion.then(
+        (proof) => this.consumeOAuthAttempt(attempt, proof),
+        () => this.failOAuthAttempt(attempt, "OAuth authorization failed."),
+      );
+    }
+    return { ok: true, attempt: publicOAuthAttempt(attempt) };
+  }
+
+  async oauthStatus(input: {
+    attemptId: string;
+    context: ProviderAuthAttemptContext;
+  }): Promise<
+    | { ok: true; attempt: ProviderAuthAttemptSummary }
+    | { ok: false; message: string }
+  > {
+    this.cleanupOAuthAttempts();
+    const attempt = this.oauthAttempts.get(input.attemptId);
+    if (!attempt || !ownsOAuthAttempt(attempt, input.context)) {
+      return { ok: false, message: "OAuth attempt is unavailable." };
+    }
+    if (isOAuthAttemptExpired(attempt, this.now())) {
+      await this.expireOAuthAttempt(attempt);
+    }
+    return { ok: true, attempt: publicOAuthAttempt(attempt) };
+  }
+
+  async completeOAuth(input: {
+    attemptId: string;
+    proof: ProviderOAuthProof;
+    context: ProviderAuthAttemptContext;
+  }): Promise<
+    | { ok: true; attempt: ProviderAuthAttemptSummary }
+    | { ok: false; message: string }
+  > {
+    this.cleanupOAuthAttempts();
+    const attempt = this.oauthAttempts.get(input.attemptId);
+    if (!attempt || !ownsOAuthAttempt(attempt, input.context)) {
+      return { ok: false, message: "OAuth attempt is unavailable." };
+    }
+    return await this.consumeOAuthAttempt(attempt, input.proof);
+  }
+
+  async cancelOAuth(input: {
+    attemptId: string;
+    context: ProviderAuthAttemptContext;
+  }): Promise<
+    | { ok: true; attempt: ProviderAuthAttemptSummary }
+    | { ok: false; message: string }
+  > {
+    this.cleanupOAuthAttempts();
+    const attempt = this.oauthAttempts.get(input.attemptId);
+    if (!attempt || !ownsOAuthAttempt(attempt, input.context)) {
+      return { ok: false, message: "OAuth attempt is unavailable." };
+    }
+    if (attempt.status !== "pending" || attempt.consuming) {
+      return { ok: false, message: "OAuth attempt is already terminal." };
+    }
+    attempt.status = "cancelled";
+    attempt.terminalAt = this.now().getTime();
+    clearOAuthAttemptSecrets(attempt);
+    await attempt.cancel?.();
+    attempt.cancel = undefined;
+    return { ok: true, attempt: publicOAuthAttempt(attempt) };
+  }
+
+  async cancelOAuthAttemptsForConnection(input: {
+    principalId: string;
+    clientConnectionId: string;
+  }): Promise<void> {
+    for (const attempt of this.oauthAttempts.values()) {
+      if (attempt.status === "pending" && ownsOAuthAttempt(attempt, input)) {
+        attempt.status = "cancelled";
+        attempt.terminalAt = this.now().getTime();
+        clearOAuthAttemptSecrets(attempt);
+        await attempt.cancel?.();
+        attempt.cancel = undefined;
+      }
+    }
   }
 
   async submitSecret(input: {
@@ -371,65 +641,13 @@ export class ProviderAuthManager {
         message: `Provider "${input.providerId}" has no valid endpoint binding.`,
       };
     }
-    const connectionId = `connection_${randomBytes(24).toString("base64url")}`;
-    const timestamp = this.now().toISOString();
-    const connection: StoredProviderConnection = {
-      id: connectionId,
+    return await this.persistStoredCredential({
       binding,
+      secret: input.secret,
       status: descriptor.validation.kind === "none" ? "unverified" : "ready",
-      generation: 1,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
-    const store = this.getCredentialStore();
-    await store.put(connectionId, input.secret);
-    let state: ProviderConnectionStateFile;
-    try {
-      state = await this.modifyState((current) => {
-        const scope = input.grantScope ?? "workspace";
-        const grant: ConnectionGrant =
-          scope === "user"
-            ? { scope, connectionId }
-            : {
-                scope,
-                workspaceId: loaded.workspaceId,
-                connectionId,
-              };
-        return {
-          ...current,
-          connections: {
-            ...current.connections,
-            [connectionId]: connection,
-          },
-          grants: appendUniqueGrant(current.grants, grant),
-          selections: {
-            ...current.selections,
-            [selectionKey(loaded.workspaceId, input.providerId)]: connectionId,
-          },
-          suppressions: current.suppressions.filter(
-            (entry) =>
-              !(
-                entry.workspaceId === loaded.workspaceId &&
-                entry.bindingFingerprint === binding.endpointFingerprint
-              ),
-          ),
-        };
-      });
-    } catch (error) {
-      await store.remove(connectionId).catch(() => undefined);
-      throw error;
-    }
-    this.notify(connectionId);
-    return {
-      ok: true,
-      connection: storedConnectionSummary({
-        connection,
-        state,
-        workspaceId: loaded.workspaceId,
-        expectedBinding: binding,
-      }),
-      revision: state.revision,
-    };
+      workspaceId: loaded.workspaceId,
+      grantScope: input.grantScope ?? "workspace",
+    });
   }
 
   /**
@@ -526,6 +744,7 @@ export class ProviderAuthManager {
       loaded.configuredProviders[stored.binding.providerId],
       loaded.env,
       stored.binding.authMethodId,
+      stored.binding.authRealm,
     );
     if (
       input.action === "select" &&
@@ -538,26 +757,37 @@ export class ProviderAuthManager {
       };
     }
 
-    if (input.action === "logout" || input.action === "remove") {
-      const store = this.getCredentialStore();
-      const secret = await store.get(stored.id);
-      await store.remove(stored.id);
-      try {
-        const state = await this.modifyState((state) =>
-          removeStoredConnection(state, stored.id),
-        );
-        this.notify(stored.id);
-        return {
-          ok: true,
-          connectionId: stored.id,
-          revision: state.revision,
-        };
-      } catch (error) {
-        if (secret !== undefined) {
-          await store.put(stored.id, secret).catch(() => undefined);
-        }
-        throw error;
+    if (input.action === "refresh") {
+      const method = getProviderConnectionDescriptor(
+        stored.binding.providerId,
+      )?.authMethods.find(
+        (candidate) => candidate.id === stored.binding.authMethodId,
+      );
+      if (method?.kind === "oauth") {
+        return await this.refreshOAuthConnection({
+          stored,
+          expectedBinding,
+          workspaceId: loaded.workspaceId,
+        });
       }
+    }
+
+    if (input.action === "logout" || input.action === "remove") {
+      const method = getProviderConnectionDescriptor(
+        stored.binding.providerId,
+      )?.authMethods.find(
+        (candidate) => candidate.id === stored.binding.authMethodId,
+      );
+      const destructiveAction = input.action === "logout" ? "logout" : "remove";
+      const remove = () =>
+        this.removeStoredCredential(destructiveAction, stored);
+      return method?.kind === "oauth"
+        ? await withExclusiveFileLock(
+            oauthConnectionLockPath(this.statePath, stored.id),
+            remove,
+            { timeoutMs: 35_000, staleMs: 60_000 },
+          )
+        : await remove();
     }
 
     const state = await this.modifyState((state) => {
@@ -662,12 +892,16 @@ export class ProviderAuthManager {
           message: `Unknown provider "${parsed.providerId}" in model "${input.modelRef}".`,
         };
       }
-      providerConfig = { npm: descriptor.npm };
       selection = {
         kind: "configured",
         providerKey: parsed.providerId,
         modelId: parsed.modelId,
         npm: descriptor.npm,
+        baseURL: descriptor.officialEndpoint,
+      };
+      providerConfig = {
+        npm: descriptor.npm,
+        baseURL: descriptor.officialEndpoint,
       };
     }
     if (selection.kind !== "configured") {
@@ -701,7 +935,17 @@ export class ProviderAuthManager {
           message: `Selected provider connection "${selectedConnectionId}" is unavailable; select or create another connection.`,
         };
       }
-      if (!sameBinding(connection.binding, binding)) {
+      const selectedBinding = this.connectionBinding(
+        parsed.providerId,
+        configured,
+        context.env,
+        connection.binding.authMethodId,
+        connection.binding.authRealm,
+      );
+      if (
+        !selectedBinding ||
+        !sameBinding(connection.binding, selectedBinding)
+      ) {
         return {
           ok: false,
           message:
@@ -721,18 +965,22 @@ export class ProviderAuthManager {
           message: `Selected provider connection "${connection.id}" is ${connection.status}; no ambient credential fallback was attempted.`,
         };
       }
-      const apiKey = await this.getCredentialStore().get(connection.id);
-      if (!apiKey) {
+      const storedCredential = await this.getCredentialStore().get(
+        connection.id,
+      );
+      if (!storedCredential) {
         return {
           ok: false,
           message: `Selected provider connection "${connection.id}" has no stored credential; no ambient credential fallback was attempted.`,
         };
       }
+      const oauthCredential = decodeOAuthCredential(storedCredential);
+      const apiKey = oauthCredential?.accessToken ?? storedCredential;
       const summary = storedConnectionSummary({
         connection,
         state,
         workspaceId: context.workspaceId,
-        expectedBinding: binding,
+        expectedBinding: selectedBinding,
       });
       return {
         ok: true,
@@ -749,6 +997,7 @@ export class ProviderAuthManager {
     }
 
     const ambient = availableCredential({
+      providerId: parsed.providerId,
       npm: selection.npm,
       configuredApiKey: selection.apiKey,
       env: context.env,
@@ -985,6 +1234,7 @@ export class ProviderAuthManager {
     const config = loaded.configuredProviders[provider.id];
     const binding = this.connectionBinding(provider.id, config, loaded.env);
     const ambient = availableCredential({
+      providerId: provider.id,
       npm: provider.npm,
       configuredApiKey: config?.apiKey,
       env: loaded.env,
@@ -1075,14 +1325,21 @@ export class ProviderAuthManager {
     config: ProviderConfig | undefined,
     env: Record<string, string | undefined>,
     authMethodId = "api_key",
+    authRealm?: string,
   ): ProviderConnectionBinding | undefined {
     const descriptor = getProviderConnectionDescriptor(providerId);
     if (!descriptor) return undefined;
     const npm = providerNpm(providerId, config);
     const npmInfo = SUPPORTED_PROVIDER_NPMS[npm];
-    const environmentBaseURL = npmInfo?.baseUrlEnv
-      ? nonEmpty(env[npmInfo.baseUrlEnv])
-      : undefined;
+    const baseUrlEnvironmentNames =
+      npm === descriptor.npm
+        ? (descriptor.baseUrlEnvironmentVariables ?? [])
+        : npmInfo?.baseUrlEnv
+          ? [npmInfo.baseUrlEnv]
+          : [];
+    const environmentBaseURL = baseUrlEnvironmentNames
+      .map((name) => nonEmpty(env[name]))
+      .find((value) => value !== undefined);
     const endpoint =
       environmentBaseURL ?? config?.baseURL ?? descriptor.officialEndpoint;
     const normalizedEndpoint = normalizeProviderEndpoint(endpoint);
@@ -1095,6 +1352,7 @@ export class ProviderAuthManager {
       driverId,
       normalizedEndpoint,
       authMethodId,
+      authRealm,
     });
     return {
       providerId,
@@ -1104,6 +1362,7 @@ export class ProviderAuthManager {
         .update(fingerprintInput)
         .digest("hex"),
       authMethodId,
+      ...(authRealm ? { authRealm } : {}),
     };
   }
 
@@ -1127,6 +1386,397 @@ export class ProviderAuthManager {
           expectedBinding: input.expectedBinding,
         }),
       );
+  }
+
+  private availableAuthMethods(
+    methods: readonly ProviderConnectionAuthMethod[],
+    binding: ProviderConnectionBinding | undefined,
+  ): ProviderConnectionAuthMethod[] {
+    return methods.filter((method) => {
+      if (method.kind !== "oauth") return true;
+      if (!binding || !this.oauthDrivers.has(method.implementationId)) {
+        return false;
+      }
+      const descriptor = getProviderConnectionDescriptor(binding.providerId);
+      return (
+        descriptor !== undefined &&
+        binding.driverId === descriptor.driverId &&
+        binding.normalizedEndpoint ===
+          normalizeProviderEndpoint(descriptor.officialEndpoint)
+      );
+    });
+  }
+
+  private async persistStoredCredential(input: {
+    binding: ProviderConnectionBinding;
+    secret: string;
+    status: ProviderConnectionStatus;
+    workspaceId: string;
+    grantScope: ProviderConnectionGrantScope;
+  }): Promise<{
+    ok: true;
+    connection: ProviderConnectionSummary;
+    revision: number;
+  }> {
+    const connectionId = `connection_${randomBytes(24).toString("base64url")}`;
+    const timestamp = this.now().toISOString();
+    const connection: StoredProviderConnection = {
+      id: connectionId,
+      binding: input.binding,
+      status: input.status,
+      generation: 1,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    const store = this.getCredentialStore();
+    await store.put(connectionId, input.secret);
+    let state: ProviderConnectionStateFile;
+    try {
+      state = await this.modifyState((current) => {
+        const grant: ConnectionGrant =
+          input.grantScope === "user"
+            ? { scope: "user", connectionId }
+            : {
+                scope: "workspace",
+                workspaceId: input.workspaceId,
+                connectionId,
+              };
+        return {
+          ...current,
+          connections: {
+            ...current.connections,
+            [connectionId]: connection,
+          },
+          grants: appendUniqueGrant(current.grants, grant),
+          selections: {
+            ...current.selections,
+            [selectionKey(input.workspaceId, input.binding.providerId)]:
+              connectionId,
+          },
+          suppressions: current.suppressions.filter(
+            (entry) =>
+              !(
+                entry.workspaceId === input.workspaceId &&
+                entry.bindingFingerprint === input.binding.endpointFingerprint
+              ),
+          ),
+        };
+      });
+    } catch (error) {
+      await store.remove(connectionId).catch(() => undefined);
+      throw error;
+    }
+    this.notify(connectionId);
+    return {
+      ok: true,
+      connection: storedConnectionSummary({
+        connection,
+        state,
+        workspaceId: input.workspaceId,
+        expectedBinding: input.binding,
+      }),
+      revision: state.revision,
+    };
+  }
+
+  private async consumeOAuthAttempt(
+    attempt: ProviderOAuthAttempt,
+    proof: ProviderOAuthProof,
+  ): Promise<
+    | { ok: true; attempt: ProviderAuthAttemptSummary }
+    | { ok: false; message: string }
+  > {
+    if (isOAuthAttemptExpired(attempt, this.now())) {
+      await this.expireOAuthAttempt(attempt);
+      return { ok: false, message: "OAuth attempt has expired." };
+    }
+    if (attempt.status !== "pending" || attempt.consuming) {
+      return { ok: false, message: "OAuth attempt has already been consumed." };
+    }
+    const proofError = validateOAuthProof(proof);
+    if (proofError) return { ok: false, message: proofError };
+    if (
+      (attempt.flow === "browser" && !proof.state) ||
+      (proof.state !== undefined &&
+        !sameOpaqueValue(proof.state, attempt.state))
+    ) {
+      return {
+        ok: false,
+        message: "OAuth state did not match the active attempt.",
+      };
+    }
+    if (
+      attempt.nonce !== undefined &&
+      (!proof.nonce || !sameOpaqueValue(proof.nonce, attempt.nonce))
+    ) {
+      return {
+        ok: false,
+        message: "OAuth nonce did not match the active attempt.",
+      };
+    }
+    const codeVerifier = attempt.codeVerifier;
+    if (!codeVerifier) {
+      return {
+        ok: false,
+        message: "OAuth attempt no longer has completion state.",
+      };
+    }
+    attempt.consuming = true;
+    try {
+      const credential = await attempt.driver.complete({
+        proof,
+        codeVerifier,
+        promptValues: attempt.promptValues,
+      });
+      const credentialError = validateOAuthCredential(credential);
+      if (credentialError) throw new Error(credentialError);
+      const persisted = await this.persistStoredCredential({
+        binding: attempt.binding,
+        secret: encodeOAuthCredential(credential),
+        status: "unverified",
+        workspaceId: attempt.workspaceId,
+        grantScope: attempt.grantScope,
+      });
+      attempt.status = "completed";
+      attempt.connection = persisted.connection;
+      attempt.terminalAt = this.now().getTime();
+      clearOAuthAttemptSecrets(attempt);
+      await attempt.cancel?.();
+      attempt.cancel = undefined;
+      return { ok: true, attempt: publicOAuthAttempt(attempt) };
+    } catch {
+      await this.failOAuthAttempt(
+        attempt,
+        "OAuth authorization could not create a provider connection.",
+      );
+      return { ok: true, attempt: publicOAuthAttempt(attempt) };
+    } finally {
+      attempt.consuming = false;
+    }
+  }
+
+  private async failOAuthAttempt(
+    attempt: ProviderOAuthAttempt,
+    message: string,
+  ): Promise<void> {
+    if (attempt.status !== "pending") return;
+    attempt.status = "failed";
+    attempt.message = message;
+    attempt.terminalAt = this.now().getTime();
+    clearOAuthAttemptSecrets(attempt);
+    await Promise.resolve(attempt.cancel?.()).catch(() => undefined);
+    attempt.cancel = undefined;
+  }
+
+  private async expireOAuthAttempt(
+    attempt: ProviderOAuthAttempt,
+  ): Promise<void> {
+    if (attempt.status !== "pending" || attempt.consuming) return;
+    attempt.status = "expired";
+    attempt.terminalAt = this.now().getTime();
+    clearOAuthAttemptSecrets(attempt);
+    await Promise.resolve(attempt.cancel?.()).catch(() => undefined);
+    attempt.cancel = undefined;
+  }
+
+  private cleanupOAuthAttempts(): void {
+    const now = this.now();
+    for (const [attemptId, attempt] of this.oauthAttempts) {
+      if (isOAuthAttemptExpired(attempt, now)) {
+        void this.expireOAuthAttempt(attempt);
+      }
+      if (
+        attempt.terminalAt !== undefined &&
+        now.getTime() - attempt.terminalAt > OAUTH_TERMINAL_RETENTION_MS
+      ) {
+        this.oauthAttempts.delete(attemptId);
+      }
+    }
+  }
+
+  private async refreshOAuthConnection(input: {
+    stored: StoredProviderConnection;
+    expectedBinding: ProviderConnectionBinding | undefined;
+    workspaceId: string;
+  }): Promise<
+    | {
+        ok: true;
+        connection: ProviderConnectionSummary;
+        connectionId: string;
+        revision: number;
+      }
+    | { ok: false; message: string }
+  > {
+    const initialGeneration = input.stored.generation;
+    return await withExclusiveFileLock(
+      oauthConnectionLockPath(this.statePath, input.stored.id),
+      async () => {
+        const current = await this.readState();
+        const stored = current.connections[input.stored.id];
+        if (!stored) {
+          return {
+            ok: false as const,
+            message: `Connection "${input.stored.id}" disappeared.`,
+          };
+        }
+        if (stored.generation > initialGeneration) {
+          return {
+            ok: true as const,
+            connectionId: stored.id,
+            connection: storedConnectionSummary({
+              connection: stored,
+              state: current,
+              workspaceId: input.workspaceId,
+              expectedBinding: input.expectedBinding,
+            }),
+            revision: current.revision,
+          };
+        }
+        const method = getProviderConnectionDescriptor(
+          stored.binding.providerId,
+        )?.authMethods.find(
+          (candidate) => candidate.id === stored.binding.authMethodId,
+        );
+        const driver =
+          method?.kind === "oauth"
+            ? this.oauthDrivers.get(method.implementationId)
+            : undefined;
+        const store = this.getCredentialStore();
+        const encoded = await store.get(stored.id);
+        const credential = encoded ? decodeOAuthCredential(encoded) : undefined;
+        if (!driver?.refresh || !encoded || !credential) {
+          await this.markOAuthRefreshFailed(stored.id);
+          return {
+            ok: false as const,
+            message:
+              "OAuth connection cannot be refreshed and was marked needs_refresh.",
+          };
+        }
+        try {
+          const refreshed = await driver.refresh({ credential });
+          const credentialError = validateOAuthCredential(refreshed);
+          if (credentialError) throw new Error(credentialError);
+          await store.put(stored.id, encodeOAuthCredential(refreshed));
+          let state: ProviderConnectionStateFile;
+          try {
+            state = await this.modifyState((latest) => {
+              const connection = latest.connections[stored.id];
+              if (!connection || connection.generation !== initialGeneration) {
+                return latest;
+              }
+              return {
+                ...latest,
+                connections: {
+                  ...latest.connections,
+                  [stored.id]: {
+                    ...connection,
+                    status: "unverified",
+                    generation: connection.generation + 1,
+                    updatedAt: this.now().toISOString(),
+                  },
+                },
+              };
+            });
+          } catch (error) {
+            await store.put(stored.id, encoded).catch(() => undefined);
+            throw error;
+          }
+          this.notify(stored.id);
+          const updated = state.connections[stored.id]!;
+          return {
+            ok: true as const,
+            connectionId: stored.id,
+            connection: storedConnectionSummary({
+              connection: updated,
+              state,
+              workspaceId: input.workspaceId,
+              expectedBinding: input.expectedBinding,
+            }),
+            revision: state.revision,
+          };
+        } catch {
+          await this.markOAuthRefreshFailed(stored.id);
+          return {
+            ok: false as const,
+            message:
+              "OAuth refresh failed; the selected connection was marked needs_refresh and no ambient credential was used.",
+          };
+        }
+      },
+      { timeoutMs: 35_000, staleMs: 60_000 },
+    );
+  }
+
+  private async markOAuthRefreshFailed(connectionId: string): Promise<void> {
+    const state = await this.modifyState((current) => {
+      const connection = current.connections[connectionId];
+      if (!connection) return current;
+      return {
+        ...current,
+        connections: {
+          ...current.connections,
+          [connectionId]: {
+            ...connection,
+            status: "needs_refresh",
+            generation: connection.generation + 1,
+            updatedAt: this.now().toISOString(),
+          },
+        },
+      };
+    });
+    if (state.connections[connectionId]) this.notify(connectionId);
+  }
+
+  private async removeStoredCredential(
+    action: "logout" | "remove",
+    stored: StoredProviderConnection,
+  ): Promise<{
+    ok: true;
+    connectionId: string;
+    revision: number;
+  }> {
+    const latest = (await this.readState()).connections[stored.id];
+    if (!latest) {
+      return {
+        ok: true,
+        connectionId: stored.id,
+        revision: (await this.readState()).revision,
+      };
+    }
+    const store = this.getCredentialStore();
+    const secret = await store.get(stored.id);
+    if (action === "logout" && secret) {
+      const credential = decodeOAuthCredential(secret);
+      const method = getProviderConnectionDescriptor(
+        latest.binding.providerId,
+      )?.authMethods.find(
+        (candidate) => candidate.id === latest.binding.authMethodId,
+      );
+      const driver =
+        method?.kind === "oauth"
+          ? this.oauthDrivers.get(method.implementationId)
+          : undefined;
+      if (credential && driver?.revoke) {
+        await driver.revoke({ credential }).catch(() => undefined);
+      }
+    }
+    await store.remove(stored.id);
+    try {
+      const state = await this.modifyState((state) =>
+        removeStoredConnection(state, stored.id),
+      );
+      this.notify(stored.id);
+      return {
+        ok: true,
+        connectionId: stored.id,
+        revision: state.revision,
+      };
+    } catch (error) {
+      if (secret !== undefined) {
+        await store.put(stored.id, secret).catch(() => undefined);
+      }
+      throw error;
+    }
   }
 
   private getCredentialStore(): ProviderCredentialStore {
@@ -1275,10 +1925,17 @@ function providerCatalogConfigs(
   for (const providerId of providerIds) {
     const config = configuredProviders[providerId];
     const npm = providerNpm(providerId, config);
-    const baseUrlEnv = SUPPORTED_PROVIDER_NPMS[npm]?.baseUrlEnv;
-    const environmentBaseURL = baseUrlEnv
-      ? nonEmpty(env[baseUrlEnv])
-      : undefined;
+    const descriptor = getProviderConnectionDescriptor(providerId);
+    const npmBaseUrlEnv = SUPPORTED_PROVIDER_NPMS[npm]?.baseUrlEnv;
+    const environmentBaseUrlNames =
+      descriptor && npm === descriptor.npm
+        ? (descriptor.baseUrlEnvironmentVariables ?? [])
+        : npmBaseUrlEnv
+          ? [npmBaseUrlEnv]
+          : [];
+    const environmentBaseURL = environmentBaseUrlNames
+      .map((name) => nonEmpty(env[name]))
+      .find((value) => value !== undefined);
     if (environmentBaseURL) {
       effective[providerId] = {
         ...(config ?? {}),
@@ -1291,17 +1948,32 @@ function providerCatalogConfigs(
 }
 
 function availableCredential(input: {
+  providerId: string;
   npm: string;
   configuredApiKey?: string;
   env: Record<string, string | undefined>;
 }): AmbientCredential | undefined {
   const npmInfo = SUPPORTED_PROVIDER_NPMS[input.npm];
-  const envValue = npmInfo ? nonEmpty(input.env[npmInfo.apiKeyEnv]) : undefined;
-  if (envValue && npmInfo) {
+  const descriptor = getProviderConnectionDescriptor(input.providerId);
+  const descriptorEnvironmentNames = descriptor?.authMethods.find(
+    (method) => method.kind === "api_key",
+  )?.environmentVariables;
+  const environmentNames = descriptorEnvironmentNames
+    ? [...descriptorEnvironmentNames]
+    : npmInfo
+      ? [npmInfo.apiKeyEnv]
+      : [];
+  const environmentName = environmentNames.find((name) =>
+    nonEmpty(input.env[name]),
+  );
+  const envValue = environmentName
+    ? nonEmpty(input.env[environmentName])
+    : undefined;
+  if (envValue && environmentName) {
     return {
       apiKey: envValue,
       source: "environment",
-      sourceLabel: `env:${npmInfo.apiKeyEnv}`,
+      sourceLabel: `env:${environmentName}`,
     };
   }
   const configured = nonEmpty(input.configuredApiKey);
@@ -1310,19 +1982,36 @@ function availableCredential(input: {
     : undefined;
 }
 
-function authMethodSummaries(
-  methods: readonly {
-    id: "api_key";
-    kind: "api_key";
-    environmentVariables: readonly string[];
-  }[],
-) {
-  return methods.map((method) => ({
-    id: method.id,
-    type: method.kind,
-    label: "API key",
-    environmentVariables: [...method.environmentVariables],
-  }));
+function authMethodSummaries(methods: readonly ProviderConnectionAuthMethod[]) {
+  return methods.map((method) =>
+    method.kind === "api_key"
+      ? {
+          id: method.id,
+          type: method.kind,
+          label: method.label ?? "API key",
+          environmentVariables: [...method.environmentVariables],
+        }
+      : {
+          id: method.id,
+          type: method.kind,
+          label: method.label,
+          flow: method.flow,
+          ...(method.prompts
+            ? {
+                prompts: method.prompts.map((prompt) =>
+                  prompt.kind === "select"
+                    ? {
+                        ...prompt,
+                        options: prompt.options.map((option) => ({
+                          ...option,
+                        })),
+                      }
+                    : { ...prompt },
+                ),
+              }
+            : {}),
+        },
+  );
 }
 
 function storedProfileSummary(
@@ -1376,7 +2065,7 @@ function storedConnectionSummary(input: {
     ] === input.connection.id;
   const bindingMatches =
     input.expectedBinding !== undefined &&
-    sameBinding(input.connection.binding, input.expectedBinding);
+    sameEndpointBinding(input.connection.binding, input.expectedBinding);
   const granted = hasConnectionGrant(
     input.state,
     input.connection.id,
@@ -1441,6 +2130,17 @@ function publicBinding(
 
 function selectionKey(workspaceId: string, providerId: string): string {
   return `${workspaceId}:${providerId}`;
+}
+
+function oauthConnectionLockPath(
+  statePath: string,
+  connectionId: string,
+): string {
+  const digest = createHash("sha256")
+    .update(connectionId)
+    .digest("hex")
+    .slice(0, 24);
+  return `${statePath}.oauth.${digest}.lock`;
 }
 
 function hasConnectionGrant(
@@ -1554,6 +2254,17 @@ function sameBinding(
   );
 }
 
+function sameEndpointBinding(
+  left: ProviderConnectionBinding,
+  right: ProviderConnectionBinding,
+): boolean {
+  return (
+    left.providerId === right.providerId &&
+    left.driverId === right.driverId &&
+    left.normalizedEndpoint === right.normalizedEndpoint
+  );
+}
+
 function isUsableConnectionStatus(status: ProviderConnectionStatus): boolean {
   return status === "ready" || status === "unverified";
 }
@@ -1587,17 +2298,175 @@ function compareConnections(
   return left.id.localeCompare(right.id);
 }
 
+function publicOAuthAttempt(
+  attempt: ProviderOAuthAttempt,
+): ProviderAuthAttemptSummary {
+  return {
+    id: attempt.id,
+    providerId: attempt.providerId,
+    methodId: attempt.methodId,
+    flow: attempt.flow,
+    status: attempt.status,
+    createdAt: attempt.createdAt,
+    expiresAt: attempt.expiresAt,
+    ...(attempt.authorizationUrl
+      ? { authorizationUrl: attempt.authorizationUrl }
+      : {}),
+    ...(attempt.verificationUrl
+      ? { verificationUrl: attempt.verificationUrl }
+      : {}),
+    ...(attempt.userCode ? { userCode: attempt.userCode } : {}),
+    ...(attempt.instructions ? { instructions: attempt.instructions } : {}),
+    ...(attempt.connection ? { connection: attempt.connection } : {}),
+    ...(attempt.message ? { message: attempt.message } : {}),
+  };
+}
+
+function ownsOAuthAttempt(
+  attempt: ProviderOAuthAttempt,
+  context: { principalId: string; clientConnectionId: string },
+): boolean {
+  return (
+    attempt.principalId === context.principalId &&
+    attempt.clientConnectionId === context.clientConnectionId
+  );
+}
+
+function isOAuthAttemptExpired(
+  attempt: ProviderOAuthAttempt,
+  now: Date,
+): boolean {
+  return (
+    attempt.status === "pending" &&
+    Date.parse(attempt.expiresAt) <= now.getTime()
+  );
+}
+
+function clearOAuthAttemptSecrets(attempt: ProviderOAuthAttempt): void {
+  attempt.state = "";
+  attempt.nonce = undefined;
+  attempt.codeVerifier = undefined;
+  attempt.promptValues = {};
+  if (attempt.authorizationUrl) {
+    attempt.authorizationUrl = undefined;
+  }
+  attempt.userCode = undefined;
+}
+
+function validateOAuthPromptValues(
+  method: Extract<ProviderConnectionAuthMethod, { kind: "oauth" }>,
+  values: Readonly<Record<string, string>>,
+): string | undefined {
+  const prompts = method.prompts ?? [];
+  if (prompts.length > 16) return "OAuth method declares too many prompts.";
+  const byId = new Map(prompts.map((prompt) => [prompt.id, prompt]));
+  for (const [id, value] of Object.entries(values)) {
+    const prompt = byId.get(id);
+    if (!prompt) return `Unknown OAuth prompt "${id}".`;
+    if (Buffer.byteLength(value, "utf8") > 4 * 1024) {
+      return `OAuth prompt "${id}" exceeds the 4096-byte limit.`;
+    }
+    if (hasControlCharacters(value)) {
+      return `OAuth prompt "${id}" contains a control character.`;
+    }
+    if (
+      prompt.kind === "select" &&
+      !prompt.options.some((option) => option.value === value)
+    ) {
+      return `OAuth prompt "${id}" has an invalid selection.`;
+    }
+  }
+  for (const prompt of prompts) {
+    if (prompt.required && !values[prompt.id]) {
+      return `OAuth prompt "${prompt.id}" is required.`;
+    }
+  }
+  return undefined;
+}
+
+function encodeOAuthCredential(credential: ProviderOAuthCredential): string {
+  return `${OAUTH_CREDENTIAL_PREFIX}${JSON.stringify({
+    accessToken: credential.accessToken,
+    ...(credential.refreshToken
+      ? { refreshToken: credential.refreshToken }
+      : {}),
+    ...(credential.expiresAt ? { expiresAt: credential.expiresAt } : {}),
+    ...(credential.tokenType ? { tokenType: credential.tokenType } : {}),
+    ...(credential.authRealm ? { authRealm: credential.authRealm } : {}),
+    ...(credential.accountSlot ? { accountSlot: credential.accountSlot } : {}),
+    ...(credential.tenant ? { tenant: credential.tenant } : {}),
+  })}`;
+}
+
+function decodeOAuthCredential(
+  encoded: string,
+): ProviderOAuthCredential | undefined {
+  if (!encoded.startsWith(OAUTH_CREDENTIAL_PREFIX)) return undefined;
+  try {
+    const parsed = JSON.parse(encoded.slice(OAUTH_CREDENTIAL_PREFIX.length));
+    if (!isRecord(parsed) || typeof parsed.accessToken !== "string") {
+      return undefined;
+    }
+    const credential: ProviderOAuthCredential = {
+      accessToken: parsed.accessToken,
+      ...(typeof parsed.refreshToken === "string"
+        ? { refreshToken: parsed.refreshToken }
+        : {}),
+      ...(typeof parsed.expiresAt === "string"
+        ? { expiresAt: parsed.expiresAt }
+        : {}),
+      ...(typeof parsed.tokenType === "string"
+        ? { tokenType: parsed.tokenType }
+        : {}),
+      ...(typeof parsed.authRealm === "string"
+        ? { authRealm: parsed.authRealm }
+        : {}),
+      ...(typeof parsed.accountSlot === "string"
+        ? { accountSlot: parsed.accountSlot }
+        : {}),
+      ...(typeof parsed.tenant === "string" ? { tenant: parsed.tenant } : {}),
+    };
+    return validateOAuthCredential(credential) ? undefined : credential;
+  } catch {
+    return undefined;
+  }
+}
+
+function validateOAuthCredential(
+  credential: ProviderOAuthCredential,
+): string | undefined {
+  if (!credential.accessToken) return "OAuth access token is missing.";
+  for (const value of [credential.accessToken, credential.refreshToken]) {
+    if (!value) continue;
+    if (Buffer.byteLength(value, "utf8") > MAX_SECRET_BYTES) {
+      return "OAuth credential exceeds the secret-size limit.";
+    }
+    if (hasControlCharacters(value)) {
+      return "OAuth credential contains a control character.";
+    }
+  }
+  if (
+    credential.expiresAt !== undefined &&
+    !Number.isFinite(Date.parse(credential.expiresAt))
+  ) {
+    return "OAuth credential expiration is invalid.";
+  }
+  return undefined;
+}
+
+function hasControlCharacters(value: string): boolean {
+  return [...value].some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint <= 0x1f || codePoint === 0x7f;
+  });
+}
+
 function validateSecret(secret: string): string | undefined {
   if (secret.length === 0) return "API key must not be empty.";
   if (Buffer.byteLength(secret, "utf8") > MAX_SECRET_BYTES) {
     return `API key exceeds the ${MAX_SECRET_BYTES}-byte limit.`;
   }
-  if (
-    [...secret].some((character) => {
-      const codePoint = character.codePointAt(0) ?? 0;
-      return codePoint <= 0x1f || codePoint === 0x7f;
-    })
-  ) {
+  if (hasControlCharacters(secret)) {
     return "API key must not contain control characters.";
   }
   return undefined;

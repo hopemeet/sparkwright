@@ -1,6 +1,6 @@
 # Design: Provider Connections and Model Catalog
 
-> **Status: P6.1-P6.2 implemented; P6.3-P6.4 remain planned.**
+> **Status: P6.1-P6.3 implemented; P6.4 remains planned.**
 > This document locks the ownership, security, compatibility, migration, and
 > acceptance decisions for P6. Active behavior remains defined by
 > [Host](../modules/host.md), [Protocol](../modules/protocol.md),
@@ -801,6 +801,12 @@ run a real model without modifying YAML, while all P6.2 security gates pass.
 
 ### P6.3: OAuth vertical slice
 
+Implemented 2026-08-09. The existing ProviderAuthManager remains the sole
+connection owner. OAuth implementations are code-owned drivers selected only
+by bundled descriptors; attempt secrets live in Host memory and completed
+credentials cross the same credential-store, binding, grant, selection, and
+failure boundaries as API keys.
+
 - Add built-in declarative OAuth methods and bounded prompts.
 - Add principal-bound attempts, browser/device/code flows, TTL/cancel/replay
   protection, refresh single-flight, and failure recovery.
@@ -907,6 +913,19 @@ implementation:
 - provider fallback/routing based on price, latency, or availability.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-08-09
+- Scope: P6.1-P6.3 are implemented. P6.3 adds a browser-PKCE vertical slice,
+  principal/client-bound attempts, TTL/cancel/replay protection, credential
+  envelope storage, cross-process refresh serialization, and generic CLI/TUI
+  progress. Dynamic catalog refresh and remaining product polish stay in P6.4.
+- Read: provider catalog/auth/OAuth driver/model construction, credential
+  storage and locks, Host authority/dispatch, Protocol/schema/SDK, CLI/TUI,
+  public docs, and A15-A19 regressions.
+- Tests: full `npm run release:check` passed, including Host 608/608, CLI
+  176/176, TUI 554/554, SDK Core 15/15, Protocol 6/6, A15-A19-focused tests,
+  16/16 regression cases, production audit, and both install smokes.
 
 - Status: Verified
 - Date: 2026-08-09

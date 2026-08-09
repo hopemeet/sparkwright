@@ -426,6 +426,99 @@ describe("@sparkwright/sdk-core Client", () => {
     }
   });
 
+  it("forwards OAuth attempt lifecycle requests without parallel DTOs", async () => {
+    const transport = new FakeTransport();
+    const client = new Client({
+      transport,
+      client: { name: "test-client", version: "0.0.0" },
+    });
+    const attempt = {
+      id: "oauth_1",
+      providerId: "openrouter",
+      methodId: "oauth_pkce",
+      flow: "browser" as const,
+      status: "pending" as const,
+      createdAt: "2026-08-09T00:00:00.000Z",
+      expiresAt: "2026-08-09T00:10:00.000Z",
+      authorizationUrl: "https://auth.example/authorize",
+    };
+
+    const begun = client.beginProviderOAuth({
+      providerId: "openrouter",
+      methodId: "oauth_pkce",
+    });
+    let request = transport.sent[0]!;
+    expect(request).toMatchObject({
+      kind: "provider.auth.begin",
+      payload: { providerId: "openrouter", methodId: "oauth_pkce" },
+    });
+    transport.receive({
+      envelope: "response",
+      id: request.id,
+      timestamp: "2026-08-09T00:00:00.000Z",
+      ok: true,
+      result: { attempt },
+    });
+    await expect(begun).resolves.toEqual({ attempt });
+
+    const inspected = client.inspectProviderOAuth({ attemptId: attempt.id });
+    request = transport.sent[1]!;
+    expect(request).toMatchObject({
+      kind: "provider.auth.status",
+      payload: { attemptId: attempt.id },
+    });
+    transport.receive({
+      envelope: "response",
+      id: request.id,
+      timestamp: "2026-08-09T00:00:01.000Z",
+      ok: true,
+      result: { attempt },
+    });
+    await expect(inspected).resolves.toEqual({ attempt });
+
+    const completed = client.completeProviderOAuth({
+      attemptId: attempt.id,
+      code: "authorization-code",
+      state: "oauth-state",
+    });
+    request = transport.sent[2]!;
+    expect(request).toMatchObject({
+      kind: "provider.auth.complete",
+      payload: {
+        attemptId: attempt.id,
+        code: "authorization-code",
+        state: "oauth-state",
+      },
+    });
+    transport.receive({
+      envelope: "response",
+      id: request.id,
+      timestamp: "2026-08-09T00:00:02.000Z",
+      ok: true,
+      result: { attempt: { ...attempt, status: "completed" } },
+    });
+    await expect(completed).resolves.toMatchObject({
+      attempt: { status: "completed" },
+    });
+
+    const cancelled = client.cancelProviderOAuth({ attemptId: attempt.id });
+    request = transport.sent[3]!;
+    expect(request).toMatchObject({
+      kind: "provider.auth.cancel",
+      payload: { attemptId: attempt.id },
+    });
+    transport.receive({
+      envelope: "response",
+      id: request.id,
+      timestamp: "2026-08-09T00:00:03.000Z",
+      ok: true,
+      result: { attempt: { ...attempt, status: "cancelled" } },
+    });
+    await expect(cancelled).resolves.toMatchObject({
+      attempt: { status: "cancelled" },
+    });
+  });
+
   it("sends session.compact requests", async () => {
     const transport = new FakeTransport();
     const client = new Client({

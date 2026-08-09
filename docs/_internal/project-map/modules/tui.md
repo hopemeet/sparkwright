@@ -12,6 +12,18 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 
 - Status: Verified
 - Date: 2026-08-09
+- Scope: P6.3 extends `/connect` with generic OAuth presentation, browser/code
+  progress, status polling, cancellation on Escape, and post-completion catalog
+  refresh/model selection. TUI never owns provider-specific endpoints or
+  stores attempt secrets.
+- Read: ConnectDialog, App/layer wiring, RunController SDK bridge, Host OAuth
+  lifecycle, and focused Ink tests.
+- Tests: focused ConnectDialog/SDK routes passed; full `npm run release:check`
+  passed with TUI 554/554, Host 608/608, CLI 176/176, 16/16 regression cases,
+  and both install smokes.
+
+- Status: Verified
+- Date: 2026-08-09
 - Scope: P6.2 adds `/connect` with provider, auth-method, masked credential,
   and post-connect model stages. It consumes Host catalog/method DTOs, clears
   component secret state before submission, polls catalog revisions while the

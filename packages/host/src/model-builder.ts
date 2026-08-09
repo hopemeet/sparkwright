@@ -18,7 +18,12 @@ export interface BuildAdapterInput {
   selection: ConfiguredSelection;
   env: Record<string, string | undefined>;
   /** Host-resolved credential. Kept out of protocol/config projection. */
-  credential?: { apiKey: string; source: string };
+  credential?: {
+    apiKey: string;
+    source: string;
+    /** Stored connections bind the adapter to their exact normalized endpoint. */
+    exactEndpointBinding?: boolean;
+  };
   /** Full provider config used to compose catalog inventory and allowlists. */
   providerConfig?: ProviderConfig;
   /** Optional fetch override (e.g. a proxy-aware fetch from the CLI). */
@@ -77,9 +82,10 @@ export async function buildConfiguredAdapter(
       message: `No API key for provider "${selection.providerKey}". Set ${npmInfo.apiKeyEnv}, or add an "apiKey" to that provider in your config.`,
     };
   }
-  const baseUrlEnv = npmInfo.baseUrlEnv
-    ? nonEmptyEnv(env, npmInfo.baseUrlEnv)
-    : undefined;
+  const baseUrlEnv =
+    !input.credential?.exactEndpointBinding && npmInfo.baseUrlEnv
+      ? nonEmptyEnv(env, npmInfo.baseUrlEnv)
+      : undefined;
   const baseURL = baseUrlEnv ?? selection.baseURL;
 
   let mod: Record<string, unknown>;

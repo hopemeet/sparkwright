@@ -3,6 +3,7 @@ import type {
   CapabilitySnapshot,
   ProviderCatalogSnapshot,
   ProviderAuthMethodsSnapshot,
+  ProviderAuthAttemptSummary,
   ProviderConnectionSummary,
   ProjectTrustSnapshot,
   SessionForkPoint,
@@ -93,6 +94,18 @@ export function LayerRenderer(props: {
     methodId: string,
     secret: string,
   ) => Promise<ProviderConnectionSummary | null>;
+  onBeginProviderOAuth: (
+    providerId: string,
+    methodId: string,
+  ) => Promise<ProviderAuthAttemptSummary | null>;
+  onInspectProviderOAuth: (
+    attemptId: string,
+  ) => Promise<ProviderAuthAttemptSummary | null>;
+  onCompleteProviderOAuth: (
+    attemptId: string,
+    code: string,
+  ) => Promise<ProviderAuthAttemptSummary | null>;
+  onCancelProviderOAuth: (attemptId: string) => Promise<void>;
   onRefreshProviderCatalog: () => Promise<ProviderCatalogSnapshot | null>;
   onGrantProjectTrust: (expectedManifestHash: string) => void;
   onRevokeProjectTrust: () => void;
@@ -173,6 +186,10 @@ export function LayerRenderer(props: {
           loading={props.loadingProviders}
           onLoadMethods={props.onLoadProviderAuthMethods}
           onSubmitSecret={props.onSubmitProviderSecret}
+          onBeginOAuth={props.onBeginProviderOAuth}
+          onOAuthStatus={props.onInspectProviderOAuth}
+          onCompleteOAuth={props.onCompleteProviderOAuth}
+          onCancelOAuth={props.onCancelProviderOAuth}
           onRefresh={props.onRefreshProviderCatalog}
           onCommitModel={props.onCommitModel}
           onCancel={props.onCloseTop}

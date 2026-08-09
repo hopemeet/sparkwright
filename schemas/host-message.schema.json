@@ -59,6 +59,10 @@
             "workflow.control.process",
             "provider.list",
             "provider.auth.methods",
+            "provider.auth.begin",
+            "provider.auth.status",
+            "provider.auth.complete",
+            "provider.auth.cancel",
             "provider.auth.submit_secret",
             "provider.auth.login",
             "provider.auth.logout",
@@ -351,6 +355,44 @@
             "properties": {
               "payload": {
                 "$ref": "#/$defs/ProviderAuthMethodsRequestPayload"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "kind": { "const": "provider.auth.begin" } }
+          },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/ProviderAuthBeginRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": ["provider.auth.status", "provider.auth.cancel"]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/ProviderAuthAttemptRequestPayload"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "kind": { "const": "provider.auth.complete" } }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/ProviderAuthCompleteRequestPayload"
               }
             }
           }
@@ -1295,6 +1337,60 @@
       },
       "additionalProperties": false
     },
+    "ProviderAuthBeginRequestPayload": {
+      "type": "object",
+      "required": ["providerId", "methodId"],
+      "properties": {
+        "providerId": { "type": "string", "minLength": 1 },
+        "methodId": { "type": "string", "minLength": 1 },
+        "promptValues": {
+          "type": "object",
+          "maxProperties": 16,
+          "propertyNames": { "type": "string", "minLength": 1 },
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096,
+            "pattern": "^[^\\x00-\\x1F\\x7F]*$"
+          }
+        },
+        "grantScope": { "$ref": "#/$defs/ProviderConnectionGrantScope" }
+      },
+      "additionalProperties": false
+    },
+    "ProviderAuthAttemptRequestPayload": {
+      "type": "object",
+      "required": ["attemptId"],
+      "properties": {
+        "attemptId": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "ProviderAuthCompleteRequestPayload": {
+      "type": "object",
+      "required": ["attemptId", "code"],
+      "properties": {
+        "attemptId": { "type": "string", "minLength": 1 },
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384,
+          "pattern": "^[^\\x00-\\x1F\\x7F]+$"
+        },
+        "state": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024,
+          "pattern": "^[^\\x00-\\x1F\\x7F]+$"
+        },
+        "nonce": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024,
+          "pattern": "^[^\\x00-\\x1F\\x7F]+$"
+        }
+      },
+      "additionalProperties": false
+    },
     "ProviderConnectionGrantScope": {
       "type": "string",
       "enum": ["workspace", "user"]
@@ -1437,12 +1533,172 @@
         "providerId": { "type": "string", "minLength": 1 },
         "status": {
           "type": "string",
-          "enum": ["ready", "missing", "logged_out"]
+          "enum": [
+            "unconfigured",
+            "ready",
+            "unverified",
+            "needs_refresh",
+            "failed",
+            "suppressed",
+            "missing",
+            "logged_out"
+          ]
         },
-        "source": { "type": "string", "enum": ["environment", "config"] },
+        "source": {
+          "type": "string",
+          "enum": ["stored", "environment", "config"]
+        },
         "sourceLabel": { "type": "string", "minLength": 1 },
         "generation": { "type": "integer", "minimum": 0 },
         "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "ProviderConnectionBindingSummary": {
+      "type": "object",
+      "required": [
+        "providerId",
+        "driverId",
+        "endpoint",
+        "endpointFingerprint",
+        "authMethodId"
+      ],
+      "properties": {
+        "providerId": { "type": "string", "minLength": 1 },
+        "driverId": { "type": "string", "minLength": 1 },
+        "endpoint": { "type": "string", "format": "uri" },
+        "endpointFingerprint": { "type": "string", "minLength": 1 },
+        "authMethodId": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "ProviderConnectionSummary": {
+      "type": "object",
+      "required": [
+        "id",
+        "providerId",
+        "status",
+        "source",
+        "sourceLabel",
+        "binding",
+        "selected",
+        "generation"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "providerId": { "type": "string", "minLength": 1 },
+        "status": {
+          "type": "string",
+          "enum": [
+            "unconfigured",
+            "ready",
+            "unverified",
+            "needs_refresh",
+            "failed",
+            "suppressed"
+          ]
+        },
+        "source": {
+          "type": "string",
+          "enum": ["stored", "environment", "config"]
+        },
+        "sourceLabel": { "type": "string", "minLength": 1 },
+        "binding": { "$ref": "#/$defs/ProviderConnectionBindingSummary" },
+        "selected": { "type": "boolean" },
+        "grantScope": { "$ref": "#/$defs/ProviderConnectionGrantScope" },
+        "generation": { "type": "integer", "minimum": 0 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "ProviderAuthPromptSummary": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["id", "kind", "label"],
+          "properties": {
+            "id": { "type": "string", "minLength": 1 },
+            "kind": { "enum": ["text", "secret"] },
+            "label": { "type": "string", "minLength": 1 },
+            "required": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["id", "kind", "label", "options"],
+          "properties": {
+            "id": { "type": "string", "minLength": 1 },
+            "kind": { "const": "select" },
+            "label": { "type": "string", "minLength": 1 },
+            "required": { "type": "boolean" },
+            "options": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "object",
+                "required": ["value", "label"],
+                "properties": {
+                  "value": { "type": "string", "minLength": 1 },
+                  "label": { "type": "string", "minLength": 1 }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ProviderAuthMethodSummary": {
+      "type": "object",
+      "required": ["id", "type", "label"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "type": { "enum": ["api_key", "environment", "oauth"] },
+        "label": { "type": "string", "minLength": 1 },
+        "environmentVariables": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "flow": { "enum": ["browser", "device", "code"] },
+        "prompts": {
+          "type": "array",
+          "maxItems": 16,
+          "items": { "$ref": "#/$defs/ProviderAuthPromptSummary" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ProviderAuthAttemptSummary": {
+      "type": "object",
+      "required": [
+        "id",
+        "providerId",
+        "methodId",
+        "flow",
+        "status",
+        "createdAt",
+        "expiresAt"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "providerId": { "type": "string", "minLength": 1 },
+        "methodId": { "type": "string", "minLength": 1 },
+        "flow": { "enum": ["browser", "device", "code"] },
+        "status": {
+          "enum": ["pending", "completed", "failed", "expired", "cancelled"]
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "authorizationUrl": { "type": "string", "format": "uri" },
+        "verificationUrl": { "type": "string", "format": "uri" },
+        "userCode": { "type": "string", "minLength": 1 },
+        "instructions": { "type": "string", "minLength": 1 },
+        "connection": { "$ref": "#/$defs/ProviderConnectionSummary" },
+        "message": { "type": "string", "minLength": 1 }
       },
       "additionalProperties": false
     },
@@ -1453,7 +1709,9 @@
         "ref": { "type": "string", "minLength": 1 },
         "providerId": { "type": "string", "minLength": 1 },
         "modelId": { "type": "string", "minLength": 1 },
-        "selected": { "type": "boolean" }
+        "selected": { "type": "boolean" },
+        "displayName": { "type": "string", "minLength": 1 },
+        "available": { "type": "boolean" }
       },
       "additionalProperties": false
     },
@@ -1463,6 +1721,18 @@
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "npm": { "type": "string", "minLength": 1 },
+        "displayName": { "type": "string", "minLength": 1 },
+        "configured": { "type": "boolean" },
+        "connected": { "type": "boolean" },
+        "available": { "type": "boolean" },
+        "authMethods": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ProviderAuthMethodSummary" }
+        },
+        "connections": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ProviderConnectionSummary" }
+        },
         "models": {
           "type": "array",
           "items": { "$ref": "#/$defs/ProviderCatalogModel" }
@@ -1478,6 +1748,9 @@
       "required": ["providers"],
       "properties": {
         "selectedModel": { "type": "string", "minLength": 1 },
+        "catalogVersion": { "type": "integer", "minimum": 1 },
+        "revision": { "type": "integer", "minimum": 0 },
+        "projection": { "enum": ["all", "connected", "available"] },
         "providers": {
           "type": "array",
           "items": { "$ref": "#/$defs/ProviderCatalogEntry" }

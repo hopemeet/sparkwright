@@ -165,6 +165,7 @@ export async function createModel(input: ModelFactoryInput): Promise<
             apiKey: credential.lease.apiKey,
             source:
               credential.lease.profile.sourceLabel ?? "credential_profile",
+            exactEndpointBinding: credential.lease.connection !== undefined,
           },
         }
       : {}),
@@ -257,6 +258,7 @@ function createManagedConfiguredAdapter(input: {
       credential: {
         apiKey: credential.apiKey,
         source: credential.profile.sourceLabel ?? "credential_profile",
+        exactEndpointBinding: credential.connection !== undefined,
       },
     });
     if (!rebuilt.ok) return { refreshed: false };

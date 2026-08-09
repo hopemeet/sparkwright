@@ -31,6 +31,9 @@ import {
   type CapabilityInspectRequestPayload,
   type ProviderAuthActionRequestPayload,
   type ProviderAuthMethodsRequestPayload,
+  type ProviderAuthBeginRequestPayload,
+  type ProviderAuthAttemptRequestPayload,
+  type ProviderAuthCompleteRequestPayload,
   type ProviderSecretSubmitRequestPayload,
   type ProviderConnectionActionRequestPayload,
   type ProviderConnectionSelectRequestPayload,
@@ -560,6 +563,42 @@ export class Client extends TypedEmitter<ClientEventMap> {
       "provider.auth.methods",
       payload as unknown as Record<string, unknown>,
     ) as unknown as Promise<ResponseResults["provider.auth.methods"]>;
+  }
+
+  beginProviderOAuth(
+    payload: ProviderAuthBeginRequestPayload,
+  ): Promise<ResponseResults["provider.auth.begin"]> {
+    return this.request(
+      "provider.auth.begin",
+      payload as unknown as Record<string, unknown>,
+    ) as unknown as Promise<ResponseResults["provider.auth.begin"]>;
+  }
+
+  inspectProviderOAuth(
+    payload: ProviderAuthAttemptRequestPayload,
+  ): Promise<ResponseResults["provider.auth.status"]> {
+    return this.request(
+      "provider.auth.status",
+      payload as unknown as Record<string, unknown>,
+    ) as unknown as Promise<ResponseResults["provider.auth.status"]>;
+  }
+
+  completeProviderOAuth(
+    payload: ProviderAuthCompleteRequestPayload,
+  ): Promise<ResponseResults["provider.auth.complete"]> {
+    return this.request(
+      "provider.auth.complete",
+      payload as unknown as Record<string, unknown>,
+    ) as unknown as Promise<ResponseResults["provider.auth.complete"]>;
+  }
+
+  cancelProviderOAuth(
+    payload: ProviderAuthAttemptRequestPayload,
+  ): Promise<ResponseResults["provider.auth.cancel"]> {
+    return this.request(
+      "provider.auth.cancel",
+      payload as unknown as Record<string, unknown>,
+    ) as unknown as Promise<ResponseResults["provider.auth.cancel"]>;
   }
 
   submitProviderSecret(

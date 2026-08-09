@@ -192,6 +192,9 @@ Connect without adding a key to config:
 sparkwright provider connect openai --workspace .
 printf '%s\n' "$OPENAI_API_KEY" | \
   sparkwright provider connect openai --api-key-stdin --workspace .
+
+# Browser OAuth with no provider YAML entry
+sparkwright provider connect openrouter --workspace .
 ```
 
 On macOS, stored provider credentials use the operating-system credential
@@ -208,6 +211,11 @@ sources. Metadata is written to
 `$XDG_STATE_HOME/sparkwright/provider-auth.json` (normally
 `~/.local/state/sparkwright/provider-auth.json`) with exact driver, endpoint,
 method, grant, selection, suppression, and revision state but no credential.
+OAuth attempts are Host-memory state bound to the initiating local connection;
+codes, PKCE verifiers, state, and tokens are not written to that metadata file.
+Completed OAuth credentials use the same OS/headless credential-store boundary
+as stored API keys. Refresh is serialized per connection and a refresh failure
+does not fall back to an environment key.
 
 ### Provider Request Options
 

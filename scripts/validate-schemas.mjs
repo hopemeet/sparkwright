@@ -144,6 +144,23 @@ const instanceChecks = [
   },
   {
     schema: "host-message.schema.json",
+    instance: "schemas/fixtures/host-message.request.provider-auth-begin.json",
+  },
+  {
+    schema: "host-message.schema.json",
+    instance: "schemas/fixtures/host-message.request.provider-auth-status.json",
+  },
+  {
+    schema: "host-message.schema.json",
+    instance:
+      "schemas/fixtures/host-message.request.provider-auth-complete.json",
+  },
+  {
+    schema: "host-message.schema.json",
+    instance: "schemas/fixtures/host-message.request.provider-auth-cancel.json",
+  },
+  {
+    schema: "host-message.schema.json",
     instance:
       "schemas/fixtures/host-message.request.project-trust-inspect.json",
   },

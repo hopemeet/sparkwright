@@ -286,6 +286,10 @@ export type RequestKind =
   | "workflow.control.process"
   | "provider.list"
   | "provider.auth.methods"
+  | "provider.auth.begin"
+  | "provider.auth.status"
+  | "provider.auth.complete"
+  | "provider.auth.cancel"
   | "provider.auth.submit_secret"
   | "provider.auth.login"
   | "provider.auth.logout"
@@ -811,9 +815,52 @@ export interface ProviderConnectionSummary {
 
 export interface ProviderAuthMethodSummary {
   id: string;
-  type: "api_key" | "environment";
+  type: "api_key" | "environment" | "oauth";
   label: string;
   environmentVariables?: string[];
+  flow?: ProviderOAuthFlow;
+  prompts?: ProviderAuthPromptSummary[];
+}
+
+export type ProviderOAuthFlow = "browser" | "device" | "code";
+
+export type ProviderAuthPromptSummary =
+  | {
+      id: string;
+      kind: "text" | "secret";
+      label: string;
+      required?: boolean;
+    }
+  | {
+      id: string;
+      kind: "select";
+      label: string;
+      required?: boolean;
+      options: Array<{ value: string; label: string }>;
+    };
+
+export type ProviderAuthAttemptStatus =
+  | "pending"
+  | "completed"
+  | "failed"
+  | "expired"
+  | "cancelled";
+
+/** Bounded OAuth progress projection. Contains no code, token, verifier, or nonce. */
+export interface ProviderAuthAttemptSummary {
+  id: string;
+  providerId: string;
+  methodId: string;
+  flow: ProviderOAuthFlow;
+  status: ProviderAuthAttemptStatus;
+  createdAt: string;
+  expiresAt: string;
+  authorizationUrl?: string;
+  verificationUrl?: string;
+  userCode?: string;
+  instructions?: string;
+  connection?: ProviderConnectionSummary;
+  message?: string;
 }
 
 export interface ProviderCatalogModel {
@@ -877,6 +924,28 @@ export interface ProviderAuthMethodsSnapshot {
   displayName?: string;
   binding: ProviderConnectionBindingSummary;
   methods: ProviderAuthMethodSummary[];
+}
+
+export interface ProviderAuthBeginRequestPayload {
+  providerId: string;
+  methodId: string;
+  promptValues?: Record<string, string>;
+  grantScope?: ProviderConnectionGrantScope;
+}
+
+export interface ProviderAuthAttemptRequestPayload {
+  /** Host-issued opaque attempt id. Never an authorization code or token. */
+  attemptId: string;
+}
+
+export interface ProviderAuthCompleteRequestPayload {
+  attemptId: string;
+  /** Method-specific user-visible authorization code. */
+  code: string;
+  /** Returned OAuth state when a manual callback/code flow exposes it. */
+  state?: string;
+  /** Returned OIDC nonce when required by the selected implementation. */
+  nonce?: string;
 }
 
 export interface ProviderSecretSubmitRequestPayload {
@@ -991,6 +1060,13 @@ export type HostRequest =
     >
   | HostRequestBase<"provider.list", ProviderListRequestPayload>
   | HostRequestBase<"provider.auth.methods", ProviderAuthMethodsRequestPayload>
+  | HostRequestBase<"provider.auth.begin", ProviderAuthBeginRequestPayload>
+  | HostRequestBase<"provider.auth.status", ProviderAuthAttemptRequestPayload>
+  | HostRequestBase<
+      "provider.auth.complete",
+      ProviderAuthCompleteRequestPayload
+    >
+  | HostRequestBase<"provider.auth.cancel", ProviderAuthAttemptRequestPayload>
   | HostRequestBase<
       "provider.auth.submit_secret",
       ProviderSecretSubmitRequestPayload
@@ -1170,6 +1246,10 @@ export interface ResponseResults {
   };
   "provider.list": ProviderCatalogSnapshot;
   "provider.auth.methods": ProviderAuthMethodsSnapshot;
+  "provider.auth.begin": { attempt: ProviderAuthAttemptSummary };
+  "provider.auth.status": { attempt: ProviderAuthAttemptSummary };
+  "provider.auth.complete": { attempt: ProviderAuthAttemptSummary };
+  "provider.auth.cancel": { attempt: ProviderAuthAttemptSummary };
   "provider.auth.submit_secret": {
     connection: ProviderConnectionSummary;
     revision: number;
