@@ -218,16 +218,24 @@ sparkwright provider connect openrouter --workspace .
 ```
 
 On macOS, stored provider credentials use the operating-system credential
-store. Headless/non-macOS deployments must configure an available backend; the
-explicit lower-assurance fallback is
+store. Its password prompts run on an isolated system-command terminal, not the
+SparkWright CLI/TUI terminal; users should not answer separate `password data`
+or `retype password` prompts during `/connect`. If the system helper is
+unavailable or returns an unexpected prompt, connection fails without storing
+the key. Headless/non-macOS deployments must configure an available backend;
+the explicit lower-assurance fallback is
 `SPARKWRIGHT_CREDENTIAL_STORE=file`, which uses a 0600 state file. Connection
 metadata is separate and never contains the key. Config `apiKey` remains a
 legacy plaintext source.
 
-Use `sparkwright provider list --workspace .` to inspect connected provider
-models and non-secret status. `provider connect|disconnect|remove|refresh`
-manages stored connections; `provider login|logout` remains for ambient legacy
-sources. Metadata is written to
+Use `sparkwright provider list --workspace .` to inspect provider models,
+non-secret status, and the opaque ids of all stored/ambient connections. Use
+`provider select <connection-id>` to switch the workspace to one exact
+connection. `provider connect|select|disconnect|remove|refresh` manages stored
+connections. Disconnect removes the current workspace grant but keeps the
+non-secret entry visible to the trusted local manager as `disconnected`, so it
+can be selected again or removed later; remove deletes the stored credential.
+`provider login|logout` remains for ambient legacy sources. Metadata is written to
 `$XDG_STATE_HOME/sparkwright/provider-auth.json` (normally
 `~/.local/state/sparkwright/provider-auth.json`) with exact driver, endpoint,
 method, grant, selection, suppression, and revision state but no credential.

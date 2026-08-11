@@ -2003,7 +2003,7 @@ describe.sequential("runCli", { timeout: 15_000 }, () => {
     expect(login.exitCode).toBe(0);
   });
 
-  it("connects a provider from stdin without YAML or secret output", async () => {
+  it("connects, inventories, switches, and disconnects stored connections without secret output", async () => {
     const workspace = await createWorkspace("# Provider connect\n");
     const configHome = await harness.tempDir("sparkwright-connect-config-");
     const stateHome = await harness.tempDir("sparkwright-connect-state-");
@@ -2039,6 +2039,9 @@ describe.sequential("runCli", { timeout: 15_000 }, () => {
     );
 
     expect(connected.exitCode, output.stderrText()).toBe(0);
+    const firstReceipt = JSON.parse(output.stdoutText()) as {
+      connection: { id: string };
+    };
     expect(output.stdoutText()).toContain('"source": "stored"');
     expect(output.stdoutText()).not.toContain(secret);
     expect(output.stderrText()).not.toContain(secret);
@@ -2051,6 +2054,32 @@ describe.sequential("runCli", { timeout: 15_000 }, () => {
     await expect(
       access(join(workspace, ".sparkwright", "config.json")),
     ).rejects.toMatchObject({ code: "ENOENT" });
+
+    const secondSecret = "sk-cli-connect-second-sentinel";
+    const secondOutput = createOutputCapture();
+    const second = await runCli(
+      [
+        "provider",
+        "connect",
+        "openai",
+        "--api-key-stdin",
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        env,
+        io: {
+          stdout: secondOutput.stdout,
+          stderr: secondOutput.stderr,
+          stdinIsTTY: false,
+          readSecret: async () => secondSecret,
+        },
+      },
+    );
+    expect(second.exitCode, secondOutput.stderrText()).toBe(0);
+    expect(secondOutput.stdoutText()).not.toContain(secondSecret);
 
     const listedOutput = createOutputCapture();
     const listed = await runCli(
@@ -2066,12 +2095,143 @@ describe.sequential("runCli", { timeout: 15_000 }, () => {
     );
     expect(listed.exitCode).toBe(0);
     const catalog = JSON.parse(listedOutput.stdoutText()) as {
-      providers: Array<{ id: string; connected?: boolean }>;
+      providers: Array<{
+        id: string;
+        connected?: boolean;
+        connections?: Array<{ id: string; selected: boolean }>;
+      }>;
     };
     expect(catalog.providers).toMatchObject([
       { id: "openai", connected: true },
     ]);
+    expect(catalog.providers[0]?.connections).toHaveLength(2);
     expect(listedOutput.stdoutText()).not.toContain(secret);
+    expect(listedOutput.stdoutText()).not.toContain(secondSecret);
+
+    const selected = await runCli(
+      [
+        "provider",
+        "select",
+        firstReceipt.connection.id,
+        "--workspace",
+        workspace,
+      ],
+      { env, io: { stdinIsTTY: false } },
+    );
+    expect(selected.exitCode).toBe(0);
+
+    const selectedOutput = createOutputCapture();
+    await runCli(
+      ["provider", "list", "--workspace", workspace, "--format", "json"],
+      {
+        env,
+        io: {
+          stdout: selectedOutput.stdout,
+          stderr: selectedOutput.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+    const selectedCatalog = JSON.parse(selectedOutput.stdoutText()) as {
+      providers: Array<{
+        connections?: Array<{ id: string; selected: boolean }>;
+      }>;
+    };
+    expect(
+      selectedCatalog.providers[0]?.connections?.find(
+        (connection) => connection.id === firstReceipt.connection.id,
+      )?.selected,
+    ).toBe(true);
+
+    const disconnected = await runCli(
+      [
+        "provider",
+        "disconnect",
+        firstReceipt.connection.id,
+        "--workspace",
+        workspace,
+      ],
+      { env, io: { stdinIsTTY: false } },
+    );
+    expect(disconnected.exitCode).toBe(0);
+    const credentialContents = await readFile(credentialPath, "utf8");
+    expect(credentialContents).toContain(secret);
+    expect(credentialContents).toContain(secondSecret);
+
+    const disconnectedOutput = createOutputCapture();
+    const disconnectedList = await runCli(
+      ["provider", "list", "--workspace", workspace, "--format", "json"],
+      {
+        env,
+        io: {
+          stdout: disconnectedOutput.stdout,
+          stderr: disconnectedOutput.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+    expect(disconnectedList.exitCode).toBe(0);
+    const disconnectedCatalog = JSON.parse(disconnectedOutput.stdoutText()) as {
+      providers: Array<{
+        connections?: Array<{
+          id: string;
+          selected: boolean;
+          grantScope?: string;
+        }>;
+      }>;
+    };
+    expect(disconnectedCatalog.providers[0]?.connections).toHaveLength(2);
+    expect(
+      disconnectedCatalog.providers[0]?.connections?.find(
+        (connection) => connection.id === firstReceipt.connection.id,
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        id: firstReceipt.connection.id,
+        selected: false,
+      }),
+    );
+    expect(
+      disconnectedCatalog.providers[0]?.connections?.find(
+        (connection) => connection.id === firstReceipt.connection.id,
+      ),
+    ).not.toHaveProperty("grantScope");
+
+    const reselected = await runCli(
+      [
+        "provider",
+        "select",
+        firstReceipt.connection.id,
+        "--workspace",
+        workspace,
+      ],
+      { env, io: { stdinIsTTY: false } },
+    );
+    expect(reselected.exitCode).toBe(0);
+    await runCli(
+      [
+        "provider",
+        "disconnect",
+        firstReceipt.connection.id,
+        "--workspace",
+        workspace,
+      ],
+      { env, io: { stdinIsTTY: false } },
+    );
+    const removed = await runCli(
+      [
+        "provider",
+        "remove",
+        firstReceipt.connection.id,
+        "--workspace",
+        workspace,
+      ],
+      { env, io: { stdinIsTTY: false } },
+    );
+    expect(removed.exitCode).toBe(0);
+    const removedCredentialContents = await readFile(credentialPath, "utf8");
+    expect(removedCredentialContents).not.toContain(secret);
+    expect(removedCredentialContents).toContain(secondSecret);
   });
 
   it("migrates a legacy config credential and removes only its apiKey", async () => {

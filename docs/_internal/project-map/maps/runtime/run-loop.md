@@ -9,6 +9,27 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-08-11
+- Scope: Core now records whether the current run step has already invoked its
+  provider-neutral CredentialResolver. Auth/quota recovery can rebuild the
+  adapter and replay the step once, but repeated credential failure cannot
+  create an unbounded refresh/retry loop.
+- Read: model-error normalization, credential waiting/refreshed transition,
+  Host managed adapter, and focused run regression.
+- Tests: Core credential-error 4/4, full Core 688/688, Core/Host typechecks,
+  both project-map drift gates, and the full `npm run release:check` passed;
+  ordinary retry, tool, approval, session, and trace semantics are unchanged.
+
+- Status: Read-only
+- Date: 2026-08-09
+- Scope: P7.0 management inventory is a trusted-local pre-run projection.
+  Runtime model resolution still requires a selected, granted, exact-binding
+  connection; Core run-loop and terminal semantics are unchanged.
+- Read: ProviderAuthManager catalog/model resolution and Host-to-Core handoff.
+- Tests: focused disconnect/grant/model-access regressions and the full release
+  gate passed.
+
 - Status: Read-only
 - Date: 2026-08-09
 - Scope: P6.4 resolves provider metadata/policy before model construction; the

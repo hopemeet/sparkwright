@@ -335,6 +335,99 @@ describe("ProviderAuthManager", () => {
     }
   });
 
+  it("keeps disconnected credentials manageable without granting runtime access", async () => {
+    const root = await mkdtemp(
+      join(tmpdir(), "sparkwright-provider-disconnect-manage-"),
+    );
+    const workspace = join(root, "workspace");
+    const statePath = join(root, "state", "auth.json");
+    await mkdir(workspace, { recursive: true });
+    const credentialStore = new MemoryProviderCredentialStore();
+    const manager = new ProviderAuthManager({
+      env: { XDG_CONFIG_HOME: join(root, "config") },
+      statePath,
+      credentialStore,
+    });
+    try {
+      const connected = await manager.submitSecret({
+        providerId: "openai",
+        methodId: "api_key",
+        secret: "disconnect-manage-sentinel",
+        context: { workspaceRoot: workspace },
+      });
+      expect(connected.ok).toBe(true);
+      if (!connected.ok) return;
+
+      await expect(
+        manager.manageConnection({
+          action: "disconnect",
+          connectionId: connected.connection.id,
+          context: { workspaceRoot: workspace },
+        }),
+      ).resolves.toMatchObject({ ok: true });
+
+      const runtimeCatalog = await manager.catalog({
+        workspaceRoot: workspace,
+        projection: "all",
+      });
+      expect(
+        runtimeCatalog.providers.find((provider) => provider.id === "openai")
+          ?.connections,
+      ).toHaveLength(0);
+
+      const managementCatalog = await manager.catalog({
+        workspaceRoot: workspace,
+        projection: "all",
+        connectionVisibility: "managed",
+      });
+      expect(
+        managementCatalog.providers.find((provider) => provider.id === "openai")
+          ?.connections,
+      ).toEqual([
+        expect.objectContaining({
+          id: connected.connection.id,
+          status: "unverified",
+          selected: false,
+        }),
+      ]);
+      expect(
+        managementCatalog.providers.find((provider) => provider.id === "openai")
+          ?.connections?.[0],
+      ).not.toHaveProperty("grantScope");
+      await expect(credentialStore.get(connected.connection.id)).resolves.toBe(
+        "disconnect-manage-sentinel",
+      );
+
+      await expect(
+        manager.manageConnection({
+          action: "select",
+          connectionId: connected.connection.id,
+          context: { workspaceRoot: workspace },
+        }),
+      ).resolves.toMatchObject({
+        ok: true,
+        connection: { selected: true, grantScope: "workspace" },
+      });
+      await manager.manageConnection({
+        action: "disconnect",
+        connectionId: connected.connection.id,
+        context: { workspaceRoot: workspace },
+      });
+      await expect(
+        manager.manageConnection({
+          action: "remove",
+          connectionId: connected.connection.id,
+          context: { workspaceRoot: workspace },
+        }),
+      ).resolves.toMatchObject({ ok: true });
+      await expect(
+        credentialStore.get(connected.connection.id),
+      ).resolves.toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("observes cross-manager mutations and serializes concurrent connection writes", async () => {
     const root = await mkdtemp(
       join(tmpdir(), "sparkwright-provider-concurrent-"),
@@ -738,7 +831,11 @@ describe("ProviderAuthManager", () => {
         }),
       ).resolves.toMatchObject({
         ok: true,
-        resolved: { lease: { apiKey: "oauth-access-token" } },
+        resolved: {
+          lease: {
+            credential: { kind: "api_key", value: "oauth-access-token" },
+          },
+        },
       });
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
@@ -816,7 +913,7 @@ describe("ProviderAuthManager", () => {
       releaseRefresh = resolveGate;
     });
     const driver = fakeOAuthDriver({
-      refresh: async (credential) => {
+      refresh: async ({ credential }) => {
         refreshCount += 1;
         await refreshGate;
         return { ...credential, accessToken: "oauth-refreshed-token" };
@@ -900,6 +997,149 @@ describe("ProviderAuthManager", () => {
       await rm(fixture.root, { recursive: true, force: true });
     }
   });
+
+  it("auto-refreshes expiring OAuth credentials once across Host processes", async () => {
+    const fixture = await cleanProviderFixture("oauth-auto-refresh");
+    const credentialStore = new MemoryProviderCredentialStore();
+    const now = new Date("2026-08-11T00:00:00.000Z");
+    let refreshCount = 0;
+    let releaseRefresh!: () => void;
+    const refreshGate = new Promise<void>((resolveGate) => {
+      releaseRefresh = resolveGate;
+    });
+    const driver = fakeOAuthDriver({
+      complete: async () => ({
+        accessToken: "oauth-expiring-token",
+        refreshToken: "oauth-refresh-token",
+        expiresAt: new Date(now.getTime() + 60_000).toISOString(),
+        tokenType: "api_key",
+      }),
+      refresh: async ({ credential }) => {
+        refreshCount += 1;
+        await refreshGate;
+        return {
+          ...credential,
+          accessToken: "oauth-auto-refreshed-token",
+          expiresAt: new Date(now.getTime() + 60 * 60_000).toISOString(),
+        };
+      },
+    });
+    const first = new ProviderAuthManager({
+      env: fixture.env,
+      statePath: fixture.statePath,
+      credentialStore,
+      oauthDrivers: [driver],
+      now: () => now,
+    });
+    const second = new ProviderAuthManager({
+      env: fixture.env,
+      statePath: fixture.statePath,
+      credentialStore,
+      oauthDrivers: [driver],
+      now: () => now,
+    });
+    const context = oauthContext(fixture.workspace, "principal", "client");
+    try {
+      await connectFakeOAuth(first, context);
+      const one = first.resolveModelConnection({
+        workspaceRoot: fixture.workspace,
+        modelRef: "openrouter/openrouter/auto",
+      });
+      const two = second.resolveModelConnection({
+        workspaceRoot: fixture.workspace,
+        modelRef: "openrouter/openrouter/auto",
+      });
+      while (refreshCount === 0) {
+        await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+      }
+      releaseRefresh();
+      const [firstResult, secondResult] = await Promise.all([one, two]);
+
+      expect(refreshCount).toBe(1);
+      expect(firstResult).toMatchObject({
+        ok: true,
+        resolved: {
+          lease: {
+            credential: {
+              kind: "api_key",
+              value: "oauth-auto-refreshed-token",
+            },
+          },
+        },
+      });
+      expect(secondResult).toMatchObject({
+        ok: true,
+        resolved: {
+          lease: {
+            credential: {
+              kind: "api_key",
+              value: "oauth-auto-refreshed-token",
+            },
+          },
+        },
+      });
+    } finally {
+      releaseRefresh();
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when an OAuth bearer realm has no runtime transport", async () => {
+    const fixture = await cleanProviderFixture("oauth-bearer-runtime");
+    const credentialStore = new MemoryProviderCredentialStore();
+    const bearerSentinel = "oauth-bearer-must-not-become-api-key";
+    const manager = new ProviderAuthManager({
+      env: fixture.env,
+      statePath: fixture.statePath,
+      credentialStore,
+      oauthDrivers: [
+        fakeOAuthDriver({
+          complete: async () => ({
+            accessToken: bearerSentinel,
+            refreshToken: "oauth-refresh-token",
+            expiresAt: "2026-08-12T00:00:00.000Z",
+            tokenType: "bearer",
+          }),
+        }),
+      ],
+      now: () => new Date("2026-08-11T00:00:00.000Z"),
+    });
+    const context = oauthContext(fixture.workspace, "principal", "client");
+    try {
+      await connectFakeOAuth(manager, context);
+      await expect(
+        manager.resolveModelConnection({
+          workspaceRoot: fixture.workspace,
+          modelRef: "openrouter/openrouter/auto",
+        }),
+      ).resolves.toMatchObject({
+        ok: true,
+        resolved: {
+          lease: {
+            credential: {
+              kind: "bearer",
+              authRealm: "https://openrouter.ai",
+            },
+          },
+        },
+      });
+
+      const created = await createModel({
+        workspaceRoot: fixture.workspace,
+        modelRef: "openrouter/openrouter/auto",
+        goal: "bearer transport must be explicit",
+        env: fixture.env,
+        providerAuth: manager,
+      });
+      expect(created).toMatchObject({
+        ok: false,
+        message: expect.stringContaining("no code-owned runtime transport"),
+      });
+      expect(JSON.stringify(created)).not.toContain(bearerSentinel);
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
 });
 
 async function cleanProviderFixture(label: string): Promise<{
@@ -929,6 +1169,7 @@ function oauthContext(
 
 function fakeOAuthDriver(
   input: {
+    complete?: ProviderOAuthDriver["complete"];
     refresh?: NonNullable<ProviderOAuthDriver["refresh"]>;
   } = {},
 ): ProviderOAuthDriver {
@@ -943,12 +1184,13 @@ function fakeOAuthDriver(
         },
       };
     },
-    async complete() {
-      return {
+    complete:
+      input.complete ??
+      (async () => ({
         accessToken: "oauth-access-token",
         refreshToken: "oauth-refresh-token",
-      };
-    },
+        tokenType: "api_key",
+      })),
     refresh:
       input.refresh ??
       (async ({ credential }) => ({

@@ -12,6 +12,45 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-11
+- Scope: ProviderAuthManager now resolves a typed runtime credential instead of
+  flattening every OAuth result into an API key. Expiring OAuth credentials
+  refresh through the existing connection lock/generation transaction;
+  malformed envelopes and unsupported bearer realms fail closed without
+  ambient fallback. Model builder remains the adapter owner.
+- Read: provider OAuth envelope, selected-connection resolution, refresh lock,
+  model factory/builder, Core CredentialResolver handoff, and provider tests.
+- Tests: Host provider/model 25/25, broader routed Host 110/110, full Host
+  623/623, Host/Core typechecks, both project-map drift gates, and the full
+  `npm run release:check` passed.
+
+- Status: Verified
+- Date: 2026-08-10
+- Scope: macOS Keychain writes no longer attach `security -w` password prompts
+  to the CLI/TUI terminal. Host gives the command a private bounded PTY, keeps
+  the secret off argv/environment/config/output, accepts only the expected
+  two-prompt sequence, and fails closed without a plaintext fallback.
+- Read: credential-store process boundary, ProviderAuthManager submission and
+  removal, CLI/TUI callers, and provider connection security contract.
+- Tests: focused Host 36/36, fake `/dev/tty` success and unexpected-prompt
+  regressions, real Keychain write/read/delete, and isolated real OpenRouter TUI
+  connect/model-picker/removal passed. The full release gate then passed with
+  Host 621/621, CLI 177/177, TUI 560/560, 16/16 regression cases, production
+  audit, and both install smokes.
+
+- Status: Verified
+- Date: 2026-08-09
+- Scope: P7.0 exposes existing ProviderAuthManager multi-connection semantics in
+  CLI/TUI. ProviderAuthManager now separates grant-filtered runtime inventory
+  from stored-connection management inventory; Host dispatch enables the latter
+  only for non-remote clients with `provider_connection.manage`. Exact binding
+  validation, grants, selection, and credential storage remain Host-owned.
+- Read: ProviderAuthManager catalog/selection/disconnect, HostRuntime provider
+  projection, server transport authority, and product-surface callers.
+- Tests: focused manager and local/remote protocol regressions plus CLI/TUI
+  connection checks passed; Host 619/619 and the full release gate passed.
+
+- Status: Verified
 - Date: 2026-08-09
 - Scope: P6.4 adds the Host-owned ProviderCatalogStore with signed metadata
   verification, authenticated official-driver discovery, TTL/LKG fallback and

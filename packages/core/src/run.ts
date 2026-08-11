@@ -764,6 +764,7 @@ export class SparkwrightRun implements RunHandle {
   private lastModelInputTokens?: number;
   private lastLoopState?: RunLoopState;
   private readonly credentialResolver?: CredentialResolver;
+  private readonly credentialRefreshSteps = new Set<number>();
   private readonly autoCheckpointEveryNSteps?: number;
   private lastAutoCheckpointStep = 0;
   private seedLoopState?: RunLoopState;
@@ -3938,6 +3939,8 @@ export class SparkwrightRun implements RunHandle {
     step: number,
   ): Promise<boolean> {
     if (!this.credentialResolver) return false;
+    if (this.credentialRefreshSteps.has(step)) return false;
+    this.credentialRefreshSteps.add(step);
     const category = modelError.category as "auth" | "quota";
     const previousState = this.record.state;
     this.setState("waiting_credentials");

@@ -36,6 +36,27 @@ non-secret binding, grants, and source categories but never credential values.
 Stored credentials live behind the Host credential-store boundary; private
 config/environment keys remain compatibility sources. Connection and catalog
 metadata are separate mode-`0600` state under the XDG state directory.
+On macOS, Host answers the system Keychain command's bounded password prompts
+on a private PTY so they never compete with CLI/TUI raw input; the secret is not
+placed in argv or environment values, and unexpected prompts fail closed.
+
+A provider may have multiple connections. Product surfaces select one by its
+exact opaque connection id and the Host revalidates the provider, driver, and
+endpoint binding before changing the workspace grant. Disconnecting clears the
+selection/grant but keeps a stored credential available for later reselection;
+the trusted local management view keeps its opaque, non-secret entry visible
+while ordinary and remote catalogs remain grant-filtered. Permanent credential
+removal is a separate explicit action.
+
+Provider credentials stay typed inside the Host model-construction boundary.
+API keys, including durable keys issued by an authorization flow, use the
+existing AI SDK adapter path. Short-lived bearer credentials retain their
+authentication realm and expiration instead of being passed as API keys.
+When an OAuth credential enters its expiration safety window, the Host refreshes
+it through the existing cross-process connection lock and atomically publishes
+the rotated credential generation. A bearer realm without a code-owned runtime
+transport is rejected before adapter construction; the Host does not send it to
+a generic endpoint or fall back to an ambient credential.
 
 If `HTTPS_PROXY`, `https_proxy`, `HTTP_PROXY`, or `http_proxy` is set, the CLI
 passes that proxy explicitly into the provider's `fetch`. This matters because

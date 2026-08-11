@@ -252,6 +252,98 @@ describe("provider protocol", () => {
     }
   });
 
+  it("shows disconnected stored connections only to trusted local managers", async () => {
+    const fixture = await protocolFixture();
+    const local = connectionPair();
+    const remote = connectionPair();
+    const credentialStore = new MemoryProviderCredentialStore();
+    const service = createHostService({
+      providerAuth: new ProviderAuthManager({
+        env: fixture.env,
+        statePath: fixture.statePath,
+        credentialStore,
+      }),
+    });
+    try {
+      serveConnection(local.hostSide, {
+        hostService: service,
+        workspaceRoot: fixture.workspace,
+        authContext: unauthenticatedConnection(
+          "local-stdio",
+          [
+            "provider_catalog.read",
+            "provider_connection.manage",
+            "provider_secret.submit",
+          ],
+          "local",
+        ),
+      });
+      await handshake(local);
+      local.send(
+        request("local_submit", "provider.auth.submit_secret", {
+          providerId: "openai",
+          methodId: "api_key",
+          secret: "local-manager-visibility-sentinel",
+        }),
+      );
+      const submitted = await local.waitFor("local_submit");
+      expect(submitted).toMatchObject({
+        envelope: "response",
+        ok: true,
+        result: { connection: { source: "stored", selected: true } },
+      });
+      if (submitted.envelope !== "response" || !submitted.ok) return;
+      const connectionId = (submitted.result.connection as { id: string }).id;
+
+      local.send(
+        request("local_disconnect", "provider.connection.disconnect", {
+          connectionId,
+        }),
+      );
+      await expect(local.waitFor("local_disconnect")).resolves.toMatchObject({
+        envelope: "response",
+        ok: true,
+      });
+      local.send(
+        request("local_list_disconnected", "provider.list", {
+          projection: "all",
+        }),
+      );
+      const localList = await local.waitFor("local_list_disconnected");
+      expect(JSON.stringify(localList)).toContain(connectionId);
+      expect(JSON.stringify(localList)).not.toContain(
+        "local-manager-visibility-sentinel",
+      );
+
+      serveConnection(remote.hostSide, {
+        hostService: service,
+        workspaceRoot: fixture.workspace,
+        authContext: authenticatedConnection(
+          "remote",
+          "ws-bearer",
+          "host_client",
+          ["provider_catalog.read", "provider_connection.manage"],
+          "remote",
+        ),
+      });
+      await handshake(remote);
+      remote.send(
+        request("remote_list_disconnected", "provider.list", {
+          projection: "all",
+        }),
+      );
+      const remoteList = await remote.waitFor("remote_list_disconnected");
+      expect(JSON.stringify(remoteList)).not.toContain(connectionId);
+      expect(await credentialStore.get(connectionId)).toBe(
+        "local-manager-visibility-sentinel",
+      );
+    } finally {
+      local.close();
+      remote.close();
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
   it("completes a principal-bound OAuth attempt once without exposing credentials", async () => {
     const fixture = await protocolFixture();
     const pair = connectionPair();

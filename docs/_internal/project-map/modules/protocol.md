@@ -10,6 +10,30 @@ See also [../maps/safety/approvals.md](../maps/safety/approvals.md) and [../maps
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-10
+- Scope: Keychain prompt isolation is entirely behind Host's existing
+  `provider.secret.submit` boundary. No request, result, authority, transport,
+  or schema shape changed.
+- Read: secret-submit Protocol DTOs, Host dispatch/authority, and credential
+  store implementation.
+- Tests: focused Host protocol/provider checks, Protocol 6/6, and the full
+  release gate passed; the Protocol contract is unchanged.
+
+- Status: Read-only
+- Date: 2026-08-09
+- Scope: P7.0 reuses existing `provider.connection.select` and
+  `provider.connection.disconnect` requests plus provider-list DTOs. No wire
+  shape, schema, authority, or remote-mutation boundary changes. Missing
+  optional `grantScope` already represents a locally manageable but currently
+  disconnected stored connection; Host derives visibility from transport
+  authority rather than accepting a new request field.
+- Read: Protocol connection DTOs, Host authority, SDK forwarding, and CLI/TUI
+  callers.
+- Tests: focused Host local/remote provider-list and product connection checks
+  passed; Protocol 6/6 and the full release gate passed. The Protocol contract
+  is unchanged.
+
 - Status: Verified
 - Date: 2026-08-09
 - Scope: P6.4 adds trusted-local `provider.catalog.refresh`, non-secret catalog

@@ -12,6 +12,15 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 
 - Status: Read-only
 - Date: 2026-08-09
+- Scope: P7.0 management inventory does not change Agent model precedence,
+  delegation, child admission, or tool authority. A disconnected connection
+  cannot enter Agent model resolution until explicitly selected and granted.
+- Read: Host connection resolution and Agent capability boundary.
+- Tests: focused Host connection visibility/grant regressions and the full
+  release gate passed.
+
+- Status: Read-only
+- Date: 2026-08-09
 - Scope: P6.4 changes main provider catalog/config and presentation state only;
   Agent model precedence, spawning, delegation, and tool authority are
   unchanged.

@@ -180,6 +180,40 @@ contracts, and focused checklists that no longer fit here.
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-11
+- Scope: P6.5a changes only the Host-private credential lease and existing
+  model-builder admission. ProviderRegistry remains the single model/adapter
+  authority, provider-ai-sdk remains credential-storage unaware, and bearer
+  credentials without an explicit Host runtime path are rejected before an
+  edge adapter is created.
+- Read: Host model builder, ProviderRegistry adapter construction, provider AI
+  SDK boundary, and public provider edge.
+- Tests: Host provider/model 25/25, SDK Core 15/15, CLI provider 5/5, TUI routed
+  33/33, and the full `npm run release:check` passed; no edge package contract
+  changed.
+
+- Status: Read-only
+- Date: 2026-08-10
+- Scope: macOS Keychain prompt isolation remains Host-owned. SDK forwarding,
+  provider adapters, ProviderRegistry, and external edge contracts are
+  unchanged and never receive the credential value.
+- Read: Host credential store, SDK secret-submit forwarding, and provider edge
+  ownership boundaries.
+- Tests: focused Host/provider checks, a real TUI connect, and the full release
+  gate passed; edge contracts are unchanged.
+
+- Status: Read-only
+- Date: 2026-08-09
+- Scope: P7.0 calls the existing SDK Core connection select/disconnect methods;
+  SDK forwarding, request DTOs, provider adapters, and registry ownership are
+  unchanged. Host derives management inventory visibility without adding an SDK
+  request field.
+- Read: CLI/TUI SDK calls, SDK Core client, Protocol DTOs, and provider edge
+  boundaries.
+- Tests: focused connection checks and the full release gate passed; edge
+  contracts are unchanged.
+
 - Status: Verified
 - Date: 2026-08-09
 - Scope: SDK Core forwards Protocol-owned provider catalog refresh payloads and

@@ -39,6 +39,7 @@ export type {
   ProviderAuthAttemptContext,
   ProviderAuthManagerOptions,
   ProviderCredentialLease,
+  ProviderRuntimeCredential,
 } from "./provider-auth.js";
 export type {
   ProviderOAuthBeginResult,

@@ -97,6 +97,12 @@ export function LayerRenderer(props: {
     methodId: string,
     secret: string,
   ) => Promise<ProviderConnectionSummary | null>;
+  onSelectProviderConnection: (
+    connectionId: string,
+  ) => Promise<ProviderCatalogSnapshot | null>;
+  onDisconnectProviderConnection: (
+    connectionId: string,
+  ) => Promise<ProviderCatalogSnapshot | null>;
   onBeginProviderOAuth: (
     providerId: string,
     methodId: string,
@@ -191,6 +197,8 @@ export function LayerRenderer(props: {
           loading={props.loadingProviders}
           onLoadMethods={props.onLoadProviderAuthMethods}
           onSubmitSecret={props.onSubmitProviderSecret}
+          onSelectConnection={props.onSelectProviderConnection}
+          onDisconnectConnection={props.onDisconnectProviderConnection}
           onBeginOAuth={props.onBeginProviderOAuth}
           onOAuthStatus={props.onInspectProviderOAuth}
           onCompleteOAuth={props.onCompleteProviderOAuth}

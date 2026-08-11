@@ -10,6 +10,15 @@ See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../m
 
 - Status: Read-only
 - Date: 2026-08-09
+- Scope: P7.0 stored-connection management visibility is resolved by Host
+  before model construction. Task, Workflow, child-agent, and coordination
+  ownership are unchanged.
+- Read: Host provider-list/model-resolution boundary and Agent Runtime assembly.
+- Tests: focused Host provider/auth protocol checks passed; Agent Runtime has no
+  changed contract. The full release gate passed.
+
+- Status: Read-only
+- Date: 2026-08-09
 - Scope: TUI preference persistence reuses Agent Runtime's existing atomic text
   writer; task, Workflow, child-agent, and coordination ownership are unchanged.
 - Read: atomic document-store export and TUI preference consumer.

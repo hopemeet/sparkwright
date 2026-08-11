@@ -11,6 +11,14 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 
 - Status: Read-only
 - Date: 2026-08-09
+- Scope: P7.0 remains a trusted-local pre-run provider control path. It neither
+  widens run approvals nor exposes credential actions to the model.
+- Read: existing provider mutation authority and approval boundary.
+- Tests: focused connection checks and the full release gate passed; approval
+  contracts are unchanged.
+
+- Status: Read-only
+- Date: 2026-08-09
 - Scope: Provider catalog refresh remains trusted-local and pre-run; P6.4 does
   not widen run approvals or create a model-facing credential action.
 - Read: Host connection authority, migration boundary, and approval map.

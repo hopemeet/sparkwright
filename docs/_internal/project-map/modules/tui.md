@@ -10,6 +10,29 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-10
+- Scope: the `/connect` component and input router are unchanged. Host now
+  isolates macOS Keychain password prompts, so API-key submission no longer
+  steals the Ink terminal while the dialog is `working…`.
+- Read: ConnectDialog secret lifecycle, App/RunController Host bridge, and Host
+  credential-store process boundary.
+- Tests: isolated real OpenRouter TUI progressed from masked input to the model
+  picker, accepted a subsequent direction key, and emitted no system password
+  prompts on the product PTY; TUI 560/560 and the full release gate passed.
+
+- Status: Verified
+- Date: 2026-08-09
+- Scope: P7.0 makes `/connect` an existing-connection switcher before starting
+  a new login. Enter selects through the Host, `d` disconnects without deleting
+  credentials, the retained entry remains visible as `disconnected` and can be
+  selected again, and `+ add connection` reuses the API-key/OAuth path.
+  Permanent removal is not exposed as a one-key TUI action.
+- Read: ConnectDialog, App/layer wiring, RunController SDK bridge, provider
+  catalog DTOs, and focused Ink tests.
+- Tests: focused ConnectDialog disconnect/reselect regression, TUI 560/560,
+  and the full release gate passed.
+
 - Status: Verified
 - Date: 2026-08-09
 - Scope: P6.4 groups `/model` by provider, orders Favorite and Recent models,

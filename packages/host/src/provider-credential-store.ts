@@ -7,6 +7,43 @@ import { atomicWriteText } from "@sparkwright/agent-runtime";
 
 const FILE_STORE_VERSION = 1;
 const KEYCHAIN_SERVICE = "SparkWright Provider Credential";
+const KEYCHAIN_SECURITY_PATH = "/usr/bin/security";
+const KEYCHAIN_EXPECT_PATH = "/usr/bin/expect";
+const KEYCHAIN_PROMPT_TIMEOUT_SECONDS = 15;
+const KEYCHAIN_PASSWORD_EXPECT_SCRIPT = String.raw`
+proc finish_child {} {
+  set result [wait]
+  if {[lindex $result 2] == 0} {
+    exit [lindex $result 3]
+  }
+  exit 1
+}
+log_user 0
+set timeout $env(SPARKWRIGHT_KEYCHAIN_PROMPT_TIMEOUT_SECONDS)
+set secret [read -nonewline stdin]
+spawn -noecho $env(SPARKWRIGHT_KEYCHAIN_SECURITY_PATH) add-generic-password -U -a $env(SPARKWRIGHT_KEYCHAIN_ACCOUNT) -s $env(SPARKWRIGHT_KEYCHAIN_SERVICE) -w
+set prompt_stage 0
+expect {
+  -exact "password data for new item:" {
+    if {$prompt_stage != 0} { exit 125 }
+    set prompt_stage 1
+    send -- "$secret\r"
+    exp_continue
+  }
+  -exact "retype password for new item:" {
+    if {$prompt_stage != 1} { exit 125 }
+    set prompt_stage 2
+    send -- "$secret\r"
+    set secret ""
+    exp_continue
+  }
+  timeout { exit 124 }
+  eof {
+    if {$prompt_stage != 2} { exit 126 }
+    finish_child
+  }
+}
+`;
 
 export interface ProviderCredentialStore {
   get(connectionId: string): Promise<string | undefined>;
@@ -142,8 +179,16 @@ export class FileProviderCredentialStore implements ProviderCredentialStore {
 }
 
 export class MacOsKeychainCredentialStore implements ProviderCredentialStore {
+  private readonly securityPath: string;
+  private readonly expectPath: string;
+
+  constructor(options: { securityPath?: string; expectPath?: string } = {}) {
+    this.securityPath = options.securityPath ?? KEYCHAIN_SECURITY_PATH;
+    this.expectPath = options.expectPath ?? KEYCHAIN_EXPECT_PATH;
+  }
+
   async get(connectionId: string): Promise<string | undefined> {
-    const result = await runSecurity([
+    const result = await runCredentialCommand(this.securityPath, [
       "find-generic-password",
       "-a",
       connectionId,
@@ -157,19 +202,24 @@ export class MacOsKeychainCredentialStore implements ProviderCredentialStore {
   }
 
   async put(connectionId: string, secret: string): Promise<void> {
-    // `security ... -w` as the final argument reads the password from stdin,
-    // keeping the secret out of argv and process listings.
-    const result = await runSecurity(
-      [
-        "add-generic-password",
-        "-U",
-        "-a",
-        connectionId,
-        "-s",
-        KEYCHAIN_SERVICE,
-        "-w",
-      ],
-      `${secret}\n`,
+    // `security ... -w` deliberately reads from its controlling terminal, not
+    // stdin. Give it a private PTY and answer the bounded password prompts so
+    // the secret stays out of argv and never competes with the product TTY.
+    const result = await runCredentialCommand(
+      this.expectPath,
+      ["-c", KEYCHAIN_PASSWORD_EXPECT_SCRIPT],
+      {
+        stdinValue: secret,
+        env: {
+          ...process.env,
+          SPARKWRIGHT_KEYCHAIN_ACCOUNT: connectionId,
+          SPARKWRIGHT_KEYCHAIN_SERVICE: KEYCHAIN_SERVICE,
+          SPARKWRIGHT_KEYCHAIN_SECURITY_PATH: this.securityPath,
+          SPARKWRIGHT_KEYCHAIN_PROMPT_TIMEOUT_SECONDS: String(
+            KEYCHAIN_PROMPT_TIMEOUT_SECONDS,
+          ),
+        },
+      },
     );
     if (result.code !== 0) {
       throw new Error(
@@ -179,7 +229,7 @@ export class MacOsKeychainCredentialStore implements ProviderCredentialStore {
   }
 
   async remove(connectionId: string): Promise<void> {
-    await runSecurity([
+    await runCredentialCommand(this.securityPath, [
       "delete-generic-password",
       "-a",
       connectionId,
@@ -232,13 +282,15 @@ export async function withExclusiveFileLock<T>(
   }
 }
 
-async function runSecurity(
+async function runCredentialCommand(
+  executable: string,
   args: string[],
-  stdinValue?: string,
+  options: { stdinValue?: string; env?: NodeJS.ProcessEnv } = {},
 ): Promise<{ code: number; stdout: string }> {
   return await new Promise((resolveRun, rejectRun) => {
-    const child = spawn("/usr/bin/security", args, {
+    const child = spawn(executable, args, {
       stdio: ["pipe", "pipe", "pipe"],
+      ...(options.env ? { env: options.env } : {}),
     });
     let stdout = "";
     child.stdout.setEncoding("utf8");
@@ -255,7 +307,10 @@ async function runSecurity(
     child.once("close", (code) => {
       resolveRun({ code: code ?? 1, stdout });
     });
-    child.stdin.end(stdinValue ?? "");
+    // A fast child failure can close its input before `end`; the process-level
+    // error above is authoritative and this stream error must not go unhandled.
+    child.stdin.once("error", () => undefined);
+    child.stdin.end(options.stdinValue ?? "");
   });
 }
 

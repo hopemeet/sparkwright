@@ -11,6 +11,14 @@ See [../session/resume-replay.md](../session/resume-replay.md).
 
 - Status: Read-only
 - Date: 2026-08-09
+- Scope: P7.0 connection selection is pre-run control state. It adds no context
+  item, compaction input, follow-up evidence, or replay field.
+- Read: CLI/TUI connection controls and compaction boundary.
+- Tests: focused connection checks and the full release gate passed; compaction
+  contracts are unchanged.
+
+- Status: Read-only
+- Date: 2026-08-09
 - Scope: P6.4 pre-run catalog refresh and presentation-only model preferences
   do not enter context items, compaction, follow-up evidence, or replay.
 - Read: provider control path, TUI preferences, and compaction boundary.

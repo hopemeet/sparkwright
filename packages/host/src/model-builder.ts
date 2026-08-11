@@ -10,6 +10,7 @@ import {
   createHostProviderRegistry,
   toRegistryModelRef,
 } from "./provider-catalog.js";
+import type { ProviderRuntimeCredential } from "./provider-auth.js";
 
 type ConfiguredSelection = Extract<ModelSelection, { kind: "configured" }>;
 
@@ -19,7 +20,7 @@ export interface BuildAdapterInput {
   env: Record<string, string | undefined>;
   /** Host-resolved credential. Kept out of protocol/config projection. */
   credential?: {
-    apiKey: string;
+    runtime: ProviderRuntimeCredential;
     source: string;
     /** Stored connections bind the adapter to their exact normalized endpoint. */
     exactEndpointBinding?: boolean;
@@ -75,7 +76,14 @@ export async function buildConfiguredAdapter(
   const envApiKey = input.credential
     ? undefined
     : nonEmptyEnv(env, npmInfo.apiKeyEnv);
-  const apiKey = input.credential?.apiKey ?? envApiKey ?? selection.apiKey;
+  if (input.credential?.runtime.kind === "bearer") {
+    return {
+      ok: false,
+      message: `Provider "${selection.providerKey}" bearer authentication realm "${input.credential.runtime.authRealm}" has no code-owned runtime transport in this Host build.`,
+    };
+  }
+  const apiKey =
+    input.credential?.runtime.value ?? envApiKey ?? selection.apiKey;
   if (!apiKey) {
     return {
       ok: false,

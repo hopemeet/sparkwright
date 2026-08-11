@@ -13,6 +13,17 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-11
+- Scope: the existing provider-neutral CredentialResolver now enforces its
+  documented limit of one auth/quota refresh attempt per run step. A successful
+  resolver result may retry that step once; a second credential failure follows
+  the ordinary terminal model-failure path.
+- Read: run-loop credential error branch, waiting/refreshed events, Host managed
+  adapter handoff, and focused Core regression.
+- Tests: Core credential-error 4/4, full Core 688/688, Core/Host typechecks,
+  both project-map drift gates, and the full `npm run release:check` passed.
+
+- Status: Verified
 - Date: 2026-08-08
 - Scope: explicit verification-command classification now recognizes
   `node --test`, so terminal FactLedger evidence does not mislabel Node's

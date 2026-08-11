@@ -11,6 +11,15 @@ See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runti
 
 - Status: Read-only
 - Date: 2026-08-09
+- Scope: P7.0 connection disconnect/reselection/removal mutates Host-owned XDG
+  provider state and credential storage, not project files or model-facing
+  workspace-write authority.
+- Read: provider state/credential stores and workspace-write boundary.
+- Tests: focused retention/removal and secret-free metadata checks plus the
+  full release gate passed.
+
+- Status: Read-only
+- Date: 2026-08-09
 - Scope: Explicit legacy credential cleanup targets the resolved config file
   under an exact-value lock; it is a local management command, not run-time
   workspace.write authority. Workspace mutation policy is unchanged.

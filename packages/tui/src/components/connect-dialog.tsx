@@ -16,7 +16,15 @@ import {
   type ModelPreferencesSnapshot,
 } from "../lib/model-preferences.js";
 
-type ConnectStage = "provider" | "method" | "secret" | "oauth" | "model";
+type ConnectStage =
+  | "provider"
+  | "connection"
+  | "method"
+  | "secret"
+  | "oauth"
+  | "model";
+
+const ADD_CONNECTION_KEY = "__add_connection__";
 
 export function ConnectDialog(props: {
   catalog: ProviderCatalogSnapshot | null;
@@ -29,6 +37,12 @@ export function ConnectDialog(props: {
     methodId: string,
     secret: string,
   ) => Promise<ProviderConnectionSummary | null>;
+  onSelectConnection: (
+    connectionId: string,
+  ) => Promise<ProviderCatalogSnapshot | null>;
+  onDisconnectConnection: (
+    connectionId: string,
+  ) => Promise<ProviderCatalogSnapshot | null>;
   onBeginOAuth: (
     providerId: string,
     methodId: string,
@@ -61,13 +75,18 @@ export function ConnectDialog(props: {
   const [connectedCatalog, setConnectedCatalog] =
     useState<ProviderCatalogSnapshot>();
 
-  const providers = props.catalog?.providers ?? [];
+  const activeCatalog = connectedCatalog ?? props.catalog;
+  const providers = activeCatalog?.providers ?? [];
+  const selectedProvider = providers.find(
+    (provider) => provider.id === providerId,
+  );
+  const connections = selectedProvider?.connections ?? [];
   const methodItems = methods?.methods ?? [];
   const selectedMethod = methodItems.find((method) => method.id === methodId);
   const models = useMemo(
     () =>
       [
-        ...((connectedCatalog ?? props.catalog)?.providers
+        ...(activeCatalog?.providers
           .find((provider) => provider.id === providerId)
           ?.models.filter((model) => model.available !== false) ?? []),
       ].sort((left, right) =>
@@ -77,7 +96,7 @@ export function ConnectDialog(props: {
           props.preferences ?? EMPTY_MODEL_PREFERENCES,
         ),
       ),
-    [connectedCatalog, props.catalog, props.preferences, providerId],
+    [activeCatalog, props.preferences, providerId],
   );
   const displayItems =
     stage === "provider"
@@ -85,20 +104,50 @@ export function ConnectDialog(props: {
           key: provider.id,
           label: providerLabel(provider),
         }))
-      : stage === "method"
-        ? methodItems.map((method) => ({
-            key: method.id,
-            label: method.label,
-          }))
-        : stage === "model"
-          ? models.map((model) => ({
-              key: model.ref,
-              label: `${props.preferences?.favorites.includes(model.ref) ? "★ " : ""}${model.ref}`,
+      : stage === "connection"
+        ? [
+            ...connections.map((connection) => ({
+              key: connection.id,
+              label: connectionLabel(connection),
+            })),
+            { key: ADD_CONNECTION_KEY, label: "+ add connection" },
+          ]
+        : stage === "method"
+          ? methodItems.map((method) => ({
+              key: method.id,
+              label: method.label,
             }))
-          : [];
+          : stage === "model"
+            ? models.map((model) => ({
+                key: model.ref,
+                label: `${props.preferences?.favorites.includes(model.ref) ? "★ " : ""}${model.ref}`,
+              }))
+            : [];
   const boundedCursor =
     displayItems.length === 0 ? 0 : Math.min(cursor, displayItems.length - 1);
   const { start, visible } = windowAroundCursor(displayItems, boundedCursor, 8);
+
+  useEffect(() => {
+    if (props.catalog) setConnectedCatalog(props.catalog);
+  }, [props.catalog?.revision, props.catalog?.catalogVersion]);
+
+  function openMethods(nextProviderId: string): void {
+    setBusy(true);
+    setError(undefined);
+    void props
+      .onLoadMethods(nextProviderId)
+      .then((snapshot) => {
+        if (!snapshot || snapshot.methods.length === 0) {
+          setError("This provider has no supported connection method.");
+          return;
+        }
+        setProviderId(nextProviderId);
+        setMethods(snapshot);
+        setCursor(0);
+        setStage("method");
+      })
+      .finally(() => setBusy(false));
+  }
 
   useEffect(() => {
     if (
@@ -157,14 +206,18 @@ export function ConnectDialog(props: {
         setCursor(0);
         setStage(
           stage === "model"
-            ? selectedMethod?.type === "oauth"
-              ? "method"
-              : "secret"
+            ? !selectedMethod
+              ? "connection"
+              : selectedMethod.type === "oauth"
+                ? "method"
+                : "secret"
             : stage === "oauth"
               ? "method"
               : stage === "secret"
                 ? "method"
-                : "provider",
+                : stage === "connection"
+                  ? "provider"
+                  : "provider",
         );
       }
       return;
@@ -251,6 +304,32 @@ export function ConnectDialog(props: {
         .finally(() => setBusy(false));
       return;
     }
+    if (
+      stage === "connection" &&
+      !key.ctrl &&
+      !key.meta &&
+      input.toLowerCase() === "d"
+    ) {
+      const item = displayItems[boundedCursor];
+      const connection = connections.find(
+        (candidate) => candidate.id === item?.key,
+      );
+      if (!connection) return;
+      setBusy(true);
+      setError(undefined);
+      void props
+        .onDisconnectConnection(connection.id)
+        .then((catalog) => {
+          if (!catalog) {
+            setError("Connection could not be disconnected.");
+            return;
+          }
+          setConnectedCatalog(catalog);
+          setCursor(0);
+        })
+        .finally(() => setBusy(false));
+      return;
+    }
     if (key.upArrow) {
       setCursor((current) =>
         displayItems.length === 0
@@ -271,19 +350,41 @@ export function ConnectDialog(props: {
     if (stage === "provider") {
       const provider = providers[boundedCursor];
       if (!provider) return;
+      setProviderId(provider.id);
+      setMethods(undefined);
+      setMethodId(undefined);
+      setCursor(0);
+      setError(undefined);
+      if ((provider.connections?.length ?? 0) > 0) {
+        setStage("connection");
+      } else {
+        openMethods(provider.id);
+      }
+      return;
+    }
+    if (stage === "connection") {
+      const item = displayItems[boundedCursor];
+      if (!item || !providerId) return;
+      if (item.key === ADD_CONNECTION_KEY) {
+        openMethods(providerId);
+        return;
+      }
+      const connection = connections.find(
+        (candidate) => candidate.id === item.key,
+      );
+      if (!connection) return;
       setBusy(true);
       setError(undefined);
       void props
-        .onLoadMethods(provider.id)
-        .then((snapshot) => {
-          if (!snapshot || snapshot.methods.length === 0) {
-            setError("This provider has no supported connection method.");
+        .onSelectConnection(connection.id)
+        .then((catalog) => {
+          if (!catalog) {
+            setError("Connection could not be selected.");
             return;
           }
-          setProviderId(provider.id);
-          setMethods(snapshot);
+          setConnectedCatalog(catalog);
           setCursor(0);
-          setStage("method");
+          setStage("model");
         })
         .finally(() => setBusy(false));
       return;
@@ -325,7 +426,7 @@ export function ConnectDialog(props: {
           connect
         </Text>
         <Text color={theme.muted}>
-          {"  "}provider → method → credential → model
+          {"  "}provider → connection or method → model
         </Text>
       </Box>
       {methods ? (
@@ -380,6 +481,10 @@ export function ConnectDialog(props: {
         <Text color={theme.success}>
           Connected. Choose the model for the next run.
         </Text>
+      ) : stage === "connection" ? (
+        <Text color={theme.muted}>
+          Enter selects for this workspace. Disconnect keeps stored credentials.
+        </Text>
       ) : null}
       {props.loading || busy ? <Text color={theme.muted}>working…</Text> : null}
       {error ? <Text color={theme.error}>{error}</Text> : null}
@@ -404,7 +509,9 @@ export function ConnectDialog(props: {
       ) : null}
       {stage !== "secret" && stage !== "oauth" ? (
         <Text color={theme.muted}>
-          ↑↓ select · enter continue · ctrl+r refresh catalog · esc back
+          {stage === "connection"
+            ? "↑↓ select · enter use/add · d disconnect · esc back"
+            : "↑↓ select · enter continue · ctrl+r refresh catalog · esc back"}
         </Text>
       ) : null}
     </DialogFrame>
@@ -415,6 +522,19 @@ function providerLabel(
   provider: NonNullable<ProviderCatalogSnapshot["providers"]>[number],
 ): string {
   const name = provider.displayName ?? provider.id;
-  if (provider.connected) return `${name} · connected`;
-  return `${name} · not connected`;
+  const count = provider.connections?.length ?? 0;
+  const connectionCount =
+    count > 0 ? ` · ${count} connection${count === 1 ? "" : "s"}` : "";
+  if (provider.connected) return `${name} · connected${connectionCount}`;
+  return `${name} · not connected${connectionCount}`;
+}
+
+function connectionLabel(connection: ProviderConnectionSummary): string {
+  const marker = connection.selected ? "★" : " ";
+  const identity =
+    connection.source === "stored"
+      ? connection.id.slice(-10)
+      : connection.sourceLabel;
+  const status = connection.grantScope ? connection.status : "disconnected";
+  return `${marker} ${connection.binding.authMethodId} · ${connection.source}:${identity} · ${status}`;
 }

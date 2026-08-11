@@ -4545,6 +4545,39 @@ describe("SparkwrightRun", () => {
     expect(run.record.state).toBe("completed");
   });
 
+  it("invokes credentialResolver at most once when refreshed credentials still fail", async () => {
+    let modelCalls = 0;
+    let resolverCalls = 0;
+    const run = createRun({
+      goal: "auth refresh remains invalid",
+      model: {
+        async complete() {
+          modelCalls += 1;
+          throw Object.assign(new Error("invalid api key"), {
+            status: 401,
+            data: { error: { code: "invalid_api_key" } },
+          });
+        },
+      },
+      credentialResolver: async () => {
+        resolverCalls += 1;
+        return { refreshed: true };
+      },
+    });
+
+    const result = await run.start();
+
+    expect(modelCalls).toBe(2);
+    expect(resolverCalls).toBe(1);
+    expect(result.signal).toBe("failed");
+    expect(run.record.stopReason).toBe("model_auth_failed");
+    expect(
+      run.events
+        .all()
+        .filter((event) => event.type === "run.credentials_refreshed"),
+    ).toHaveLength(1);
+  });
+
   it("falls through to model_quota_exhausted when the resolver declines refresh", async () => {
     let resolverCalled = 0;
     const run = createRun({

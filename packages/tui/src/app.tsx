@@ -1178,6 +1178,23 @@ function AppReady(
     return connection;
   }
 
+  async function manageProviderConnection(
+    action: "select" | "disconnect",
+    connectionId: string,
+  ): Promise<ProviderCatalogSnapshot | null> {
+    const connection = await controller.manageProviderConnection(
+      action,
+      connectionId,
+    );
+    if (!connection) return null;
+    store.appendNotice(
+      `${connection.providerId} connection -> ${action} (${connection.id})`,
+    );
+    const catalog = await controller.listProviders(effModel, "all");
+    setProviderCatalog(catalog);
+    return catalog;
+  }
+
   function updateProviderAuth(
     action: "login" | "logout" | "refresh",
     profileId: string,
@@ -1260,6 +1277,10 @@ function AppReady(
     onLoadProviderAuthMethods: (providerId: string) =>
       controller.listProviderAuthMethods(providerId),
     onSubmitProviderSecret: submitProviderSecret,
+    onSelectProviderConnection: (connectionId: string) =>
+      manageProviderConnection("select", connectionId),
+    onDisconnectProviderConnection: (connectionId: string) =>
+      manageProviderConnection("disconnect", connectionId),
     onBeginProviderOAuth: (providerId: string, methodId: string) =>
       controller.beginProviderOAuth(providerId, methodId),
     onInspectProviderOAuth: (attemptId: string) =>

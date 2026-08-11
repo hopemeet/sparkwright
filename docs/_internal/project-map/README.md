@@ -116,10 +116,12 @@ follow the active maps below for the current contract.
   allowlists/budgets, and per-logical model usage keying are deferred out of the
   MVP. Active model construction contract: [modules/host.md](modules/host.md).
 - [designs/provider-connections.md](designs/provider-connections.md) — Completed
-  P6 design and implementation history: registry/catalog compatibility,
-  API-key and OAuth connections, signed dynamic catalog refresh, model policy,
-  transactional legacy migration, and TUI model preferences. Active contracts
-  remain in the routed Host, Protocol, CLI, TUI, and Edge Package maps.
+  P6 design and implementation history, P6.5a runtime-credential hardening,
+  plus active P7.0 connection switching:
+  registry/catalog compatibility, API-key and OAuth connections, signed dynamic
+  catalog refresh, model policy, transactional legacy migration, TUI model
+  preferences, and multi-connection product surfaces. Active contracts remain
+  in the routed Host, Protocol, CLI, TUI, and Edge Package maps.
 
 ## Archived Reviews
 
@@ -226,6 +228,40 @@ TUI events; it is not a trace diagnostic report and must not replace
 trace/session inspection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-08-11
+- Scope: P6.5a keeps provider runtime credentials typed, automatically refreshes
+  OAuth credentials inside the existing cross-process connection lock before
+  expiry, rejects bearer realms without a code-owned runtime transport, and
+  enforces Core's documented one credential-refresh attempt per run step.
+- Read: Host provider lease/auth/model construction, Core credential resolver,
+  provider connection design, public provider edge, and focused test route.
+- Route review: Protocol, SDK, CLI, TUI, capability, approval, session,
+  compaction, and trace shapes are unchanged; no second provider registry or
+  runtime-driver registry was introduced.
+- Tests: Host provider/model 25/25, broader routed Host 110/110, Core 688/688,
+  schema/typechecks, both project-map drift gates, and the full
+  `npm run release:check` passed, including the 16-case regression matrix and
+  both install smokes.
+
+- Status: Verified
+- Date: 2026-08-09
+- Scope: P7.0 exposes existing Host-owned multi-connection state through CLI
+  inventory/exact-id selection and a TUI connection switcher. A trusted-local
+  management view keeps disconnected stored connections reachable while the
+  default and remote views remain grant-filtered. TUI disconnect is deliberately
+  non-destructive; permanent removal remains an explicit CLI action.
+- Read: Host provider auth/catalog and transport-authority boundary, existing
+  Protocol/SDK connection methods, CLI provider commands, TUI
+  connect/layer/controller flow, public provider docs, and routed capability
+  map.
+- Route review: this is a local pre-run control path. Run-loop/tool authority,
+  approvals, session/resume, compaction, and trace contracts are unchanged.
+- Tests: focused Host manager/protocol, CLI, and TUI regressions cover
+  disconnect, local inventory, remote hiding, reselection, and removal. Full
+  release gate passed with Host 619/619, CLI 177/177, TUI 560/560, Core
+  687/687, 16/16 regressions, production audit, and both install smokes.
 
 - Status: Verified
 - Date: 2026-08-09

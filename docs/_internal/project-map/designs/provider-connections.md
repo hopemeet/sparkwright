@@ -1,6 +1,6 @@
 # Design: Provider Connections and Model Catalog
 
-> **Status: P6.1-P6.4 implemented and release-verified.**
+> **Status: P6.1-P6.4 and P7.0 implemented and release-verified.**
 > This document locks the ownership, security, compatibility, migration, and
 > acceptance decisions for P6. Active behavior remains defined by
 > [Host](../modules/host.md), [Protocol](../modules/protocol.md),
@@ -332,6 +332,10 @@ Secret storage preference is:
 SparkWright must not silently fall back from an unavailable system credential
 facility to a plaintext file. Metadata files never contain API keys, access
 tokens, refresh tokens, authorization codes, PKCE verifiers, or OAuth state.
+On macOS, the `security` command's password prompts run on a private, bounded
+PTY rather than the product terminal. The credential is supplied through the
+helper's stdin, never argv or environment values; only the exact two expected
+prompts are answered in order, and any deviation fails closed.
 
 ### 8.2 Concurrency contract
 
@@ -835,6 +839,26 @@ reversible.
 Security required to use API keys is complete in P6.2; P6.4 is not a deferred
 security phase.
 
+### P6.5a: Runtime credential hardening
+
+Implemented 2026-08-11 without adding another provider or adapter registry.
+ProviderAuthManager remains the connection/refresh owner and ProviderRegistry
+remains the model/adapter authority.
+
+- Preserve API keys and bearer credentials as distinct Host-private runtime
+  variants instead of flattening OAuth access tokens into API-key strings.
+- Refresh OAuth credentials inside the existing cross-process lock when their
+  expiration enters a five-minute safety window; publish rotated credentials
+  and connection generation atomically.
+- Reject malformed OAuth envelopes, mismatched realms, unsupported token types,
+  and bearer realms without a code-owned runtime transport before adapter
+  construction. Never retry through ambient credentials.
+- Reuse Core's provider-neutral CredentialResolver for auth recovery and enforce
+  its documented one-attempt-per-step boundary.
+
+This phase does not add a new login method, provider endpoint, request header,
+model entitlement source, or user-visible connection option.
+
 ## 18. Acceptance Matrix
 
 | ID  | Phase | Scenario                                                      | Expected result                                                                          |
@@ -863,6 +887,10 @@ security phase.
 | A22 | P6.4  | Catalog artifact is unsigned/invalid/corrupt                  | It is rejected without replacing bundled/LKG data                                        |
 | A23 | P6.4  | Favorite/Recent order changes                                 | Picker order changes; non-interactive resolution does not                                |
 | A24 | P6.4  | `/connect` succeeds                                           | TUI opens the connected provider's filtered model picker                                 |
+| A25 | P6.5a | Stored API key or durable OAuth-issued API key resolves       | Runtime credential remains `api_key`; existing adapter behavior is unchanged             |
+| A26 | P6.5a | Two Hosts resolve the same OAuth credential near expiry       | Existing cross-process lock performs one refresh and both observe the rotated generation |
+| A27 | P6.5a | Selected OAuth credential is bearer with no runtime transport | Adapter construction fails before sending the token and no ambient fallback is attempted |
+| A28 | P6.5a | Retried step fails authentication after resolver success      | Resolver is not invoked again for that step; the run terminates as `model_auth_failed`   |
 
 ## 19. Required Test Layers
 
@@ -913,11 +941,72 @@ implementation:
 - remote clients managing provider connections;
 - organization-managed connection grants;
 - automatic arbitrary provider-package installation;
-- account switching UI beyond one active default per provider;
+- editable account aliases and bulk connection management;
 - cross-device credential synchronization; and
 - provider fallback/routing based on price, latency, or availability.
 
+## 22. P7 Product Follow-ups
+
+### P7.0: Connection switcher and manager
+
+P7.0 exposes the existing multi-connection state without introducing another
+credential or provider owner. ProviderAuthManager and the current
+`provider.connection.*` request family remain authoritative.
+
+- CLI adds explicit `provider select <connection>` and shows non-secret
+  connection inventory under `provider list`.
+- TUI `/connect` shows existing stored and ambient connections before offering
+  a new login method. Enter selects a connection for the current workspace;
+  `d` disconnects it without deleting stored credential material.
+- Disconnect removes the workspace grant but not local manageability. The
+  trusted-local management catalog continues to expose only the connection's
+  opaque id and non-secret binding metadata; ordinary and remote catalogs stay
+  grant-filtered. A later exact-id selection revalidates the binding before it
+  adds a new workspace grant.
+- Selection continues to revalidate the code-owned driver and endpoint binding.
+- Permanent logout/removal remains an explicit CLI action; the TUI does not
+  attach destructive deletion to a single key.
+- Runtime model defaults remain unchanged until the user chooses a model.
+
+P7.0 acceptance:
+
+| ID  | Scenario                                             | Expected result                                                                                       |
+| --- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| B01 | One provider has two stored connections              | CLI and TUI show two non-secret identities and one selected marker                                    |
+| B02 | User selects another connection                      | Workspace selection changes atomically; the previous secret remains stored                            |
+| B03 | User disconnects the selected connection             | Selection/grant is removed; the local manager can reselect/remove it; credential material is retained |
+| B04 | Connection binding differs from the current endpoint | Selection fails closed with an actionable message                                                     |
+| B05 | TUI chooses an existing connection                   | It proceeds to that provider's filtered model picker without requesting a secret                      |
+| B06 | TUI chooses “add connection”                         | Existing API-key/OAuth flow is reused                                                                 |
+
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-08-11
+- Scope: P6.5a implements typed runtime credentials, automatic expiry-window
+  refresh through the existing connection lock, bearer fail-closed admission,
+  and one CredentialResolver attempt per run step without adding a second
+  provider/adapter owner.
+- Read: ProviderAuthManager lease/refresh path, model factory/builder, Core run
+  loop, public Provider Edge, and A25-A28 regressions.
+- Tests: Host provider/model 25/25, broader routed Host 110/110, Core 688/688,
+  SDK/CLI/TUI routed checks, schema/typechecks, both project-map drift gates,
+  and the full `npm run release:check` passed.
+
+- Status: Verified
+- Date: 2026-08-09
+- Scope: P7.0 exposes existing multi-connection state through exact-id CLI
+  selection and a TUI connection switcher. Trusted-local management inventory
+  remains distinct from workspace permission, so disconnect is non-destructive
+  without orphaning the retained credential. Default/remote catalogs remain
+  grant-filtered, permanent removal stays explicit, and no second owner is added.
+- Read: ProviderAuthManager, Host transport authority, existing Protocol/SDK
+  methods, CLI provider management, TUI connect/layer/controller flow, and
+  public provider docs.
+- Tests: focused Host manager/protocol, CLI, and TUI disconnect/reselect/remove
+  regressions passed; the full release gate passed with Host 619/619, CLI
+  177/177, TUI 560/560, Core 687/687, 16/16 regressions, production audit, and
+  both install smokes.
 
 - Status: Verified
 - Date: 2026-08-09

@@ -9,6 +9,18 @@ MCP, agents, cron, shell/task tools, and capability inspection.
 
 - Status: Read-only
 - Date: 2026-08-09
+- Scope: P7.0 connection inventory, selection, and non-destructive disconnect
+  remain local pre-run provider controls. Stored-but-disconnected inventory is
+  available only when Host has already granted the non-remote client
+  `provider_connection.manage`; this adds no capability loader, model tool
+  authority, or inspection shape.
+- Read: CLI/TUI connection management, Host transport authority/provider owner,
+  and capability preparation maps.
+- Tests: focused local/remote protocol and CLI/TUI checks plus the full release
+  gate passed.
+
+- Status: Read-only
+- Date: 2026-08-09
 - Scope: P6.4 catalog refresh, model policy, credential migration, and picker
   preferences were reviewed against capability admission. They do not add a
   capability loader, tool authority, or inspection shape.

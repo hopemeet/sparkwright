@@ -67,6 +67,7 @@ const MAX_SECRET_BYTES = 64 * 1024;
 const REVISION_POLL_MS = 250;
 const DEFAULT_OAUTH_ATTEMPT_TTL_MS = 10 * 60 * 1_000;
 const OAUTH_TERMINAL_RETENTION_MS = 60 * 1_000;
+const OAUTH_REFRESH_WINDOW_MS = 5 * 60 * 1_000;
 const OAUTH_CREDENTIAL_PREFIX = "sparkwright.oauth.v1:";
 
 interface LegacyProviderAuthStateRecord {
@@ -166,8 +167,19 @@ interface AmbientCredential {
   sourceLabel: string;
 }
 
+export type ProviderRuntimeCredential =
+  | { kind: "api_key"; value: string }
+  | {
+      kind: "bearer";
+      value: string;
+      authRealm: string;
+      expiresAt?: string;
+      accountSlot?: string;
+      tenant?: string;
+    };
+
 export interface ProviderCredentialLease {
-  apiKey: string;
+  credential: ProviderRuntimeCredential;
   profile: ProviderCredentialProfileSummary;
   connection?: ProviderConnectionSummary;
 }
@@ -198,6 +210,8 @@ export interface ProviderAuthContext {
   env?: Record<string, string | undefined>;
   includeProjectConfig?: boolean;
   projection?: ProviderCatalogProjection;
+  /** Include stored connections that this workspace can manage but has not granted. */
+  connectionVisibility?: "granted" | "managed";
 }
 
 export interface ProviderAuthAttemptContext extends ProviderAuthContext {
@@ -338,6 +352,7 @@ export class ProviderAuthManager {
         providerId,
         workspaceId: loaded.workspaceId,
         expectedBinding: binding,
+        visibility: context.connectionVisibility ?? "granted",
       });
       if (ambient && binding) {
         connectionSummaries.push(
@@ -1107,11 +1122,11 @@ export class ProviderAuthManager {
         message: `Provider "${parsed.providerId}" has no valid endpoint binding.`,
       };
     }
-    const state = await this.readState();
+    let state = await this.readState();
     const selectedConnectionId =
       state.selections[selectionKey(context.workspaceId, parsed.providerId)];
     if (selectedConnectionId) {
-      const connection = state.connections[selectedConnectionId];
+      let connection = state.connections[selectedConnectionId];
       if (!connection) {
         return {
           ok: false,
@@ -1148,17 +1163,69 @@ export class ProviderAuthManager {
           message: `Selected provider connection "${connection.id}" is ${connection.status}; no ambient credential fallback was attempted.`,
         };
       }
-      const storedCredential = await this.getCredentialStore().get(
-        connection.id,
-      );
+      const credentialStore = this.getCredentialStore();
+      let storedCredential = await credentialStore.get(connection.id);
       if (!storedCredential) {
         return {
           ok: false,
           message: `Selected provider connection "${connection.id}" has no stored credential; no ambient credential fallback was attempted.`,
         };
       }
-      const oauthCredential = decodeOAuthCredential(storedCredential);
-      const apiKey = oauthCredential?.accessToken ?? storedCredential;
+      let oauthCredential = decodeOAuthCredential(storedCredential);
+      if (
+        storedCredential.startsWith(OAUTH_CREDENTIAL_PREFIX) &&
+        !oauthCredential
+      ) {
+        return {
+          ok: false,
+          message: `Selected provider connection "${connection.id}" contains an invalid OAuth credential; no ambient credential fallback was attempted.`,
+        };
+      }
+      if (
+        oauthCredential &&
+        shouldRefreshOAuthCredential(oauthCredential, this.now())
+      ) {
+        const refreshed = await this.refreshOAuthConnection({
+          stored: connection,
+          expectedBinding: selectedBinding,
+          workspaceId: context.workspaceId,
+        });
+        if (!refreshed.ok) return refreshed;
+        state = await this.readState();
+        const refreshedConnection = state.connections[selectedConnectionId];
+        if (
+          !refreshedConnection ||
+          !sameBinding(refreshedConnection.binding, selectedBinding) ||
+          !hasConnectionGrant(
+            state,
+            refreshedConnection.id,
+            context.workspaceId,
+          ) ||
+          !isUsableConnectionStatus(refreshedConnection.status)
+        ) {
+          return {
+            ok: false,
+            message: `Selected provider connection "${selectedConnectionId}" could not be resolved after OAuth refresh; no ambient credential fallback was attempted.`,
+          };
+        }
+        connection = refreshedConnection;
+        storedCredential = await credentialStore.get(connection.id);
+        oauthCredential = storedCredential
+          ? decodeOAuthCredential(storedCredential)
+          : undefined;
+        if (!storedCredential || !oauthCredential) {
+          return {
+            ok: false,
+            message: `Selected provider connection "${connection.id}" has no valid OAuth credential after refresh; no ambient credential fallback was attempted.`,
+          };
+        }
+      }
+      const runtimeCredential = providerRuntimeCredential({
+        secret: storedCredential,
+        oauthCredential,
+        binding: connection.binding,
+      });
+      if (!runtimeCredential.ok) return runtimeCredential;
       const summary = storedConnectionSummary({
         connection,
         state,
@@ -1171,7 +1238,7 @@ export class ProviderAuthManager {
           selection,
           providerConfig,
           lease: {
-            apiKey,
+            credential: runtimeCredential.credential,
             connection: summary,
             profile: storedProfileSummary(connection, connection.status),
           },
@@ -1215,7 +1282,7 @@ export class ProviderAuthManager {
         selection,
         providerConfig,
         lease: {
-          apiKey: ambient.apiKey,
+          credential: { kind: "api_key", value: ambient.apiKey },
           profile: ambientProfileSummary({
             profileId,
             providerId: parsed.providerId,
@@ -1554,12 +1621,14 @@ export class ProviderAuthManager {
     providerId: string;
     workspaceId: string;
     expectedBinding: ProviderConnectionBinding | undefined;
+    visibility: "granted" | "managed";
   }): ProviderConnectionSummary[] {
     return Object.values(input.state.connections)
       .filter(
         (connection) =>
           connection.binding.providerId === input.providerId &&
-          hasConnectionGrant(input.state, connection.id, input.workspaceId),
+          (input.visibility === "managed" ||
+            hasConnectionGrant(input.state, connection.id, input.workspaceId)),
       )
       .map((connection) =>
         storedConnectionSummary({
@@ -2557,11 +2626,6 @@ function storedConnectionSummary(input: {
   const bindingMatches =
     input.expectedBinding !== undefined &&
     sameEndpointBinding(input.connection.binding, input.expectedBinding);
-  const granted = hasConnectionGrant(
-    input.state,
-    input.connection.id,
-    input.workspaceId,
-  );
   const grantScope = input.state.grants.find(
     (grant) =>
       grant.connectionId === input.connection.id &&
@@ -2570,8 +2634,7 @@ function storedConnectionSummary(input: {
   return {
     id: input.connection.id,
     providerId: input.connection.binding.providerId,
-    status:
-      bindingMatches && granted ? input.connection.status : ("failed" as const),
+    status: bindingMatches ? input.connection.status : ("failed" as const),
     source: "stored",
     sourceLabel: `stored:${input.connection.id}`,
     binding: publicBinding(input.connection.binding),
@@ -2921,6 +2984,77 @@ function decodeOAuthCredential(
   } catch {
     return undefined;
   }
+}
+
+function shouldRefreshOAuthCredential(
+  credential: ProviderOAuthCredential,
+  now: Date,
+): boolean {
+  if (!credential.expiresAt) return false;
+  return (
+    Date.parse(credential.expiresAt) <= now.getTime() + OAUTH_REFRESH_WINDOW_MS
+  );
+}
+
+function providerRuntimeCredential(input: {
+  secret: string;
+  oauthCredential: ProviderOAuthCredential | undefined;
+  binding: ProviderConnectionBinding;
+}):
+  | { ok: true; credential: ProviderRuntimeCredential }
+  | { ok: false; message: string } {
+  if (!input.oauthCredential) {
+    return {
+      ok: true,
+      credential: { kind: "api_key", value: input.secret },
+    };
+  }
+  const credentialRealm = input.oauthCredential.authRealm;
+  if (credentialRealm && credentialRealm !== input.binding.authRealm) {
+    return {
+      ok: false,
+      message:
+        "OAuth credential realm does not match its code-owned connection binding.",
+    };
+  }
+  const tokenType = input.oauthCredential.tokenType?.toLowerCase();
+  if (tokenType === "api_key") {
+    return {
+      ok: true,
+      credential: {
+        kind: "api_key",
+        value: input.oauthCredential.accessToken,
+      },
+    };
+  }
+  if (tokenType !== undefined && tokenType !== "bearer") {
+    return {
+      ok: false,
+      message: `OAuth credential token type "${tokenType}" is unsupported.`,
+    };
+  }
+  if (!input.binding.authRealm) {
+    return {
+      ok: false,
+      message:
+        "OAuth bearer credential has no code-owned authentication realm.",
+    };
+  }
+  return {
+    ok: true,
+    credential: {
+      kind: "bearer",
+      value: input.oauthCredential.accessToken,
+      authRealm: input.binding.authRealm,
+      ...(input.oauthCredential.expiresAt
+        ? { expiresAt: input.oauthCredential.expiresAt }
+        : {}),
+      ...(input.binding.accountSlot
+        ? { accountSlot: input.binding.accountSlot }
+        : {}),
+      ...(input.binding.tenant ? { tenant: input.binding.tenant } : {}),
+    },
+  };
 }
 
 function validateOAuthCredential(

@@ -11,6 +11,14 @@ See [workspace-writes.md](workspace-writes.md) and [../../modules/coding-tools.m
 
 - Status: Read-only
 - Date: 2026-08-09
+- Scope: P7.0 connection management uses Host methods and credential stores; it
+  adds no shell command, process launch, sandbox, or approval path.
+- Read: provider connection dispatch and shell execution boundary.
+- Tests: focused provider local/remote authority checks passed; shell contracts
+  are unchanged. The full release gate passed.
+
+- Status: Read-only
+- Date: 2026-08-09
 - Scope: P6.4 catalog network I/O is a bounded Host fetch and config migration
   uses atomic file publication; neither routes through or changes shell policy.
 - Read: catalog/auth/config file owners and shell execution boundary.

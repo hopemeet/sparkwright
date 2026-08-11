@@ -11,6 +11,14 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 
 - Status: Read-only
 - Date: 2026-08-09
+- Scope: Switching a provider connection affects future model resolution only;
+  it does not change resume records, replay inputs, or durability guarantees.
+- Read: provider connection state and resume/replay boundary.
+- Tests: focused connection checks and the full release gate passed; resume
+  contracts are unchanged.
+
+- Status: Read-only
+- Date: 2026-08-09
 - Scope: Favorite/Recent state affects picker ordering only and catalog refresh
   affects future model resolution; neither changes resume or replay records.
 - Read: TUI preference owner, Host catalog owner, and resume path.

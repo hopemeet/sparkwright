@@ -8,6 +8,28 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-10
+- Scope: CLI credential input and provider commands are unchanged. Interactive
+  and stdin submissions still cross the Host secret boundary; the Host-owned
+  macOS Keychain writer now uses a private prompt PTY.
+- Read: CLI provider input/handler, Host secret submission, and removal path.
+- Tests: focused Host credential/provider checks and exact disposable
+  connection removal passed; CLI 177/177 and the full release gate passed with
+  no CLI contract change.
+
+- Status: Verified
+- Date: 2026-08-09
+- Scope: P7.0 makes the existing multi-connection state operable from the CLI.
+  `provider list` inventories opaque, non-secret connection ids and
+  `provider select <connection-id>` switches by exact id. Disconnect remains
+  non-destructive and leaves the entry labeled `disconnected`; exact-id select
+  or remove remains available without requiring the secret again.
+- Read: provider parser/handler/help, Host connection owner, Protocol/SDK
+  forwarding, and focused CLI connection tests.
+- Tests: focused inventory/select/disconnect/reselect/remove regression, CLI
+  177/177, and the full release gate passed.
+
 - Status: Verified
 - Date: 2026-08-09
 - Scope: P6.4 adds `provider catalog refresh [provider]` and explicit

@@ -740,6 +740,27 @@ export class RunController {
     }
   }
 
+  async manageProviderConnection(
+    action: "select" | "disconnect",
+    connectionId: string,
+  ): Promise<ProviderConnectionSummary | null> {
+    try {
+      const client = await this.ensureClient();
+      const result =
+        action === "select"
+          ? await client.selectProviderConnection({ connectionId })
+          : await client.disconnectProviderConnection({ connectionId });
+      return result.connection;
+    } catch (err) {
+      this.reportFailure(
+        "ActionFailure",
+        `provider connection ${action} failed`,
+        err,
+      );
+      return null;
+    }
+  }
+
   async updateProviderAuth(
     action: "login" | "logout" | "refresh",
     profileId: string,

@@ -373,6 +373,7 @@ export class HostRuntime {
 
   async listProviders(
     input: ProviderListRequestPayload = {},
+    options: { connectionVisibility?: "granted" | "managed" } = {},
   ): Promise<
     | { ok: true; catalog: ProviderCatalogSnapshot }
     | { ok: false; error: ProtocolError }
@@ -388,6 +389,9 @@ export class HostRuntime {
           workspaceRoot: this.opts.workspaceRoot,
           ...(input.model ? { model: input.model } : {}),
           ...(input.projection ? { projection: input.projection } : {}),
+          ...(options.connectionVisibility
+            ? { connectionVisibility: options.connectionVisibility }
+            : {}),
           includeProjectConfig,
         }),
       };

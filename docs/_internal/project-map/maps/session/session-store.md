@@ -11,6 +11,14 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 
 - Status: Read-only
 - Date: 2026-08-09
+- Scope: P7.0 reuses separate provider-auth state. Session-store schemas,
+  append ownership, recovery, and consistency checks are unchanged.
+- Read: provider connection state and session-store boundary.
+- Tests: focused connection checks and the full release gate passed; session
+  contracts are unchanged.
+
+- Status: Read-only
+- Date: 2026-08-09
 - Scope: P6.4 adds separate XDG catalog and TUI preference state; session-store
   schemas, append ownership, and recovery are unchanged.
 - Read: new provider/preference stores and session-store boundary.

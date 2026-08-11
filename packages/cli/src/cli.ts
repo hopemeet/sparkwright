@@ -1287,6 +1287,7 @@ function parseArgs(
     command === "provider" &&
     subcommand !== "list" &&
     subcommand !== "connect" &&
+    subcommand !== "select" &&
     subcommand !== "disconnect" &&
     subcommand !== "login" &&
     subcommand !== "logout" &&
@@ -1468,6 +1469,7 @@ async function handleProviderCommand(
   if (
     subcommand !== "list" &&
     subcommand !== "connect" &&
+    subcommand !== "select" &&
     subcommand !== "disconnect" &&
     subcommand !== "login" &&
     subcommand !== "logout" &&
@@ -1602,12 +1604,16 @@ async function handleProviderCommand(
       ...(parsed.modelName ? { model: parsed.modelName } : {}),
       includeProjectConfig,
       ...(subcommand === "login" ? {} : { projection: "all" as const }),
+      connectionVisibility: "managed",
     });
     if (subcommand === "list") {
       const visibleCatalog = {
         ...catalog,
         providers: catalog.providers.filter(
-          (provider) => provider.configured || provider.connected,
+          (provider) =>
+            provider.configured ||
+            provider.connected ||
+            (provider.connections?.length ?? 0) > 0,
         ),
       };
       if (parsed.format === "json") {
@@ -1623,6 +1629,15 @@ async function handleProviderCommand(
             io.stdout,
             `${provider.id} · ${provider.credential.status}${source}`,
           );
+          for (const connection of provider.connections ?? []) {
+            const status = connection.grantScope
+              ? connection.status
+              : "disconnected";
+            writeLine(
+              io.stdout,
+              `  ${connection.selected ? "*" : "-"} connection ${connection.id} · ${connection.binding.authMethodId} · ${connection.source} · ${status}`,
+            );
+          }
           for (const model of provider.models) {
             writeLine(
               io.stdout,
@@ -1844,8 +1859,18 @@ async function handleProviderCommand(
       return { exitCode: 0 };
     }
 
+    const exactConnection = provider.connections?.find(
+      (candidate) => candidate.id === providerRef,
+    );
+    if (subcommand === "select" && !exactConnection) {
+      writeLine(
+        io.stderr,
+        `Provider selection requires an exact connection id. Run "sparkwright provider list" to inspect non-secret connection ids.`,
+      );
+      return { exitCode: 1 };
+    }
     const connection =
-      provider.connections?.find((candidate) => candidate.id === providerRef) ??
+      exactConnection ??
       provider.connections?.find((candidate) => candidate.selected) ??
       provider.connections?.[0];
     if (!connection) {
@@ -4868,7 +4893,7 @@ function usage(_env: Record<string, string | undefined>): string {
     "       sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--access-mode read-only|ask|accept-edits|bypass] [--trace-level standard|debug] [--session-id id] [--no-alt-screen]",
     "       sparkwright acp [--workspace path] [--session-root path] [--model provider/model] [--access-mode read-only|ask|accept-edits|bypass] [--trace-level standard|debug]",
     "       sparkwright capabilities inspect [--workspace path] [--model provider/model] [--resolve-mcp] [--format json|text]",
-    "       sparkwright provider list|connect|disconnect|login|logout|remove|refresh [provider] [--api-key-stdin] [--workspace path] [--format json|text]",
+    "       sparkwright provider list|connect|select|disconnect|login|logout|remove|refresh [provider] [--api-key-stdin] [--workspace path] [--format json|text]",
     "       sparkwright provider catalog refresh [provider] [--workspace path] [--format json|text]",
     "       sparkwright provider migrate <provider> [--remove-config] [--workspace path] [--format json|text]",
     "       sparkwright trust status|grant|revoke [--workspace path] [--scope scope] [--format json|text]",
@@ -4901,6 +4926,7 @@ function providerUsage(): string {
   return [
     "Usage: sparkwright provider list [--workspace path] [--format json|text]",
     "       sparkwright provider connect <provider> [--auth-method id] [--api-key-stdin] [--workspace path]",
+    "       sparkwright provider select <connection> [--workspace path]",
     "       sparkwright provider disconnect <provider-or-connection> [--workspace path]",
     "       sparkwright provider login <provider> [--workspace path]",
     "       sparkwright provider logout <provider-or-connection> [--workspace path]",

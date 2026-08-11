@@ -606,7 +606,13 @@ async function handleRequest(
       return false;
     }
     case "provider.list": {
-      const r = await runtime.listProviders(req.payload);
+      const r = await runtime.listProviders(req.payload, {
+        connectionVisibility:
+          transport !== "remote" &&
+          hasAuthority(authorities, "provider_connection.manage")
+            ? "managed"
+            : "granted",
+      });
       if (r.ok) {
         respondOk(
           conn,

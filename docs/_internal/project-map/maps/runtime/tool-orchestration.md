@@ -11,6 +11,14 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 
 - Status: Read-only
 - Date: 2026-08-09
+- Scope: P7.0 connection inventory, selection, and disconnect add no model tool,
+  scheduler, extension, approval, or result-normalization path.
+- Read: CLI/TUI connection controls and tool orchestration boundary.
+- Tests: focused connection checks and the full release gate passed; tool
+  contracts are unchanged.
+
+- Status: Read-only
+- Date: 2026-08-09
 - Scope: P6.4 provider catalog, migration, and picker changes add no tool,
   scheduler, extension, or result-normalization path.
 - Read: Host provider/config owners and tool orchestration boundary.

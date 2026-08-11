@@ -11,6 +11,14 @@ See [raw-trace.md](raw-trace.md) for source data and [export-diagnostics.md](exp
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-08-09
+- Scope: P7.0 connection switching does not change raw trace events or summary,
+  timeline, report, verify, and run-assessment derivation.
+- Read: provider connection controls and trace diagnostic boundary.
+- Tests: focused connection checks and the full release gate passed; diagnostic
+  contracts are unchanged.
+
+- Status: Read-only
 - Date: 2026-08-08
 - Scope: Project Trust adds admission diagnostics but does not change trace
   summary, timeline, report, verify, or run-assessment derivation. These views

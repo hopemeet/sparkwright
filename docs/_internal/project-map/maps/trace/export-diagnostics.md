@@ -10,6 +10,14 @@ canonical trace or a session consistency report.
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-08-09
+- Scope: P7.0 adds local connection-management presentation only. Transcript
+  export and canonical trace diagnostics remain unchanged and secret-free.
+- Read: CLI/TUI connection output and export/diagnostic boundary.
+- Tests: focused connection checks and the full release gate passed; export
+  contracts are unchanged.
+
+- Status: Read-only
 - Date: 2026-08-08
 - Scope: TUI adds a Project Trust dialog and command admission check.
   Transcript export, raw trace diagnostics, and session-consistency ownership

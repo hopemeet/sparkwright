@@ -98,11 +98,18 @@ printf '%s\n' "$OPENAI_API_KEY" | \
   sparkwright provider connect openai --api-key-stdin --workspace .
 ```
 
-In the TUI, run `/connect`, choose a provider and method, enter the masked API
-key or complete the displayed browser/device/code login, then choose a model.
-The connection is shared with CLI/Host state, so
-`/model` immediately sees models from connected providers. No YAML model list
-or API-key field is required.
+In the TUI, run `/connect`. Existing connections are listed before the login
+methods: press Enter to select one, press `d` to disconnect it without deleting
+the stored credential, or choose `+ add connection` to enter the masked API key
+or browser/device/code login flow. After selection or login, choose a model.
+The connection is shared with CLI/Host state, so `/model` immediately sees
+models from connected providers. No YAML model list or API-key field is
+required.
+
+On macOS, Keychain password handling is isolated from the product terminal.
+`/connect` may briefly show `working…`, then should advance to model selection;
+it should not print separate `password data` or `retype password` prompts. If
+those prompts appear, cancel that run instead of typing the API key into them.
 
 For a browser OAuth login that does not require a provider YAML entry:
 
@@ -141,6 +148,7 @@ printing keys:
 ```bash
 sparkwright provider list --workspace .
 sparkwright provider connect openai --workspace .
+sparkwright provider select <connection-id> --workspace .
 sparkwright provider disconnect openai --workspace .
 sparkwright provider login openai --workspace .
 sparkwright provider refresh openai --workspace .
@@ -150,8 +158,12 @@ sparkwright provider catalog refresh openrouter --workspace .
 sparkwright provider migrate openai --remove-config --workspace .
 ```
 
-`disconnect` removes the workspace selection/grant; `remove` also deletes a
-stored credential. For environment/config sources, disconnect creates a local
+`provider list` exposes opaque connection ids and non-secret binding/status
+metadata. `select` requires one of those exact ids. `disconnect` removes the
+workspace selection/grant but preserves a stored credential and keeps its
+non-secret entry visible as `disconnected`; it can be selected again without
+re-entering the secret. `remove` also deletes it. For environment/config
+sources, disconnect creates a local
 suppression and does not claim to delete the external source. Legacy
 `login|refresh|logout` remains available for those sources. API keys are never
 accepted in argv. Pending OAuth attempts expire, can be cancelled with Escape

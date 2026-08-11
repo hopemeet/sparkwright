@@ -11,6 +11,14 @@ See [../../modules/mcp-adapter.md](../../modules/mcp-adapter.md).
 
 - Status: Read-only
 - Date: 2026-08-09
+- Scope: P7.0 trusted-local connection inventory does not change MCP discovery,
+  transport, schema loading, or execution authority.
+- Read: Host provider dispatch and MCP preparation boundary.
+- Tests: focused Host connection protocol checks passed; MCP contracts are
+  unchanged. The full release gate passed.
+
+- Status: Read-only
+- Date: 2026-08-09
 - Scope: P6.4 provider catalog and local login control paths do not change MCP
   discovery, schema loading, transport, or tool execution authority.
 - Read: Host provider dispatch and MCP capability boundary.

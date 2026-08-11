@@ -162,7 +162,7 @@ export async function createModel(input: ModelFactoryInput): Promise<
     ...(credential?.ok
       ? {
           credential: {
-            apiKey: credential.lease.apiKey,
+            runtime: credential.lease.credential,
             source:
               credential.lease.profile.sourceLabel ?? "credential_profile",
             exactEndpointBinding: credential.lease.connection !== undefined,
@@ -172,7 +172,10 @@ export async function createModel(input: ModelFactoryInput): Promise<
   });
   if (!built.ok) return built;
   const managed =
-    input.waitForCredentialRefresh && input.providerAuth && credential?.ok
+    input.providerAuth &&
+    credential?.ok &&
+    (input.waitForCredentialRefresh ||
+      credential.lease.credential.kind === "bearer")
       ? createManagedConfiguredAdapter({
           adapter: built.adapter,
           lease: credential.lease,
@@ -181,6 +184,7 @@ export async function createModel(input: ModelFactoryInput): Promise<
           workspaceRoot: input.workspaceRoot,
           env,
           includeProjectConfig: input.includeProjectConfig !== false,
+          waitForExternalRefresh: input.waitForCredentialRefresh === true,
         })
       : undefined;
   return {
@@ -208,9 +212,14 @@ function createManagedConfiguredAdapter(input: {
   workspaceRoot: string;
   env: Record<string, string | undefined>;
   includeProjectConfig: boolean;
+  waitForExternalRefresh: boolean;
 }): { adapter: ModelAdapter; credentialResolver: CredentialResolver } {
   let delegate = input.adapter;
   let generation = input.lease.profile.generation;
+  let runtimeCredential = input.lease.credential;
+  let connectionId = input.lease.connection?.id;
+  let profileId = input.lease.profile.id;
+  let credentialSource = input.lease.profile.source;
   const adapter: ModelAdapter = {
     get id() {
       return delegate.id;
@@ -234,21 +243,14 @@ function createManagedConfiguredAdapter(input: {
     };
   }
 
-  const credentialResolver: CredentialResolver = async (request) => {
-    const changed = await input.providerAuth.waitForGenerationChange({
-      profileId: input.lease.profile.id,
-      generation,
-      signal: request.signal,
-    });
-    if (!changed) return { refreshed: false };
-
+  const rebuild = async () => {
     const resolved = await input.providerAuth.resolveModelConnection({
       workspaceRoot: input.workspaceRoot,
       modelRef: input.modelRef,
       env: input.env,
       includeProjectConfig: input.includeProjectConfig,
     });
-    if (!resolved.ok) return { refreshed: false };
+    if (!resolved.ok) return false;
     const selection = resolved.resolved.selection;
     const credential = resolved.resolved.lease;
     const rebuilt = await buildConfiguredAdapter({
@@ -256,20 +258,60 @@ function createManagedConfiguredAdapter(input: {
       env: input.env,
       providerConfig: resolved.resolved.providerConfig,
       credential: {
-        apiKey: credential.apiKey,
+        runtime: credential.credential,
         source: credential.profile.sourceLabel ?? "credential_profile",
         exactEndpointBinding: credential.connection !== undefined,
       },
     });
-    if (!rebuilt.ok) return { refreshed: false };
+    if (!rebuilt.ok) return false;
     delegate = rebuilt.adapter;
     generation = credential.profile.generation;
+    runtimeCredential = credential.credential;
+    connectionId = credential.connection?.id;
+    profileId = credential.profile.id;
+    credentialSource = credential.profile.source;
+    return true;
+  };
+
+  const credentialResolver: CredentialResolver = async (request) => {
+    if (
+      request.category === "auth" &&
+      runtimeCredential.kind === "bearer" &&
+      connectionId
+    ) {
+      const refreshed = await input.providerAuth.manageConnection({
+        action: "refresh",
+        connectionId,
+        context: {
+          workspaceRoot: input.workspaceRoot,
+          env: input.env,
+          includeProjectConfig: input.includeProjectConfig,
+        },
+      });
+      if (!refreshed.ok || !(await rebuild())) return { refreshed: false };
+      return {
+        refreshed: true,
+        metadata: {
+          credentialProfileId: connectionId,
+          credentialGeneration: generation,
+          credentialSource: "stored",
+          method: "oauth_refresh",
+        },
+      };
+    }
+    if (!input.waitForExternalRefresh) return { refreshed: false };
+    const changed = await input.providerAuth.waitForGenerationChange({
+      profileId,
+      generation,
+      signal: request.signal,
+    });
+    if (!changed || !(await rebuild())) return { refreshed: false };
     return {
       refreshed: true,
       metadata: {
-        credentialProfileId: credential.profile.id,
+        credentialProfileId: profileId,
         credentialGeneration: generation,
-        credentialSource: credential.profile.source,
+        credentialSource,
       },
     };
   };

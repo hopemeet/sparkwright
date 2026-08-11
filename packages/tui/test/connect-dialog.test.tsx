@@ -24,6 +24,8 @@ describe("ConnectDialog", () => {
         loading={false}
         onLoadMethods={async () => authMethods}
         onSubmitSecret={onSubmitSecret}
+        onSelectConnection={async () => connectedCatalog}
+        onDisconnectConnection={async () => disconnectedCatalog}
         onBeginOAuth={async () => null}
         onOAuthStatus={async () => null}
         onCompleteOAuth={async () => null}
@@ -74,6 +76,8 @@ describe("ConnectDialog", () => {
         loading={false}
         onLoadMethods={async () => oauthMethods}
         onSubmitSecret={async () => null}
+        onSelectConnection={async () => oauthConnectedCatalog}
+        onDisconnectConnection={async () => oauthDisconnectedCatalog}
         onBeginOAuth={async () => pendingOAuthAttempt}
         onOAuthStatus={onOAuthStatus}
         onCompleteOAuth={async () => null}
@@ -102,6 +106,59 @@ describe("ConnectDialog", () => {
     stdin.destroy();
   });
 
+  it("selects and non-destructively disconnects an existing connection", async () => {
+    const { stdin, stdout, text } = interactiveIo();
+    const onSelectConnection = vi.fn(async () => selectedAlternateCatalog);
+    const onDisconnectConnection = vi.fn(
+      async () => disconnectedAlternateCatalog,
+    );
+    const app = render(
+      <ConnectDialog
+        catalog={multiConnectionCatalog}
+        loading={false}
+        onLoadMethods={async () => authMethods}
+        onSubmitSecret={async () => null}
+        onSelectConnection={onSelectConnection}
+        onDisconnectConnection={onDisconnectConnection}
+        onBeginOAuth={async () => null}
+        onOAuthStatus={async () => null}
+        onCompleteOAuth={async () => null}
+        onCancelOAuth={async () => {}}
+        onRefresh={async () => multiConnectionCatalog}
+        onCommitModel={() => {}}
+        onCancel={() => {}}
+      />,
+      { stdout, stdin, patchConsole: false, exitOnCtrlC: false },
+    );
+
+    await settle();
+    expect(text()).toContain("2 connections");
+    stdin.write("\r");
+    await settle();
+    expect(text()).toContain("Disconnect keeps stored credentials");
+
+    stdin.write("\r");
+    await settle(4);
+    expect(onSelectConnection).toHaveBeenCalledWith("connection_alternate");
+    expect(text()).toContain("Connected. Choose the model for the next run.");
+
+    stdin.write("\x1b");
+    await settle();
+    stdin.write("d");
+    await settle(4);
+    expect(onDisconnectConnection).toHaveBeenCalledWith("connection_alternate");
+    expect(text()).toContain("disconnected");
+    expect(text()).toContain("+ add connection");
+
+    stdin.write("\r");
+    await settle(4);
+    expect(onSelectConnection).toHaveBeenCalledTimes(2);
+    expect(onSelectConnection).toHaveBeenLastCalledWith("connection_alternate");
+
+    app.unmount();
+    stdin.destroy();
+  });
+
   it("refreshes the Host catalog from the provider stage", async () => {
     const { stdin, stdout } = interactiveIo();
     const onRefresh = vi.fn(async () => disconnectedCatalog);
@@ -111,6 +168,8 @@ describe("ConnectDialog", () => {
         loading={false}
         onLoadMethods={async () => authMethods}
         onSubmitSecret={async () => null}
+        onSelectConnection={async () => connectedCatalog}
+        onDisconnectConnection={async () => disconnectedCatalog}
         onBeginOAuth={async () => null}
         onOAuthStatus={async () => null}
         onCompleteOAuth={async () => null}
@@ -154,6 +213,7 @@ const connection: ProviderConnectionSummary = {
   providerId: "openai",
   status: "unverified",
   source: "stored",
+  sourceLabel: "stored:connection_test",
   binding: authMethods.binding,
   selected: true,
   grantScope: "workspace",
@@ -219,6 +279,59 @@ const connectedCatalog: ProviderCatalogSnapshot = {
         sourceLabel: "credential store",
         generation: 1,
       },
+    },
+  ],
+};
+
+const alternateConnection: ProviderConnectionSummary = {
+  ...connection,
+  id: "connection_alternate",
+  sourceLabel: "stored:connection_alternate",
+  selected: false,
+  generation: 2,
+};
+
+const multiConnectionCatalog: ProviderCatalogSnapshot = {
+  ...connectedCatalog,
+  revision: 2,
+  providers: [
+    {
+      ...connectedCatalog.providers[0]!,
+      connections: [alternateConnection, connection],
+    },
+  ],
+};
+
+const selectedAlternateCatalog: ProviderCatalogSnapshot = {
+  ...multiConnectionCatalog,
+  revision: 3,
+  providers: [
+    {
+      ...multiConnectionCatalog.providers[0]!,
+      connections: [
+        { ...alternateConnection, selected: true },
+        { ...connection, selected: false },
+      ],
+    },
+  ],
+};
+
+const disconnectedAlternateCatalog: ProviderCatalogSnapshot = {
+  ...selectedAlternateCatalog,
+  revision: 4,
+  providers: [
+    {
+      ...selectedAlternateCatalog.providers[0]!,
+      connected: false,
+      available: false,
+      connections: [
+        {
+          ...alternateConnection,
+          selected: false,
+          grantScope: undefined,
+        },
+        { ...connection, selected: false },
+      ],
     },
   ],
 };
