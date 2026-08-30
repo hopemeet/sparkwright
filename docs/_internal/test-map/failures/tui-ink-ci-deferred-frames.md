@@ -5,13 +5,13 @@
 - Pattern ID: `tui-ink-ci-deferred-frames`
 - Status: `fixed`
 - First seen: 2026-08-08
-- Last seen: 2026-08-08
-- Recorded count: 1
+- Last seen: 2026-08-30
+- Recorded count: 2
 
 | Cause                   | Count |
 | ----------------------- | ----: |
 | `product_bug`           |     0 |
-| `test_bug`              |     1 |
+| `test_bug`              |     2 |
 | `prompt_underspecified` |     0 |
 | `model_variance`        |     0 |
 | `environment`           |     0 |
@@ -29,9 +29,10 @@ or see only the last visible page instead of an earlier interaction frame.
 
 The tests treated accumulated `stdout.write()` calls as a stable history of
 every intermediate frame. Under `CI=true`, Ink may defer output until unmount
-and guarantee only the final frame. Two tests inspected writes before unmount;
-two others asserted both an intermediate detail/page and the later final view
-from one render instance.
+and guarantee only the final frame unless the test render opts into debug
+output. The first occurrence mixed intermediate and final frames. The second
+left interactive Connect and Project Trust tests on the deferred-output path,
+then one current-screen assertion still inspected accumulated history.
 
 ## Diagnostic Move
 
@@ -43,9 +44,12 @@ on multiple historical frames.
 ## Prevention
 
 - Unmount Ink test instances before reading the final captured frame.
+- Set `debug: true` on interactive harness renders that must inspect multiple
+  frames before unmount.
 - Use independent render instances when assertions need two distinct pages or
   interaction states.
-- Do not treat concatenated terminal writes as a semantic frame history.
+- Use the latest write for current-screen assertions; do not treat concatenated
+  terminal writes as semantic frame history.
 - Run interactive render regressions with `CI=true` before relying on the
   GitHub Actions matrix.
 
@@ -53,7 +57,9 @@ on multiple historical frames.
 
 The approval argument pager, InputBox reverse search/file suggestions, and
 Skills detail/back tests pass 29/29 with `CI=true` after final-frame ownership
-was made explicit. No product component changed.
+was made explicit. Connect and Project Trust dialog tests additionally pass
+14/14 with `CI=true` after enabling interactive writes and asserting the latest
+OAuth frame. No product component changed.
 
 ## Related
 

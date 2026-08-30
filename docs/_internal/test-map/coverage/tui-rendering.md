@@ -1,5 +1,10 @@
 # TUI Rendering Coverage
 
+- 2026-08-30 CI-parity coverage runs Connect and Project Trust interactive Ink
+  tests with `CI=true`. Their 14/14 focused cases opt into intermediate debug
+  writes, and current-screen assertions read only the latest frame. See
+  [tui-ink-ci-deferred-frames.md](../failures/tui-ink-ci-deferred-frames.md).
+
 - 2026-08-22 `/connect` model-stage coverage verifies an existing API connection
   can select a catalog row or type a provider-local model id. The nested
   `anthropic/claude-new` input becomes

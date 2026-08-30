@@ -39,7 +39,7 @@ describe("ConnectDialog", () => {
         onCommitModel={onCommitModel}
         onCancel={() => {}}
       />,
-      { stdout, stdin, patchConsole: false, exitOnCtrlC: false },
+      { stdout, stdin, debug: true, patchConsole: false, exitOnCtrlC: false },
     );
 
     await settle();
@@ -102,7 +102,7 @@ describe("ConnectDialog", () => {
         onCommitModel={onCommitModel}
         onCancel={() => {}}
       />,
-      { stdout, stdin, patchConsole: false, exitOnCtrlC: false },
+      { stdout, stdin, debug: true, patchConsole: false, exitOnCtrlC: false },
     );
 
     await settle();
@@ -146,7 +146,7 @@ describe("ConnectDialog", () => {
         onCommitModel={() => {}}
         onCancel={() => {}}
       />,
-      { stdout, stdin, patchConsole: false, exitOnCtrlC: false },
+      { stdout, stdin, debug: true, patchConsole: false, exitOnCtrlC: false },
     );
 
     await settle();
@@ -192,7 +192,7 @@ describe("ConnectDialog", () => {
         onCommitModel={() => {}}
         onCancel={() => {}}
       />,
-      { stdout, stdin, patchConsole: false, exitOnCtrlC: false },
+      { stdout, stdin, debug: true, patchConsole: false, exitOnCtrlC: false },
     );
 
     await settle();
@@ -237,7 +237,7 @@ describe("ConnectDialog", () => {
         onCommitModel={onCommitModel}
         onCancel={() => {}}
       />,
-      { stdout, stdin, patchConsole: false, exitOnCtrlC: false },
+      { stdout, stdin, debug: true, patchConsole: false, exitOnCtrlC: false },
     );
 
     await settle();
@@ -262,7 +262,7 @@ describe("ConnectDialog", () => {
   });
 
   it("shows browser OAuth progress and advances after Host completion", async () => {
-    const { stdin, stdout, text } = interactiveIo();
+    const { stdin, stdout, lastWrite } = interactiveIo();
     const onOAuthStatus = vi.fn(
       async (): Promise<ProviderAuthAttemptSummary> => completedOAuthAttempt,
     );
@@ -282,7 +282,7 @@ describe("ConnectDialog", () => {
         onCommitModel={() => {}}
         onCancel={() => {}}
       />,
-      { stdout, stdin, patchConsole: false, exitOnCtrlC: false },
+      { stdout, stdin, debug: true, patchConsole: false, exitOnCtrlC: false },
     );
 
     await settle();
@@ -293,14 +293,16 @@ describe("ConnectDialog", () => {
     expect(openExternalUrl).toHaveBeenCalledWith(
       "https://auth.example/authorize",
     );
-    expect(text()).toContain("Browser opened. Finish signing in");
-    expect(text()).not.toContain("https://auth.example/authorize");
-    expect(text()).toContain("waiting for authorization");
+    expect(lastWrite()).toContain("Browser opened. Finish signing in");
+    expect(lastWrite()).not.toContain("https://auth.example/authorize");
+    expect(lastWrite()).toContain("waiting for authorization");
 
     await settle(18);
     expect(onOAuthStatus).toHaveBeenCalledWith("oauth_test");
-    expect(text()).toContain("Connected. Choose the model for the next run.");
-    expect(text()).toContain("openrouter/openrouter/auto");
+    expect(lastWrite()).toContain(
+      "Connected. Choose the model for the next run.",
+    );
+    expect(lastWrite()).toContain("openrouter/openrouter/auto");
 
     app.unmount();
     stdin.destroy();
@@ -325,7 +327,7 @@ describe("ConnectDialog", () => {
         onCommitModel={() => {}}
         onCancel={() => {}}
       />,
-      { stdout, stdin, patchConsole: false, exitOnCtrlC: false },
+      { stdout, stdin, debug: true, patchConsole: false, exitOnCtrlC: false },
     );
 
     await settle();
@@ -361,7 +363,7 @@ describe("ConnectDialog", () => {
         onCommitModel={() => {}}
         onCancel={() => {}}
       />,
-      { stdout, stdin, patchConsole: false, exitOnCtrlC: false },
+      { stdout, stdin, debug: true, patchConsole: false, exitOnCtrlC: false },
     );
 
     await settle();
@@ -403,7 +405,7 @@ describe("ConnectDialog", () => {
         onCommitModel={() => {}}
         onCancel={() => {}}
       />,
-      { stdout, stdin, patchConsole: false, exitOnCtrlC: false },
+      { stdout, stdin, debug: true, patchConsole: false, exitOnCtrlC: false },
     );
 
     await settle();
@@ -452,7 +454,7 @@ describe("ConnectDialog", () => {
         onCommitModel={() => {}}
         onCancel={() => {}}
       />,
-      { stdout, stdin, patchConsole: false, exitOnCtrlC: false },
+      { stdout, stdin, debug: true, patchConsole: false, exitOnCtrlC: false },
     );
 
     await settle();
@@ -517,7 +519,7 @@ describe("ConnectDialog", () => {
         onCommitModel={() => {}}
         onCancel={() => {}}
       />,
-      { stdout, stdin, patchConsole: false, exitOnCtrlC: false },
+      { stdout, stdin, debug: true, patchConsole: false, exitOnCtrlC: false },
     );
 
     await settle();
@@ -582,7 +584,7 @@ describe("ConnectDialog", () => {
         onCommitModel={() => {}}
         onCancel={() => {}}
       />,
-      { stdout, stdin, patchConsole: false, exitOnCtrlC: false },
+      { stdout, stdin, debug: true, patchConsole: false, exitOnCtrlC: false },
     );
 
     await settle();

@@ -269,9 +269,10 @@ describe("ACP round trip", () => {
     const cwd = await mkdtemp(join(tmpdir(), "sparkwright-acp-mcp-"));
     isolateRuntimeEnv(cwd);
     await writeFile(join(cwd, "README.md"), "# Demo\n", "utf8");
-    await mkdir(join(cwd, ".sparkwright"), { recursive: true });
+    const userConfigDir = join(cwd, "xdg-config", "sparkwright");
+    await mkdir(userConfigDir, { recursive: true });
     await writeFile(
-      join(cwd, ".sparkwright", "config.json"),
+      join(userConfigDir, "config.json"),
       JSON.stringify({
         policy: {
           sandbox: {
@@ -320,9 +321,9 @@ describe("ACP round trip", () => {
         defaultWorkspaceRoot: cwd,
         defaultModel: "scripted",
         defaultTraceLevel: "debug",
-        // This fixture writes a workspace marker when the MCP process starts;
-        // opt into a write run so the test exercises ACP MCP injection rather
-        // than the read-only extension-process guard.
+        // The fixture writes a workspace marker when the MCP process starts.
+        // Its external SDK read grant lives in the isolated user config above
+        // because an untrusted project config cannot widen sandbox access.
         defaultAccessMode: "ask",
       }),
       ndJsonStream(agentToClient.writable, clientToAgent.readable),

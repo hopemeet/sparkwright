@@ -41,7 +41,7 @@ describe("ProjectTrustDialog", () => {
         onRevoke={() => {}}
         onClose={() => {}}
       />,
-      { stdout, stdin, patchConsole: false, exitOnCtrlC: false },
+      { stdout, stdin, debug: true, patchConsole: false, exitOnCtrlC: false },
     );
     await settle();
 
@@ -72,7 +72,7 @@ describe("ProjectTrustDialog", () => {
         onRevoke={onRevoke}
         onClose={() => {}}
       />,
-      { stdout, stdin, patchConsole: false, exitOnCtrlC: false },
+      { stdout, stdin, debug: true, patchConsole: false, exitOnCtrlC: false },
     );
     await settle();
 
