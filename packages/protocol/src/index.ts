@@ -939,12 +939,23 @@ export interface ProviderAuthActionRequestPayload {
 
 export interface ProviderAuthMethodsRequestPayload {
   providerId: string;
+  /**
+   * Explicit API endpoint to bind before credential entry. Omit for the
+   * provider's code-owned official endpoint.
+   */
+  endpoint?: string;
 }
 
 export interface ProviderAuthMethodsSnapshot {
   providerId: string;
   displayName?: string;
+  /** Exact binding requested by the client; official when endpoint is omitted. */
   binding: ProviderConnectionBindingSummary;
+  /**
+   * Effective config/environment binding, when it differs from the official
+   * binding. Presentation only; clients must submit its endpoint explicitly.
+   */
+  configuredBinding?: ProviderConnectionBindingSummary;
   methods: ProviderAuthMethodSummary[];
 }
 
@@ -973,6 +984,8 @@ export interface ProviderAuthCompleteRequestPayload {
 export interface ProviderSecretSubmitRequestPayload {
   providerId: string;
   methodId: string;
+  /** Exact endpoint confirmed before secret entry. Omit for official. */
+  endpoint?: string;
   /** Raw secret accepted only by the trusted-local dedicated request path. */
   secret: string;
   grantScope?: ProviderConnectionGrantScope;

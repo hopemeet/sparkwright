@@ -36,14 +36,24 @@ non-secret binding, grants, and source categories but never credential values.
 Stored credentials live behind the Host credential-store boundary; private
 config/environment keys remain compatibility sources. Connection and catalog
 metadata are separate mode-`0600` state under the XDG state directory.
+The catalog base is a bundled snapshot optionally replaced by a newer signed
+last-known-good artifact. Account-visible discovery is a separate overlay
+scoped by workspace and exact connection, so one account cannot replace
+another workspace's inventory. Remote catalog metadata cannot add provider
+packages, endpoints, auth methods, drivers, or adapter factories. Explicit
+refresh failures retain the active scoped overlay/LKG/bundled fallback and do
+not affect user-defined provider entries.
 On macOS, Host answers the system Keychain command's bounded password prompts
 on a private PTY so they never compete with CLI/TUI raw input; the secret is not
 placed in argv or environment values, and unexpected prompts fail closed.
 
 A provider may have multiple connections. Product surfaces select one by its
-exact opaque connection id and the Host revalidates the provider, driver, and
-endpoint binding before changing the workspace grant. Disconnecting clears the
-selection/grant but keeps a stored credential available for later reselection;
+exact opaque connection id and the Host revalidates the provider, driver,
+authentication method, and stored immutable endpoint before changing the
+workspace grant. Project `baseURL` cannot replace that selected endpoint; a
+different endpoint requires a different connection and never inherits the old
+secret. Disconnecting clears the selection/grant but keeps a stored credential
+available for later reselection;
 the trusted local management view keeps its opaque, non-secret entry visible
 while ordinary and remote catalogs remain grant-filtered. Permanent credential
 removal is a separate explicit action.

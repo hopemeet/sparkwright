@@ -140,6 +140,14 @@ may describe:
 
 It must not duplicate model lists, model resolution, or adapter creation.
 Remote catalog data cannot create or modify this descriptor.
+The shipped model inventory is generated during an explicit maintainer
+workflow; ordinary builds and startup consume the committed snapshot without
+network access. A signed global LKG and authenticated discovery overlays have
+separate persistence. Discovery scope includes workspace plus exact stored
+connection (or the ambient official binding), so one account cannot replace a
+different workspace's model inventory.
+The operational update/sign/rotation/rollback procedure lives in
+`docs/maintainer/PROVIDER_CATALOG.md`.
 
 ### 5.3 ProviderConnectionManager evolves in place
 
@@ -195,6 +203,7 @@ interface ConnectionBinding {
   driverId: string;
   normalizedEndpoint: string;
   endpointFingerprint: string;
+  bindingFingerprint?: string;
   authMethodId: string;
   authRealm?: string;
   accountSlot?: string;
@@ -202,8 +211,12 @@ interface ConnectionBinding {
 }
 ```
 
-`endpointFingerprint` is a comparison and cache identity. It is not a DNS
-pinning or server-authentication mechanism.
+`endpointFingerprint` is an endpoint-only comparison/cache identity and is the
+only fingerprint projected to clients. Host additionally persists a private
+`bindingFingerprint` over driver/endpoint/method/realm/account/tenant for exact
+connection selection and suppression. Older metadata without that optional
+private field is canonicalized on read. Neither fingerprint is a DNS pinning or
+server-authentication mechanism.
 
 `driverId` identifies a code-owned, versioned adapter/connection driver. It is
 not copied from project-controlled `npm` text. Legacy configured packages are
@@ -261,8 +274,16 @@ Rules:
   user-scoped storage without an explicit user action.
 - A trusted project selecting a provider without an applicable grant prompts
   in an interactive local client and fails clearly in non-interactive mode.
-- Changing a project's provider endpoint invalidates the applicable binding
-  and requires a new connection/grant.
+- Explicit API-key setup defaults to the code-owned official endpoint. A
+  configured environment/project endpoint is offered as a separate, labelled
+  choice, and a custom endpoint must be entered and validated explicitly before
+  the secret prompt names its destination host.
+- Once selected, a stored connection's immutable endpoint is the runtime
+  authority. Project `baseURL` changes cannot redirect that credential; using a
+  different endpoint requires creating or selecting a different connection and
+  never reuses the existing secret automatically.
+- Changing a project's provider endpoint changes the ambient source binding.
+  It does not invalidate or redirect an already selected stored connection.
 
 ## 7. Credential Sources and Operation Semantics
 
@@ -315,6 +336,9 @@ type ConnectionStatus =
 `ready` means the credential was resolved and passed a driver-owned,
 side-effect-free validation strategy. If no safe validation strategy exists,
 the state is `unverified`; successful storage alone never means `ready`.
+Likewise, discovering a non-empty environment or legacy-config credential
+makes the connection usable but not verified: absent an actual safe validation
+result, its projected state is `unverified`.
 
 Transient UI progress such as `connecting` is attempt state and is not written
 as durable connection truth.
@@ -348,6 +372,10 @@ The metadata and fallback stores must provide:
 - last-valid recovery after corrupt or partial state;
 - file watch or bounded polling for revision changes; and
 - OAuth refresh single-flight by connection id.
+- A dedicated refresh generation/outcome distinguishes a completed refresh
+  from unrelated connection-generation changes such as identity migration.
+  Waiters accept another Host's result only after re-reading a usable, bound,
+  fresh credential; a failed refresh is observed as failure by every waiter.
 
 The existing in-process mutation queue and listener remain useful local
 optimizations but are not cross-process correctness mechanisms.
@@ -487,10 +515,10 @@ No ordinary response contains credential values or provider request headers.
 
 ### 11.1 Catalog trust boundary
 
-The initial catalog is a bundled, versioned snapshot. A later network refresh
-may be enabled only for a schema-validated signed artifact. Until signature
-verification exists, updates ship with SparkWright rather than through an
-unsigned network feed.
+The initial catalog is a bundled, versioned snapshot. Network refresh is enabled
+only for a schema-validated signed artifact from a deployment-configured HTTPS
+source and trusted keyring. Host checks at startup and periodically when due;
+it never installs an unsigned global network feed.
 
 Catalog data may contain only bounded metadata such as:
 
@@ -513,8 +541,8 @@ Catalog data cannot contain:
 `ProviderCatalogStore` provides:
 
 - schema and catalog version validation;
-- TTL and explicit refresh;
-- cross-process lock;
+- TTL, explicit refresh, and due-only background refresh;
+- in-process single-flight plus a recoverable cross-process network lease;
 - atomic publication;
 - last-known-good fallback;
 - generation-checked publication so a slow refresh cannot replace newer data;
@@ -646,8 +674,26 @@ provider picker
 -> bounded method prompts
 -> API-key or OAuth attempt
 -> connection validation/status
--> provider-filtered model picker
+-> provider-filtered model picker or exact provider-local model input
 ```
+
+The TUI may group related product choices without changing provider identity.
+In particular, the OpenAI row aggregates the code-owned `chatgpt` account and
+`openai` API providers:
+
+```text
+OpenAI
+-> existing ChatGPT account / OpenAI API-key connections
+-> Continue with ChatGPT
+   or Use OpenAI API key
+   or Other sign-in options… -> Sign in with device code
+```
+
+This alias exists only in presentation state. Method submission, connection
+selection, endpoint binding, model discovery, and runtime construction retain
+the exact underlying `chatgpt` or `openai` provider id. Browser login is the
+primary ChatGPT route; device code is retained for headless/callback-constrained
+terminals rather than shown as a peer-level default.
 
 `/model` shows connected-provider models by default, ordered by Favorite and
 Recent, with an action to open `/connect`. It retains stable-ref cursor behavior
@@ -797,6 +843,9 @@ stack.
 - Add split authorities and the trusted-local secret request.
 - Add `/connect`, CLI hidden input/`--api-key-stdin`, validation state, and
   connection-aware model construction.
+- Make official API-key endpoints the default, expose configured endpoints as
+  explicit alternatives, validate custom endpoints in Host, and name the exact
+  destination host before accepting a key.
 - Add malicious endpoint, remote authority, concurrent mutation, and secret
   sentinel gates before the phase is complete.
 
@@ -828,6 +877,14 @@ packages, endpoints, auth methods, or drivers.
 
 - Add signed catalog refresh, LKG/TTL behavior, and authenticated model
   discovery where a built-in driver supports it.
+- Keep signed base metadata separate from workspace/connection-scoped
+  discovery overlays. State v2 records digest/source revision/ETag, rejects
+  version rollback and same-version content drift, and ignores unsafe legacy
+  unscoped discovery state.
+- Generate the bundled model identity snapshot only through explicit
+  maintainer commands; ordinary builds remain offline. HTTP refresh is HTTPS,
+  bounded, redirect-denying, ETag-aware, and explicit rather than startup
+  background work.
 - Add Favorite/Recent ordering, provider grouping, and post-connect filtered
   model selection.
 - Add explicit legacy migration assistance and final release QA.
@@ -859,38 +916,104 @@ remains the model/adapter authority.
 This phase does not add a new login method, provider endpoint, request header,
 model entitlement source, or user-visible connection option.
 
+### P6.5b: OAuth account binding hardening
+
+Implemented 2026-08-12 inside the existing ProviderAuthManager and connection
+state. OAuth completion now finalizes the connection fingerprint with the
+code-owned realm plus optional account and tenant identity returned by the
+driver. Those identity values remain Host-private metadata; public connection
+DTOs continue to expose only opaque connection ids and fingerprints.
+
+- Two accounts for the same provider/endpoint/method persist as separate
+  connections with distinct complete-binding fingerprints and exact-id
+  selection.
+- Completion rejects a credential realm that differs from the code-owned
+  issuer binding.
+- Refresh retains missing identity fields, permits enrichment of a legacy
+  binding, and rejects account or tenant drift before replacing the stored
+  credential.
+- A legacy credential envelope that already contains account/tenant identity
+  is reconciled under the existing per-connection OAuth lock. Binding,
+  generation, and normalized credential publication share one rollback-aware
+  transaction; grants and selection remain attached to the same connection id.
+- Runtime model resolution and authenticated catalog discovery consume the same
+  stored-credential resolver. OAuth-prefixed data must decode, bind, migrate,
+  and refresh successfully; it can never fall back to using the raw envelope
+  as an API key or Authorization value.
+- Public `endpointFingerprint` excludes realm/account/tenant. Exact
+  account-level comparison uses only the Host-private complete fingerprint.
+
+This phase adds no provider definition, OAuth endpoint, runtime transport,
+protocol field, account-discovery API, or second credential owner.
+
+### P6.6: First-party ChatGPT connection
+
+Implemented 2026-08-18 through the officially supported App Server protocol.
+The Host ships a version-pinned runtime dependency and resolves its entry point
+package-relatively, so user installation and `PATH` are not product
+requirements. Browser/device login, account verification, refresh/logout, and
+account-visible discovery reuse the existing generic OAuth attempt, credential
+store, complete binding, refresh lock, grant, selection, Protocol, CLI, and TUI
+surfaces.
+
+The credential store persists only a managed-transport marker. The App Server
+owns ChatGPT token bytes and refresh. ModelFactory alone admits the Host-private
+runtime credential; ModelBuilder rejects it defensively. Ephemeral read-only
+turns expose SparkWright dynamic tools, convert their requests into ordinary
+Core tool calls, and fail closed on any App Server-owned command, edit, MCP,
+web, collaboration, or approval request. The detailed boundary and upgrade
+gate are in [chatgpt-first-party-connection.md](chatgpt-first-party-connection.md).
+
 ## 18. Acceptance Matrix
 
-| ID  | Phase | Scenario                                                      | Expected result                                                                          |
-| --- | ----- | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| A01 | P6.1  | Catalog adds a model absent from YAML and no allowlist exists | Model is selectable and resolves through ProviderRegistry                                |
-| A02 | P6.1  | Legacy `models` excludes the new catalog model                | Model remains unavailable                                                                |
-| A03 | P6.1  | Same non-interactive command is run after Recent changes      | Effective model is unchanged                                                             |
-| A04 | P6.1  | Catalog cache is missing                                      | Bundled snapshot remains usable                                                          |
-| A05 | P6.2  | Clean user connects with API key in TUI                       | Secret is stored, workspace grant created, provider model run succeeds, config unchanged |
-| A06 | P6.2  | CLI uses `--api-key-stdin` while TUI Host is running          | TUI observes the new revision without restart                                            |
-| A07 | P6.2  | Two processes concurrently save/refresh/remove                | No lost update; monotonic revision; one valid final state                                |
-| A08 | P6.2  | Secret sentinel traverses success and all failure paths       | Sentinel is absent from stdout, stderr, trace, events, errors, notices, and crash output |
-| A09 | P6.2  | Remote WebSocket calls secret submit or connection mutation   | Request is unauthorized                                                                  |
-| A10 | P6.2  | Trusted project changes provider endpoint                     | Existing official/global connection is not used; explicit new connection/grant required  |
-| A11 | P6.2  | Stored connection validation fails while env key exists       | Run fails for selected connection; no fallback to env                                    |
-| A12 | P6.2  | User disconnects an environment source                        | Exact ambient binding becomes suppressed; environment is not claimed deleted             |
-| A13 | P6.2  | Provider has no safe validation strategy                      | Connection is `unverified`, not `ready`                                                  |
-| A14 | P6.2  | Legacy API key migration fails during config publication      | Original config remains; new secret is rolled back or reported recoverably               |
-| A15 | P6.3  | OAuth callback has wrong state/nonce or expired attempt       | Callback is rejected and no connection is created                                        |
-| A16 | P6.3  | OAuth callback is replayed                                    | Second completion is rejected                                                            |
-| A17 | P6.3  | OAuth refresh races in two processes                          | One refresh owns publication; both observe the same new revision                         |
-| A18 | P6.3  | Stored OAuth refresh fails while ambient key exists           | Connection enters failure/needs-refresh; no ambient fallback                             |
-| A19 | P6.3  | OAuth attempt is cancelled or expires                         | Temporary state is removed; no credential is persisted                                   |
-| A20 | P6.4  | Network/catalog refresh fails                                 | Last-known-good catalog remains active                                                   |
-| A21 | P6.4  | Slow refresh completes after a newer refresh                  | Older generation cannot overwrite newer catalog                                          |
-| A22 | P6.4  | Catalog artifact is unsigned/invalid/corrupt                  | It is rejected without replacing bundled/LKG data                                        |
-| A23 | P6.4  | Favorite/Recent order changes                                 | Picker order changes; non-interactive resolution does not                                |
-| A24 | P6.4  | `/connect` succeeds                                           | TUI opens the connected provider's filtered model picker                                 |
-| A25 | P6.5a | Stored API key or durable OAuth-issued API key resolves       | Runtime credential remains `api_key`; existing adapter behavior is unchanged             |
-| A26 | P6.5a | Two Hosts resolve the same OAuth credential near expiry       | Existing cross-process lock performs one refresh and both observe the rotated generation |
-| A27 | P6.5a | Selected OAuth credential is bearer with no runtime transport | Adapter construction fails before sending the token and no ambient fallback is attempted |
-| A28 | P6.5a | Retried step fails authentication after resolver success      | Resolver is not invoked again for that step; the run terminates as `model_auth_failed`   |
+| ID  | Phase | Scenario                                                       | Expected result                                                                               |
+| --- | ----- | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| A01 | P6.1  | Catalog adds a model absent from YAML and no allowlist exists  | Model is selectable and resolves through ProviderRegistry                                     |
+| A02 | P6.1  | Legacy `models` excludes the new catalog model                 | Model remains unavailable                                                                     |
+| A03 | P6.1  | Same non-interactive command is run after Recent changes       | Effective model is unchanged                                                                  |
+| A04 | P6.1  | Catalog cache is missing                                       | Bundled snapshot remains usable                                                               |
+| A05 | P6.2  | Clean user connects with API key in TUI                        | Secret is stored, workspace grant created, provider model run succeeds, config unchanged      |
+| A06 | P6.2  | CLI uses `--api-key-stdin` while TUI Host is running           | TUI observes the new revision without restart                                                 |
+| A07 | P6.2  | Two processes concurrently save/refresh/remove                 | No lost update; monotonic revision; one valid final state                                     |
+| A08 | P6.2  | Secret sentinel traverses success and all failure paths        | Sentinel is absent from stdout, stderr, trace, events, errors, notices, and crash output      |
+| A09 | P6.2  | Remote WebSocket calls secret submit or connection mutation    | Request is unauthorized                                                                       |
+| A10 | P6.2  | Trusted project changes provider endpoint                      | Selected stored connection keeps its endpoint and is not redirected; ambient binding changes  |
+| A11 | P6.2  | Stored connection validation fails while env key exists        | Run fails for selected connection; no fallback to env                                         |
+| A12 | P6.2  | User disconnects an environment source                         | Exact ambient binding becomes suppressed; environment is not claimed deleted                  |
+| A13 | P6.2  | Provider has no safe validation strategy                       | Connection is `unverified`, not `ready`                                                       |
+| A14 | P6.2  | Legacy API key migration fails during config publication       | Original config remains; new secret is rolled back or reported recoverably                    |
+| A15 | P6.3  | OAuth callback has wrong state/nonce or expired attempt        | Callback is rejected and no connection is created                                             |
+| A16 | P6.3  | OAuth callback is replayed                                     | Second completion is rejected                                                                 |
+| A17 | P6.3  | OAuth refresh races in two processes                           | One refresh owns publication; both observe the same new revision                              |
+| A18 | P6.3  | Stored OAuth refresh fails while ambient key exists            | Connection enters failure/needs-refresh; no ambient fallback                                  |
+| A19 | P6.3  | OAuth attempt is cancelled or expires                          | Temporary state is removed; no credential is persisted                                        |
+| A20 | P6.4  | Network/catalog refresh fails                                  | Last-known-good catalog remains active                                                        |
+| A21 | P6.4  | Slow refresh completes after a newer refresh                   | Older generation cannot overwrite newer catalog                                               |
+| A22 | P6.4  | Catalog artifact is unsigned/invalid/corrupt                   | It is rejected without replacing bundled/LKG data                                             |
+| A23 | P6.4  | Favorite/Recent order changes                                  | Picker order changes; non-interactive resolution does not                                     |
+| A24 | P6.4  | `/connect` succeeds                                            | TUI opens the connected provider's filtered model picker                                      |
+| A25 | P6.5a | Stored API key or durable OAuth-issued API key resolves        | Runtime credential remains `api_key`; existing adapter behavior is unchanged                  |
+| A26 | P6.5a | Two Hosts resolve the same OAuth credential near expiry        | Existing cross-process lock performs one refresh and both observe the rotated generation      |
+| A27 | P6.5a | Selected OAuth credential is bearer with no runtime transport  | Adapter construction fails before sending the token and no ambient fallback is attempted      |
+| A28 | P6.5a | Retried step fails authentication after resolver success       | Resolver is not invoked again for that step; the run terminates as `model_auth_failed`        |
+| A29 | P6.5b | Same provider completes OAuth for two accounts                 | Two opaque connections retain distinct complete bindings and exact selection                  |
+| A30 | P6.5b | OAuth completion returns a different realm                     | Completion fails and no connection or credential is persisted                                 |
+| A31 | P6.5b | OAuth refresh changes account or tenant identity               | Refresh fails closed, old credential remains stored, and connection needs refresh             |
+| A32 | P6.5b | Legacy OAuth envelope has identity absent from its binding     | Locked migration enriches the binding without changing its connection id, grant, or selection |
+| A33 | P6.5b | OAuth catalog credential is malformed or identity-drifted      | Catalog request is not sent; raw envelope and refresh token never reach Authorization         |
+| A34 | P6.5b | Two refresh callers share a failed refresh                     | One refresh attempt occurs and both callers receive failure/needs-refresh                     |
+| A35 | P6.5b | Identity migration races with explicit refresh                 | Migration does not satisfy refresh; one real refresh publishes the usable credential          |
+| A36 | P6.6  | SparkWright is installed without a user CLI on `PATH`          | Bundled App Server starts package-relatively and returns browser/device instructions          |
+| A37 | P6.6  | ChatGPT browser login starts in the TUI                        | System browser opens; URL remains visible only when the opener is unavailable                 |
+| A38 | P6.6  | ChatGPT login completes and catalog refreshes                  | Only a managed marker is stored; account-visible models enter the picker                      |
+| A39 | P6.6  | ChatGPT text turn completes                                    | App Server text is projected as ordinary `ModelOutput`                                        |
+| A40 | P6.6  | ChatGPT requests a SparkWright dynamic tool                    | Turn is interrupted and the request returns to Core as an ordinary tool call                  |
+| A41 | P6.6  | App Server starts a built-in command/edit/network action       | Adapter interrupts and fails closed before accepting the action                               |
+| A42 | P6.6  | TUI catalog contains both `chatgpt` and `openai`               | One OpenAI product row is shown while connections and model routing retain exact provider ids |
+| A43 | P6.6  | User adds a connection from the OpenAI product row             | Browser account login and API key are primary; device code is under other sign-in options     |
+| A44 | P6.4  | Two workspaces refresh different accounts for one provider     | Each workspace reads only its exact connection-scoped discovery overlay                       |
+| A45 | P6.4  | Signed catalog version moves backwards or changes in place     | Refresh is rejected and active LKG/bundled metadata remains unchanged                         |
+| A46 | P6.4  | Catalog endpoint is offline, oversized, redirected, or invalid | Explicit refresh fails safely; user providers and offline catalog remain usable               |
 
 ## 19. Required Test Layers
 
@@ -963,23 +1086,123 @@ credential or provider owner. ProviderAuthManager and the current
   opaque id and non-secret binding metadata; ordinary and remote catalogs stay
   grant-filtered. A later exact-id selection revalidates the binding before it
   adds a new workspace grant.
-- Selection continues to revalidate the code-owned driver and endpoint binding.
+- Selection continues to revalidate the code-owned driver and authentication
+  method. The stored immutable endpoint is revalidated but is not replaced by
+  current project `baseURL`.
 - Permanent logout/removal remains an explicit CLI action; the TUI does not
   attach destructive deletion to a single key.
 - Runtime model defaults remain unchanged until the user chooses a model.
 
 P7.0 acceptance:
 
-| ID  | Scenario                                             | Expected result                                                                                       |
-| --- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| B01 | One provider has two stored connections              | CLI and TUI show two non-secret identities and one selected marker                                    |
-| B02 | User selects another connection                      | Workspace selection changes atomically; the previous secret remains stored                            |
-| B03 | User disconnects the selected connection             | Selection/grant is removed; the local manager can reselect/remove it; credential material is retained |
-| B04 | Connection binding differs from the current endpoint | Selection fails closed with an actionable message                                                     |
-| B05 | TUI chooses an existing connection                   | It proceeds to that provider's filtered model picker without requesting a secret                      |
-| B06 | TUI chooses “add connection”                         | Existing API-key/OAuth flow is reused                                                                 |
+| ID  | Scenario                                                 | Expected result                                                                                       |
+| --- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| B01 | One provider has two stored connections                  | CLI and TUI show two non-secret identities and one selected marker                                    |
+| B02 | User selects another connection                          | Workspace selection changes atomically; the previous secret remains stored                            |
+| B03 | User disconnects the selected connection                 | Selection/grant is removed; the local manager can reselect/remove it; credential material is retained |
+| B04 | Project endpoint differs from a selected stored endpoint | Stored endpoint remains authoritative; selecting a different endpoint requires a different connection |
+| B05 | TUI chooses an existing connection                       | It proceeds to that provider's filtered model picker without requesting a secret                      |
+| B06 | TUI chooses “add connection”                             | Existing API-key/OAuth flow is reused                                                                 |
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-08-21
+- Scope: catalog delivery is split into an offline generated base, a globally
+  signed LKG, and per-workspace/per-connection discovery overlays. Custom user
+  providers remain valid without catalog membership; signed-source and
+  discovery failures are isolated, and stale/base fallback remains usable.
+- Read: P6 catalog authority and failure-mode sections, Host catalog
+  source/store/auth implementation, generator/signing scripts, public provider
+  docs, release checklist, maintainer runbook, and A44-A46 coverage.
+- Tests: focused generator/source/store/auth isolation regressions, routed
+  Host/SDK/CLI/TUI tests, catalog idempotence, artifact signing, package notice
+  inclusion, project-map drift, and repository release gates.
+
+- Status: Verified
+- Date: 2026-08-21
+- Scope: the TUI now groups first-party ChatGPT account login and OpenAI API
+  credentials under one OpenAI product row. It aggregates non-secret
+  connection inventory while retaining exact provider ids for auth, endpoint,
+  catalog, selection, and runtime authority. Browser login is primary and
+  device code remains a nested fallback.
+- Read: P6.6 product/ownership boundary, ConnectDialog grouping and back-state,
+  Host catalog/auth-method DTOs, stored endpoint authority, and A42-A43.
+- Tests: ConnectDialog 11/11, TUI 567/567, Host 635/635, CLI 177/177, Core
+  688/688, and a real PTY grouped connection/method/endpoint walk passed. The
+  closing release gate also passed the 16-case regression matrix, production
+  audit, and both install smokes.
+
+- Status: Verified
+- Date: 2026-08-20
+- Scope: explicit API-key setup now defaults to the official endpoint, exposes
+  a configured custom endpoint as a separate choice, validates arbitrary
+  custom endpoints in Host, and confirms the destination host before secret
+  entry. A selected stored connection owns its immutable runtime endpoint, so
+  later project config cannot redirect the key; endpoint changes create new
+  connections and never reuse a stored secret.
+- Read: endpoint normalization and stored-binding resolution in
+  ProviderAuthManager, Protocol/SDK forwarding, ConnectDialog stages, runtime
+  model selection, and reference/security contracts.
+- Tests: focused Host/Protocol/SDK/TUI 57/57, real PTY official/configured/custom
+  endpoint flows, schema consistency, Host 635/635, TUI 564/564, the 16-case
+  regression matrix, production audit, and both install smokes passed.
+
+- Status: Verified
+- Date: 2026-08-20
+- Scope: the existing connection-state contract is now applied consistently to
+  ambient config/environment keys: they stay usable but remain `unverified`
+  until driver-owned safe validation succeeds. The TUI names the bound target
+  host before API-key entry and does not retain method endpoints on the
+  provider picker.
+- Read: connection status/binding rules, ProviderAuthManager ambient paths,
+  ConnectDialog endpoint lifecycle, reference Protocol, and product maps.
+- Tests: focused Host/Protocol/TUI/CLI regressions, real PTY Zen/config flow,
+  project-map routing checks, and the full release gate passed.
+
+- Status: Verified
+- Date: 2026-08-18
+- Scope: P6.6 implements the bundled ChatGPT provider, managed login marker,
+  account-visible discovery, fail-closed model/tool adapter, and TUI browser
+  launch while reusing the existing connection control plane.
+- Read: provider catalog/auth/OAuth, App Server client/adapter, model admission,
+  TUI connection presentation, unchanged Protocol/SDK boundary, A36-A41, and
+  the focused design.
+- Tests: Host 43/43, TUI ConnectDialog 5/5, Host/TUI typecheck, real App Server
+  account/model/text/tool smokes, and real TUI authorization start/cancel passed
+  before the closing repository gate.
+
+- Status: Verified
+- Date: 2026-08-17
+- Scope: P6.6 records removal of the unfinished external-process ChatGPT
+  provider and routes future work to the gated first-party design. P6.1-P6.5b
+  generic provider, OAuth, account-binding, storage, refresh, and product
+  contracts remain active.
+- Read: provider catalog/auth/OAuth, model construction, CLI/TUI/SDK tests,
+  first-party ChatGPT design, and the P6 acceptance matrix.
+- Tests: focused Host provider/model/Protocol 47/47, SDK Core 15/15, CLI
+  provider 5/5, TUI routed 33/33, Host typecheck/build, schema validation,
+  the 16-case regression matrix, project-trust regression, production
+  dependency audit, deterministic CLI run, and source/release install smokes
+  passed after cleanup. The seven worktree cases and concurrent-agent example
+  passed when rerun after a transient local Xcode loader failure.
+
+- Status: Verified
+- Date: 2026-08-12
+- Scope: P6.5b finalizes OAuth connections with complete realm/account/tenant
+  bindings, isolates multiple accounts by opaque connection id, rejects
+  identity drift before credential replacement, and migrates legacy envelope
+  identity through the existing locked state/credential transaction. The
+  closing hardening removes the catalog-discovery credential bypass, separates
+  public endpoint identity from private account identity, and makes refresh
+  outcomes independent of ordinary connection generation.
+- Read: ProviderAuthManager completion, selection, runtime resolution, refresh,
+  catalog discovery, credential envelope, state validation, and A29-A35
+  regressions.
+- Tests: focused Host provider route 119/119, SDK Core 15/15, CLI provider 5/5,
+  and TUI routed 33/33 passed before the full release gate; closing evidence is
+  Core 688/688, Host 632/632, CLI 177/177, TUI 560/560, 16/16 regression
+  cases, zero production audit findings, and both install smokes.
 
 - Status: Verified
 - Date: 2026-08-11

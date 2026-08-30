@@ -10,6 +10,54 @@ See also [../maps/safety/approvals.md](../maps/safety/approvals.md) and [../maps
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-08-20
+- Scope: `provider.auth.methods` and `provider.auth.submit_secret` add optional
+  exact endpoint input; the methods snapshot adds an optional separately
+  labelled configured binding. Omission means the official endpoint, preserving
+  older client compatibility. No authority or remote-secret boundary changed.
+- Read: provider request/result DTOs, generated Host-message schema, Host
+  validation/dispatch, and SDK/TUI consumers.
+- Tests: Protocol/schema consistency, Host provider Protocol 9/9, SDK Core
+  15/15, and the closing release gate passed.
+
+- Status: Read-only
+- Date: 2026-08-20
+- Scope: ambient config/environment credentials now use the existing
+  `unverified` status until safe validation succeeds. No request, result,
+  authority, transport, or schema shape changed.
+- Read: provider status DTOs, Host catalog/auth projection, CLI provider-list,
+  and TUI connection rendering.
+- Tests: Host provider Protocol 9/9 and routed Host/TUI/CLI provider checks
+  passed; the closing release gate passed Protocol 6/6 and schema consistency.
+
+- Status: Read-only
+- Date: 2026-08-18
+- Scope: ChatGPT reuses generic OAuth attempts, opaque connection summaries,
+  catalog refresh, and model selection. Process identity, managed marker,
+  tokens, account details, and App Server protocol never cross public DTOs.
+- Read: provider request/result families and Host summary projection.
+- Tests: focused Host provider/App Server coverage passed with no schema change.
+
+- Status: Verified
+- Date: 2026-08-17
+- Scope: removing the unfinished ChatGPT provider required no protocol schema
+  change. Generic OAuth attempt DTOs and opaque connection summaries remain;
+  no external-process or managed-marker type crosses the wire.
+- Read: provider auth request/result routing and public connection summaries.
+- Tests: Host provider Protocol passed inside the focused 47/47 route; SDK Core
+  15/15 and schema validation also passed.
+
+- Status: Read-only
+- Date: 2026-08-12
+- Scope: OAuth account and tenant identity remain Host-private binding metadata.
+  Public connection summaries still expose only opaque ids and fingerprints;
+  no request, result, schema, authority, or transport shape changed.
+- Read: provider connection DTOs, OAuth request lifecycle, Host public summary
+  projection, and local/remote authority boundary.
+- Tests: focused Host provider/protocol route 114/114, SDK Core 15/15, and
+  schema validation passed; Protocol contracts are unchanged.
+
 - Status: Read-only
 - Date: 2026-08-10
 - Scope: Keychain prompt isolation is entirely behind Host's existing

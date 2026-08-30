@@ -1,8 +1,13 @@
 import { readFile } from "node:fs/promises";
 import type { CredentialResolver, ModelAdapter } from "@sparkwright/core";
+import {
+  createChatGptModelAdapter,
+  type ChatGptAppServerFactory,
+} from "./chatgpt-app-server.js";
 import { DETERMINISTIC_PROVIDER } from "./config/contracts.js";
 import {
   loadHostConfig,
+  parseModelRef,
   resolveModelSelection,
 } from "./config/config-implementation.js";
 import {
@@ -14,6 +19,7 @@ import type {
   ProviderAuthManager,
   ProviderCredentialLease,
 } from "./provider-auth.js";
+import { getProviderConnectionDescriptor } from "./provider-catalog.js";
 
 const SCRIPTED_PROVIDER = "scripted";
 const SCRIPTED_MODEL_JSON_ENV = "SPARKWRIGHT_SCRIPTED_MODEL_JSON";
@@ -33,6 +39,8 @@ export interface ModelFactoryInput {
   waitForCredentialRefresh?: boolean;
   /** Whether the pinned project config scope may participate in resolution. */
   includeProjectConfig?: boolean;
+  /** Test/embedding seam for the bundled ChatGPT App Server transport. */
+  chatGptAppServerFactory?: ChatGptAppServerFactory;
 }
 
 export interface ConfigSourceRef {
@@ -120,14 +128,18 @@ export async function createModel(input: ModelFactoryInput): Promise<
     };
   }
 
-  const managedConnection = input.providerAuth
-    ? await input.providerAuth.resolveModelConnection({
-        workspaceRoot: input.workspaceRoot,
-        modelRef: ref,
-        env,
-        includeProjectConfig: input.includeProjectConfig !== false,
-      })
-    : undefined;
+  const parsedRef = parseModelRef(ref);
+  const providerAuthManagesRef =
+    getProviderConnectionDescriptor(parsedRef.providerKey) !== undefined;
+  const managedConnection =
+    input.providerAuth && providerAuthManagesRef
+      ? await input.providerAuth.resolveModelConnection({
+          workspaceRoot: input.workspaceRoot,
+          modelRef: ref,
+          env,
+          includeProjectConfig: input.includeProjectConfig !== false,
+        })
+      : undefined;
   if (managedConnection && !managedConnection.ok) return managedConnection;
   const selection = managedConnection?.ok
     ? managedConnection.resolved.selection
@@ -144,7 +156,7 @@ export async function createModel(input: ModelFactoryInput): Promise<
   }
   const credential = managedConnection?.ok
     ? { ok: true as const, lease: managedConnection.resolved.lease }
-    : input.providerAuth
+    : input.providerAuth && providerAuthManagesRef
       ? await input.providerAuth.resolveCredential({
           workspaceRoot: input.workspaceRoot,
           selection,
@@ -153,6 +165,45 @@ export async function createModel(input: ModelFactoryInput): Promise<
         })
       : undefined;
   if (credential && !credential.ok) return credential;
+  if (selection.npm === "@openai/codex") {
+    if (
+      !credential?.ok ||
+      credential.lease.credential.kind !== "chatgpt_app_server"
+    ) {
+      return {
+        ok: false,
+        message:
+          'ChatGPT is not connected. Use /connect and choose "ChatGPT" first.',
+      };
+    }
+    const pricing = resolveConfiguredModelPricing(selection);
+    return {
+      ok: true,
+      adapter: createChatGptModelAdapter({
+        modelId: selection.modelId,
+        ...(input.chatGptAppServerFactory
+          ? { factory: input.chatGptAppServerFactory }
+          : {}),
+      }),
+      resolved: configuredResolvedModel({
+        modelRef: ref,
+        providerKey: selection.providerKey,
+        modelId: selection.modelId,
+        modelSource,
+        providerSource: sourceRef(
+          loaded.sources.providers?.[selection.providerKey],
+        ),
+        runtimeSources: {
+          apiKey: credential.lease.profile.sourceLabel ?? "managed_chatgpt",
+          pricing: pricing.source,
+          ...(pricing.costUnavailableReason
+            ? { costUnavailableReason: pricing.costUnavailableReason }
+            : {}),
+          ...(pricing.warning ? { pricingWarning: pricing.warning } : {}),
+        },
+      }),
+    };
+  }
   const built = await buildConfiguredAdapter({
     selection,
     env,
@@ -404,7 +455,19 @@ export async function inspectResolvedModelConfig(input: {
     };
   }
 
-  const selection = resolveModelSelection(loaded.config, ref);
+  const parsedRef = parseModelRef(ref);
+  const descriptor = getProviderConnectionDescriptor(parsedRef.providerKey);
+  const selectionConfig =
+    descriptor && !loaded.config.providers?.[parsedRef.providerKey]
+      ? {
+          ...loaded.config,
+          providers: {
+            ...loaded.config.providers,
+            [parsedRef.providerKey]: { npm: descriptor.npm },
+          },
+        }
+      : loaded.config;
+  const selection = resolveModelSelection(selectionConfig, ref);
   if (selection.kind === "deterministic") {
     return {
       ok: true,

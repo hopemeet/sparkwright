@@ -1,5 +1,19 @@
 # TUI Rendering Coverage
 
+- 2026-08-22 `/connect` model-stage coverage verifies an existing API connection
+  can select a catalog row or type a provider-local model id. The nested
+  `anthropic/claude-new` input becomes
+  `openrouter/anthropic/claude-new`, while Tab/catalog Enter behavior remains.
+  ConnectDialog passes 12/12, full TUI passes 568/568, and TUI typecheck passes.
+
+- 2026-08-21 `/connect` coverage verifies the raw `chatgpt` and `openai`
+  providers render as one OpenAI product group; aggregated connections retain
+  distinct ChatGPT-account/OpenAI-key labels and exact-provider model routing.
+  Browser account login and API key are primary, device code is nested under
+  other sign-in options, and endpoint text appears only after choosing the API
+  path. ConnectDialog passes 11/11, full TUI passes 567/567, a real PTY walk
+  confirms the grouped screens, and the complete release gate passes.
+
 - 2026-08-09 P6.2 `/connect` coverage walks provider, auth method, masked API
   key, and connected-provider model selection. The sentinel is supplied to the
   submit callback but never appears in Ink output. Focused ConnectDialog,

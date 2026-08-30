@@ -1147,6 +1147,7 @@ function AppReady(
     providerId?: string,
   ): Promise<ProviderCatalogSnapshot | null> {
     const refreshed = await controller.refreshProviderCatalog(providerId);
+    if (providerId && !refreshed) return null;
     if (refreshed) {
       store.appendNotice(
         `provider catalog -> ${refreshed.status} (generation ${refreshed.catalogState.generation})`,
@@ -1163,11 +1164,13 @@ function AppReady(
   async function submitProviderSecret(
     providerId: string,
     methodId: string,
+    endpoint: string,
     secret: string,
   ) {
     const connection = await controller.submitProviderSecret(
       providerId,
       methodId,
+      endpoint,
       secret,
     );
     if (connection) {
@@ -1274,8 +1277,8 @@ function AppReady(
     onCommitModel: commitModelSelection,
     onToggleFavoriteModel: toggleFavoriteModel,
     onProviderAuth: updateProviderAuth,
-    onLoadProviderAuthMethods: (providerId: string) =>
-      controller.listProviderAuthMethods(providerId),
+    onLoadProviderAuthMethods: (providerId: string, endpoint?: string) =>
+      controller.listProviderAuthMethods(providerId, endpoint),
     onSubmitProviderSecret: submitProviderSecret,
     onSelectProviderConnection: (connectionId: string) =>
       manageProviderConnection("select", connectionId),

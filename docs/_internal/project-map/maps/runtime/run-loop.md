@@ -9,6 +9,15 @@ See [tool-orchestration.md](tool-orchestration.md) and [../trace/raw-trace.md](.
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-20
+- Scope: endpoint selection is a trusted pre-run Host control. The run loop
+  still receives one resolved model adapter and retains the same credential
+  recovery, tool, event, and terminal-state contracts.
+- Read: Host model-resolution handoff and Core run-loop admission.
+- Tests: routed provider/model and release checks passed; run-loop behavior is
+  unchanged.
+
 - Status: Verified
 - Date: 2026-08-11
 - Scope: Core now records whether the current run step has already invoked its

@@ -866,11 +866,16 @@ cannot replace the bundled or last-known-good catalog.
 
 ### Provider authentication methods and attempts
 
-`provider.auth.methods` accepts `{ "providerId": string }` and returns the
-code-owned auth methods and exact non-secret binding that will be used. In
-addition to API-key methods, a method may declare a bounded `oauth` flow of
-`browser`, `device`, or `code`. Endpoint, issuer, client behavior, and token
-exchange remain code-owned; config and catalog data cannot inject them.
+`provider.auth.methods` accepts `{ "providerId": string, "endpoint"?: string }`
+and returns the auth methods plus the exact normalized non-secret binding that
+will be used. Omitting `endpoint` selects the code-owned official endpoint. If
+an ambient config/environment endpoint differs, the response also includes it
+as `configuredBinding`; clients must present it as a separate explicit choice,
+not silently replace the official default. A client-supplied custom endpoint is
+validated and normalized by Host before secret entry. OAuth methods remain
+available only for their code-owned official binding and may declare a bounded
+flow of `browser`, `device`, or `code`; config and catalog data cannot inject
+issuer, client behavior, or token exchange.
 
 OAuth uses four local-only requests guarded by `provider_connection.manage`:
 
@@ -896,18 +901,21 @@ attempts.
 `provider.auth.submit_secret` remains the dedicated API-key path and creates a
 stored connection and grant:
 
-| Field        | Type                  | Required | Notes                                       |
-| ------------ | --------------------- | -------- | ------------------------------------------- |
-| `providerId` | string                | yes      | Provider catalog id.                        |
-| `methodId`   | string                | yes      | Method returned by `provider.auth.methods`. |
-| `secret`     | string                | yes      | Dedicated request field; never returned.    |
-| `grantScope` | `workspace` \| `user` | no       | Defaults to `workspace`.                    |
+| Field        | Type                  | Required | Notes                                                      |
+| ------------ | --------------------- | -------- | ---------------------------------------------------------- |
+| `providerId` | string                | yes      | Provider catalog id.                                       |
+| `methodId`   | string                | yes      | Method returned by `provider.auth.methods`.                |
+| `endpoint`   | string                | no       | Exact confirmed endpoint; omission means the official URL. |
+| `secret`     | string                | yes      | Dedicated request field; never returned.                   |
+| `grantScope` | `workspace` \| `user` | no       | Defaults to `workspace`.                                   |
 
 Secret submission requires `provider_secret.submit` and a local or trusted
 embedded transport. Remote transport is rejected even when an authority is
 misconfigured onto the connection. The response contains only
 `{ connection, revision }`. A provider with no safe validation strategy is
-reported as `unverified`, not `ready`.
+reported as `unverified`, not `ready`. The same rule applies to discovered
+environment/config credentials: presence makes the binding usable, but does
+not by itself prove that the credential is valid.
 
 ### `provider.connection.select`, `disconnect`, `logout`, `remove`, `refresh`
 
@@ -923,9 +931,11 @@ generation. A failed OAuth refresh marks the selected connection
 `needs_refresh`; it never falls back to an ambient API key.
 
 Stored connections are bound to provider id, code-owned driver identity,
-normalized endpoint, and auth method. A changed endpoint cannot reuse the old
-connection, and a missing/failed selected stored connection never falls back
-to an environment or config key.
+normalized endpoint, and auth method. Once selected, that immutable stored
+endpoint overrides project `baseURL` for runtime construction, so config cannot
+redirect the credential. Choosing a changed endpoint creates/selects a
+different connection and cannot reuse the old key. A missing/failed selected
+stored connection never falls back to an environment or config key.
 
 ### `provider.auth.login`, `provider.auth.logout`, `provider.auth.refresh`
 

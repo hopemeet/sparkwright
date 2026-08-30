@@ -10,6 +10,14 @@ See [../../modules/mcp-adapter.md](../../modules/mcp-adapter.md).
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-08-20
+- Scope: provider endpoint choice changes no MCP discovery, transport, schema,
+  resource, prompt, tool, or execution authority.
+- Read: Host provider dispatch and MCP preparation boundary.
+- Tests: routed provider and release checks passed; MCP contracts are
+  unchanged.
+
+- Status: Read-only
 - Date: 2026-08-09
 - Scope: P7.0 trusted-local connection inventory does not change MCP discovery,
   transport, schema loading, or execution authority.

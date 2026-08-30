@@ -1983,7 +1983,7 @@ describe.sequential("runCli", { timeout: 15_000 }, () => {
       }>;
     };
     expect(catalog.providers).toMatchObject([
-      { id: "openai", credential: { status: "ready" } },
+      { id: "openai", credential: { status: "unverified" } },
     ]);
     expect(listedOutput.stdoutText()).not.toContain("sk-cli-provider-secret");
 

@@ -11,8 +11,10 @@ import {
   SUPPORTED_PROVIDER_NPMS,
 } from "./config/contracts.js";
 import { costToPricing } from "./config/config-implementation.js";
+import { GENERATED_PROVIDER_MODEL_CATALOG } from "./generated/provider-model-catalog.js";
 
-export const BUNDLED_PROVIDER_CATALOG_VERSION = 3;
+export const BUNDLED_PROVIDER_CATALOG_VERSION =
+  GENERATED_PROVIDER_MODEL_CATALOG.version;
 
 export type ProviderAuthPrompt =
   | {
@@ -59,10 +61,11 @@ export interface ProviderConnectionDescriptor {
   validation: { kind: "none" };
   /** Optional code-owned authenticated metadata discovery. */
   modelDiscovery?: {
-    kind: "openai_compatible";
-    path: string;
     ttlMs: number;
-  };
+  } & (
+    | { kind: "openai_compatible"; path: string }
+    | { kind: "chatgpt_app_server" }
+  );
 }
 
 export interface BundledProviderCatalogEntry {
@@ -76,15 +79,36 @@ export interface BundledProviderCatalogSnapshot {
   providers: readonly BundledProviderCatalogEntry[];
 }
 
-const OPENAI_MODELS = [
-  "gpt-5.4",
-  "gpt-5.4-mini",
-  "gpt-5.4-nano",
-  ...Object.keys(OPENAI_MODEL_PRICING),
-];
-
 export const BUNDLED_PROVIDER_CONNECTION_DESCRIPTORS: readonly ProviderConnectionDescriptor[] =
   [
+    {
+      providerId: "chatgpt",
+      displayName: "ChatGPT",
+      driverId: "openai-app-server.v1",
+      npm: "@openai/codex",
+      officialEndpoint: "https://chatgpt.com",
+      authMethods: [
+        {
+          id: "browser",
+          kind: "oauth",
+          label: "Browser login",
+          flow: "browser",
+          implementationId: "openai.app-server.chatgpt-browser.v1",
+        },
+        {
+          id: "device",
+          kind: "oauth",
+          label: "Device-code login",
+          flow: "device",
+          implementationId: "openai.app-server.chatgpt-device.v1",
+        },
+      ],
+      validation: { kind: "none" },
+      modelDiscovery: {
+        kind: "chatgpt_app_server",
+        ttlMs: 24 * 60 * 60 * 1_000,
+      },
+    },
     {
       providerId: "openrouter",
       displayName: "OpenRouter",
@@ -170,41 +194,19 @@ export const BUNDLED_PROVIDER_CONNECTION_DESCRIPTORS: readonly ProviderConnectio
 
 export const BUNDLED_PROVIDER_CATALOG: BundledProviderCatalogSnapshot = {
   version: BUNDLED_PROVIDER_CATALOG_VERSION,
-  providers: [
-    {
-      id: "openrouter",
-      displayName: "OpenRouter",
-      models: ["openrouter/auto"].map((id) => ({
-        id,
-        displayName: id,
-      })),
-    },
-    {
-      id: "openai",
-      displayName: "OpenAI",
-      models: [...new Set(OPENAI_MODELS)].sort().map((id) => ({
-        id,
-        displayName: id,
-        pricing: OPENAI_MODEL_PRICING[id],
-      })),
-    },
-    {
-      id: "anthropic",
-      displayName: "Anthropic",
-      models: ["claude-haiku-4-5", "claude-sonnet-4-6"].map((id) => ({
-        id,
-        displayName: id,
-      })),
-    },
-    {
-      id: "google",
-      displayName: "Google",
-      models: ["gemini-3-flash", "gemini-3.1-pro"].map((id) => ({
-        id,
-        displayName: id,
-      })),
-    },
-  ],
+  providers: GENERATED_PROVIDER_MODEL_CATALOG.providers.map((provider) => ({
+    id: provider.id,
+    displayName: provider.displayName,
+    models: provider.models.map((model) => {
+      const pricing =
+        provider.id === "openai" ? OPENAI_MODEL_PRICING[model.id] : undefined;
+      return {
+        id: model.id,
+        ...(model.displayName ? { displayName: model.displayName } : {}),
+        ...(pricing ? { pricing } : {}),
+      };
+    }),
+  })),
 };
 
 const CONNECTION_DESCRIPTORS = new Map(

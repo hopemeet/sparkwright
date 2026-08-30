@@ -331,11 +331,17 @@ describe("@sparkwright/sdk-core Client", () => {
       authMethodId: "api_key",
     };
 
-    const methods = client.listProviderAuthMethods({ providerId: "openai" });
+    const methods = client.listProviderAuthMethods({
+      providerId: "openai",
+      endpoint: "https://gateway.example/v1",
+    });
     let request = transport.sent[0]!;
     expect(request).toMatchObject({
       kind: "provider.auth.methods",
-      payload: { providerId: "openai" },
+      payload: {
+        providerId: "openai",
+        endpoint: "https://gateway.example/v1",
+      },
     });
     transport.receive({
       envelope: "response",
@@ -353,6 +359,7 @@ describe("@sparkwright/sdk-core Client", () => {
     const submitted = client.submitProviderSecret({
       providerId: "openai",
       methodId: "api_key",
+      endpoint: "https://gateway.example/v1",
       secret: "sdk-secret-sentinel",
       grantScope: "workspace",
     });
@@ -362,6 +369,7 @@ describe("@sparkwright/sdk-core Client", () => {
       payload: {
         providerId: "openai",
         methodId: "api_key",
+        endpoint: "https://gateway.example/v1",
         secret: "sdk-secret-sentinel",
         grantScope: "workspace",
       },

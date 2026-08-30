@@ -91,10 +91,12 @@ export function LayerRenderer(props: {
   ) => void;
   onLoadProviderAuthMethods: (
     providerId: string,
+    endpoint?: string,
   ) => Promise<ProviderAuthMethodsSnapshot | null>;
   onSubmitProviderSecret: (
     providerId: string,
     methodId: string,
+    endpoint: string,
     secret: string,
   ) => Promise<ProviderConnectionSummary | null>;
   onSelectProviderConnection: (

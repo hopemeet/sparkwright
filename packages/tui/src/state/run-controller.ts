@@ -642,10 +642,14 @@ export class RunController {
 
   async listProviderAuthMethods(
     providerId: string,
+    endpoint?: string,
   ): Promise<ProviderAuthMethodsSnapshot | null> {
     try {
       const client = await this.ensureClient();
-      return await client.listProviderAuthMethods({ providerId });
+      return await client.listProviderAuthMethods({
+        providerId,
+        ...(endpoint ? { endpoint } : {}),
+      });
     } catch (err) {
       this.reportFailure(
         "PanelLoadFailure",
@@ -724,6 +728,7 @@ export class RunController {
   async submitProviderSecret(
     providerId: string,
     methodId: string,
+    endpoint: string,
     secret: string,
   ): Promise<ProviderConnectionSummary | null> {
     try {
@@ -731,6 +736,7 @@ export class RunController {
       const result = await client.submitProviderSecret({
         providerId,
         methodId,
+        endpoint,
         secret,
       });
       return result.connection;

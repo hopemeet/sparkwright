@@ -11,6 +11,15 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-08-20
+- Scope: endpoint choice remains outside run-event tracing. Only normalized
+  non-secret bindings are projected; API keys do not enter trace events or
+  diagnostics.
+- Read: provider secret boundary, catalog projection, and raw-trace ownership.
+- Tests: secret-sentinel, routed provider, and release checks passed; raw-trace
+  schemas are unchanged.
+
+- Status: Read-only
 - Date: 2026-08-09
 - Scope: P7.0 connection management remains outside run-event tracing. Catalog
   and CLI/TUI output expose only opaque ids and non-secret metadata; raw trace

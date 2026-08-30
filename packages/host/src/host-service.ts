@@ -56,6 +56,8 @@ import {
   type ProjectTrustManagerOptions,
 } from "./project-trust.js";
 
+const PROVIDER_CATALOG_REFRESH_POLL_MS = 6 * 60 * 60 * 1_000;
+
 export type HostRuntimeFacadeOptions = RuntimeOptions;
 
 /** Process-scoped Host composition root. */
@@ -83,6 +85,7 @@ export class HostService {
   private readonly coordinatorPort: HostExecutionCoordinatorPort;
   private readonly imControl;
   private readonly providerAuth: ProviderAuthManager;
+  private readonly providerCatalogRefreshTimer: ReturnType<typeof setInterval>;
   private readonly projectTrust: ProjectTrustManager;
 
   constructor(
@@ -98,6 +101,11 @@ export class HostService {
     this.providerAuth =
       options.providerAuth ??
       new ProviderAuthManager(options.providerAuthOptions);
+    void this.providerAuth.refreshSignedCatalogIfDue().catch(() => {});
+    this.providerCatalogRefreshTimer = setInterval(() => {
+      void this.providerAuth.refreshSignedCatalogIfDue().catch(() => {});
+    }, PROVIDER_CATALOG_REFRESH_POLL_MS);
+    this.providerCatalogRefreshTimer.unref?.();
     this.projectTrust =
       options.projectTrust ??
       new ProjectTrustManager(options.projectTrustOptions);
@@ -388,6 +396,7 @@ export class HostService {
 
   async shutdown(): Promise<void> {
     this.draining = true;
+    clearInterval(this.providerCatalogRefreshTimer);
     await Promise.all([...this.runtimes].map((runtime) => runtime.drain()));
     this.runtimes.clear();
     this.runtimeEmits.clear();

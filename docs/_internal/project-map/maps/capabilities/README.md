@@ -8,6 +8,32 @@ MCP, agents, cron, shell/task tools, and capability inspection.
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-08-18
+- Scope: the ChatGPT adapter projects the already admitted SparkWright tool
+  descriptors as dynamic functions. Requests return to Core; App Server-owned
+  tools fail closed, so no parallel capability or approval authority is added.
+- Read: App Server adapter and capability admission owners.
+- Tests: focused dynamic-tool projection and real tool-call smoke passed.
+
+- Status: Read-only
+- Date: 2026-08-17
+- Scope: removing the unfinished ChatGPT adapter removes its parallel dynamic
+  tool bridge. Generic provider connection state remains pre-run control state
+  and does not enlarge Core's capability catalog.
+- Read: Host provider/model boundary and capability admission owners.
+- Tests: capability-specific tests not run; focused Host route passed.
+
+- Status: Read-only
+- Date: 2026-08-12
+- Scope: OAuth account binding remains local pre-run provider state. It adds no
+  capability loader, tool/model authority, declared inventory, or inspection
+  shape.
+- Read: Host provider connection owner and capability preparation/admission
+  boundaries.
+- Tests: focused routed provider checks and schema validation passed;
+  capability contracts are unchanged.
+
+- Status: Read-only
 - Date: 2026-08-09
 - Scope: P7.0 connection inventory, selection, and non-destructive disconnect
   remain local pre-run provider controls. Stored-but-disconnected inventory is

@@ -10,6 +10,15 @@ See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runti
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-08-20
+- Scope: custom endpoint selection writes only Host-owned provider metadata and
+  credential storage. It neither edits project config nor adds a model-facing
+  workspace-write path.
+- Read: provider state/credential stores and workspace-write boundary.
+- Tests: config-unchanged, secret-free metadata, routed provider, and release
+  checks passed; workspace-write contracts are unchanged.
+
+- Status: Read-only
 - Date: 2026-08-09
 - Scope: P7.0 connection disconnect/reselection/removal mutates Host-owned XDG
   provider state and credential storage, not project files or model-facing

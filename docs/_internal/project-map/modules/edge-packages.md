@@ -180,6 +180,43 @@ contracts, and focused checklists that no longer fit here.
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-08-20
+- Scope: SDK Core forwards the optional exact endpoint on provider method
+  discovery and secret submission without interpreting provider policy or
+  retaining credential material. Provider registry and adapter ownership are
+  unchanged; Host supplies the selected stored endpoint to model construction.
+- Read: SDK Core provider request methods/tests, Protocol DTOs, Host runtime
+  dispatch, and provider-registry/model-builder boundary.
+- Tests: SDK Core 15/15, routed Host/Protocol/TUI checks, schema consistency,
+  and the closing release gate passed.
+
+- Status: Read-only
+- Date: 2026-08-18
+- Scope: SDK continues forwarding generic provider DTOs; ProviderRegistry
+  consumes discovered model metadata. The App Server client, credential kind,
+  and model adapter remain Host-private.
+- Read: SDK forwarding, ProviderRegistry inventory, and Host model admission.
+- Tests: routed Host and TUI checks passed before the closing repository gate.
+
+- Status: Verified
+- Date: 2026-08-17
+- Scope: SDK Core continues forwarding generic provider-auth DTOs. Provider
+  Registry and AI SDK adapters remain unchanged after removing the unfinished
+  Host-private ChatGPT adapter.
+- Read: SDK forwarding, ProviderRegistry selection, and model builder boundary.
+- Tests: SDK Core 15/15 plus Host/CLI/TUI/schema checks passed.
+
+- Status: Read-only
+- Date: 2026-08-12
+- Scope: P6.5b changes only Host-private OAuth binding and credential-envelope
+  reconciliation. SDK forwarding, ProviderRegistry, provider adapters, and
+  runtime transport admission receive no account metadata or new contract.
+- Read: Host connection owner, SDK provider methods, ProviderRegistry/model
+  builder boundary, and public connection projection.
+- Tests: focused Host provider route 114/114, SDK Core 15/15, CLI provider 5/5,
+  TUI routed 33/33, and schema validation passed; edge contracts are unchanged.
+
 - Status: Read-only
 - Date: 2026-08-11
 - Scope: P6.5a changes only the Host-private credential lease and existing

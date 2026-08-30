@@ -1353,7 +1353,14 @@
       "type": "object",
       "required": ["providerId"],
       "properties": {
-        "providerId": { "type": "string", "minLength": 1 }
+        "providerId": { "type": "string", "minLength": 1 },
+        "endpoint": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "pattern": "^[^\\x00-\\x1F\\x7F]+$",
+          "format": "uri"
+        }
       },
       "additionalProperties": false
     },
@@ -1421,6 +1428,13 @@
       "properties": {
         "providerId": { "type": "string", "minLength": 1 },
         "methodId": { "type": "string", "minLength": 1 },
+        "endpoint": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "pattern": "^[^\\x00-\\x1F\\x7F]+$",
+          "format": "uri"
+        },
         "secret": {
           "type": "string",
           "minLength": 1,

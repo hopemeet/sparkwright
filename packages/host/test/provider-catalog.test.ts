@@ -101,12 +101,39 @@ describe("Host provider catalog", () => {
     expect(registry.getProvider("openai")?.displayName).toBeUndefined();
   });
 
+  it("keeps a user-defined provider usable without any catalog entry", async () => {
+    const registry = createHostProviderRegistry({
+      configuredProviders: {
+        private_gateway: {
+          npm: "@ai-sdk/openai-compatible",
+          baseURL: "https://models.example.test/v1",
+        },
+      },
+      providerIds: ["private_gateway"],
+      includeBundledProviders: false,
+      requestedModels: { private_gateway: ["private-model"] },
+    });
+
+    expect(registry.listProviders().map((provider) => provider.id)).toEqual([
+      "private_gateway",
+    ]);
+    await expect(
+      registry.listModels({ providerId: "private_gateway" }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        id: "private-model",
+        providerId: "private_gateway",
+      }),
+    ]);
+  });
+
   it("uses the bundled snapshot when no external catalog state exists", async () => {
     const registry = createHostProviderRegistry({});
 
-    expect(BUNDLED_PROVIDER_CATALOG_VERSION).toBe(3);
+    expect(BUNDLED_PROVIDER_CATALOG_VERSION).toBe(6);
     expect(registry.listProviders().map((provider) => provider.id)).toEqual([
       "anthropic",
+      "chatgpt",
       "google",
       "openai",
       "openrouter",
@@ -121,13 +148,15 @@ describe("Host provider catalog", () => {
   });
 
   it("keeps connection descriptors code-owned and model-free", () => {
-    expect(BUNDLED_PROVIDER_CONNECTION_DESCRIPTORS).toHaveLength(4);
+    expect(BUNDLED_PROVIDER_CONNECTION_DESCRIPTORS).toHaveLength(5);
     for (const descriptor of BUNDLED_PROVIDER_CONNECTION_DESCRIPTORS) {
       expect(descriptor.driverId).toMatch(/\.v1$/);
       expect(descriptor).not.toHaveProperty("models");
-      expect(descriptor.authMethods).toContainEqual(
-        expect.objectContaining({ id: "api_key", kind: "api_key" }),
-      );
+      if (descriptor.providerId !== "chatgpt") {
+        expect(descriptor.authMethods).toContainEqual(
+          expect.objectContaining({ id: "api_key", kind: "api_key" }),
+        );
+      }
     }
     expect(
       BUNDLED_PROVIDER_CONNECTION_DESCRIPTORS.find(
@@ -141,6 +170,16 @@ describe("Host provider catalog", () => {
         implementationId: "openrouter.pkce-key.v1",
       }),
     );
+    expect(
+      BUNDLED_PROVIDER_CONNECTION_DESCRIPTORS.find(
+        (descriptor) => descriptor.providerId === "chatgpt",
+      ),
+    ).toMatchObject({
+      displayName: "ChatGPT",
+      npm: "@openai/codex",
+      officialEndpoint: "https://chatgpt.com",
+      modelDiscovery: { kind: "chatgpt_app_server" },
+    });
   });
 });
 

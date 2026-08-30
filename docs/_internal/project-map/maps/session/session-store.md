@@ -10,6 +10,15 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-08-20
+- Scope: immutable provider endpoints remain in separate Host provider state.
+  Session layout, append ownership, recovery, and consistency contracts are
+  unchanged.
+- Read: provider-auth state and session-store boundary.
+- Tests: routed provider and release checks passed; session contracts are
+  unchanged.
+
+- Status: Read-only
 - Date: 2026-08-09
 - Scope: P7.0 reuses separate provider-auth state. Session-store schemas,
   append ownership, recovery, and consistency checks are unchanged.

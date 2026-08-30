@@ -10,6 +10,14 @@ See [workspace-writes.md](workspace-writes.md) and [../../modules/coding-tools.m
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-08-20
+- Scope: endpoint validation and connection persistence are Host methods; they
+  add no shell process, command classification, sandbox, or approval path.
+- Read: provider connection dispatch and shell execution boundary.
+- Tests: routed provider and release checks passed; shell contracts are
+  unchanged.
+
+- Status: Read-only
 - Date: 2026-08-09
 - Scope: P7.0 connection management uses Host methods and credential stores; it
   adds no shell command, process launch, sandbox, or approval path.

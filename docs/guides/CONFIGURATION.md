@@ -239,6 +239,19 @@ can be selected again or removed later; remove deletes the stored credential.
 `$XDG_STATE_HOME/sparkwright/provider-auth.json` (normally
 `~/.local/state/sparkwright/provider-auth.json`) with exact driver, endpoint,
 method, grant, selection, suppression, and revision state but no credential.
+TUI `/connect` defaults new API-key connections to the official endpoint,
+offers a differing configured endpoint as an explicit labelled choice, and
+validates an editable custom endpoint before showing which hostname will
+receive the key. A selected stored connection's endpoint is immutable runtime
+authority: changing config `baseURL` affects ambient config/environment
+bindings, but cannot redirect that stored key. Use a new connection for a new
+endpoint; SparkWright never reuses the old secret automatically.
+After a connection is selected, the model step accepts either a catalog entry
+or an exact provider-local model id. For example, an OpenRouter connection can
+accept `anthropic/<model-name>` and route it as
+`openrouter/anthropic/<model-name>`. This manual path is available even when
+catalog refresh or discovery is unavailable; configured `models` allowlists and
+`modelPolicy.allow|deny` still apply in Host.
 OAuth attempts are Host-memory state bound to the initiating local connection;
 codes, PKCE verifiers, state, and tokens are not written to that metadata file.
 Completed OAuth credentials use the same OS/headless credential-store boundary
@@ -247,10 +260,30 @@ does not fall back to an environment key.
 
 Refresh code-owned model metadata with
 `sparkwright provider catalog refresh [provider] --workspace .`. The Host
-keeps a versioned last-known-good cache at
-`$XDG_STATE_HOME/sparkwright/provider-catalog.json`; invalid, stale, failed, or
-superseded refreshes cannot overwrite newer valid data. Authenticated discovery
-is available only where a built-in official driver declares it.
+always ships an offline catalog snapshot and keeps a versioned, signed
+last-known-good base at
+`$XDG_STATE_HOME/sparkwright/provider-catalog.json`. Authenticated discovery is
+available only where a built-in official driver declares it; its model list is
+stored separately under `provider-catalog.discovery/`, scoped by workspace and
+exact connection identity. Invalid, empty, stale, failed, downgraded, or
+superseded refreshes cannot overwrite newer valid data. A stale valid cache is
+still usable and is reported as stale; if no cache is usable, the bundled
+snapshot remains active. User-defined `identity.providers`, legacy `models`,
+`modelPolicy`, and `modelOverrides` do not depend on catalog network access.
+
+Deployments may opt into full signed-catalog refresh by setting an HTTPS
+`SPARKWRIGHT_PROVIDER_CATALOG_URL` together with
+`SPARKWRIGHT_PROVIDER_CATALOG_TRUSTED_KEYS`, a JSON object mapping key ids to
+trusted PEM public keys. These are process/deployment settings, not project
+configuration. When both are present, Host checks the signed base at startup
+and every six hours, fetches only when the cache is older than one day or within
+six hours of expiry, and uses ETag revalidation. Concurrent Hosts share a
+recoverable refresh lease. This background path never reads provider
+credentials or runs account discovery. Set `SPARKWRIGHT_OFFLINE=1` to disable
+both signed-catalog and authenticated model-discovery refresh requests, or
+`SPARKWRIGHT_PROVIDER_CATALOG_AUTO_REFRESH=off` to disable only the background
+signed-catalog check. Without a URL and trusted keyring,
+startup remains network-free and the bundled snapshot is used.
 
 If an older personal config still contains `apiKey`, migrate it explicitly:
 

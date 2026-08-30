@@ -1,6 +1,14 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import {
+  ChatGptAppServerError,
+  createChatGptAppServerSession,
+  logoutChatGptAccount,
+  readChatGptAccount,
+  type ChatGptAppServerFactory,
+  type ChatGptAppServerSession,
+} from "./chatgpt-app-server.js";
 
 const MAX_OAUTH_CODE_BYTES = 16 * 1024;
 const OAUTH_REQUEST_TIMEOUT_MS = 30_000;
@@ -21,6 +29,8 @@ export interface ProviderOAuthCredential {
   authRealm?: string;
   accountSlot?: string;
   tenant?: string;
+  /** The credential bytes are owned by a code-owned runtime, not this record. */
+  managedTransport?: "chatgpt_app_server";
 }
 
 export interface ProviderOAuthPresentation {
@@ -63,10 +73,21 @@ export interface ProviderOAuthDriver {
 export function createBuiltInProviderOAuthDrivers(
   options: {
     fetch?: typeof fetch;
+    chatGptAppServerFactory?: ChatGptAppServerFactory;
   } = {},
 ): ReadonlyMap<string, ProviderOAuthDriver> {
-  const driver = new OpenRouterPkceKeyDriver(options.fetch ?? fetch);
-  return new Map([[driver.implementationId, driver]]);
+  const drivers: ProviderOAuthDriver[] = [
+    new OpenRouterPkceKeyDriver(options.fetch ?? fetch),
+    new ChatGptManagedLoginDriver(
+      "browser",
+      options.chatGptAppServerFactory ?? createChatGptAppServerSession,
+    ),
+    new ChatGptManagedLoginDriver(
+      "device",
+      options.chatGptAppServerFactory ?? createChatGptAppServerSession,
+    ),
+  ];
+  return new Map(drivers.map((driver) => [driver.implementationId, driver]));
 }
 
 export function createPkceVerifier(): string {
@@ -179,6 +200,177 @@ class OpenRouterPkceKeyDriver implements ProviderOAuthDriver {
   }
 }
 
+interface PendingChatGptLogin {
+  session: ChatGptAppServerSession;
+  loginId: string;
+  removeNotificationListener: () => void;
+}
+
+class ChatGptManagedLoginDriver implements ProviderOAuthDriver {
+  readonly implementationId: string;
+  readonly issuer = "https://chatgpt.com";
+  private readonly pending = new Map<string, PendingChatGptLogin>();
+
+  constructor(
+    private readonly flow: "browser" | "device",
+    private readonly factory: ChatGptAppServerFactory,
+  ) {
+    this.implementationId = `openai.app-server.chatgpt-${flow}.v1`;
+  }
+
+  async begin(input: {
+    attemptId: string;
+    state: string;
+  }): Promise<ProviderOAuthBeginResult> {
+    let session: ChatGptAppServerSession;
+    try {
+      session = await this.factory();
+    } catch (error) {
+      throw providerOAuthStartError(error);
+    }
+
+    let resolveProof!: (proof: ProviderOAuthProof) => void;
+    let rejectProof!: (error: Error) => void;
+    const completion = new Promise<ProviderOAuthProof>((resolve, reject) => {
+      resolveProof = resolve;
+      rejectProof = reject;
+    });
+    let loginId: string | undefined;
+    const removeNotificationListener = session.onNotification(
+      (notification) => {
+        if (notification.method !== "account/login/completed") return;
+        const params = asRecord(notification.params);
+        if (!params || params.loginId !== loginId) return;
+        if (params.success === true) {
+          resolveProof({ code: input.attemptId, state: input.state });
+        } else {
+          rejectProof(new Error("ChatGPT login was not completed."));
+        }
+      },
+    );
+
+    try {
+      const result = asRecord(
+        await session.request(
+          "account/login/start",
+          this.flow === "browser"
+            ? {
+                type: "chatgpt",
+                useHostedLoginSuccessPage: true,
+                appBrand: "chatgpt",
+              }
+            : { type: "chatgptDeviceCode" },
+        ),
+      );
+      loginId = stringValue(result?.loginId);
+      if (!loginId) {
+        throw new Error("ChatGPT login did not return an attempt id.");
+      }
+      const authorizationUrl = stringValue(result?.authUrl);
+      const verificationUrl = stringValue(result?.verificationUrl);
+      const userCode = stringValue(result?.userCode);
+      if (
+        (this.flow === "browser" && !authorizationUrl) ||
+        (this.flow === "device" && (!verificationUrl || !userCode))
+      ) {
+        throw new Error("ChatGPT login did not return browser instructions.");
+      }
+      this.pending.set(input.attemptId, {
+        session,
+        loginId,
+        removeNotificationListener,
+      });
+      return {
+        presentation:
+          this.flow === "browser"
+            ? {
+                flow: "browser",
+                authorizationUrl,
+                instructions:
+                  "Finish signing in in your browser, then return to SparkWright.",
+              }
+            : {
+                flow: "device",
+                verificationUrl,
+                userCode,
+                instructions:
+                  "Open the verification page and enter the one-time code.",
+              },
+        completion,
+        cancel: async () => {
+          const pending = this.pending.get(input.attemptId);
+          if (!pending) return;
+          this.pending.delete(input.attemptId);
+          pending.removeNotificationListener();
+          await pending.session
+            .request("account/login/cancel", { loginId: pending.loginId })
+            .catch(() => undefined);
+          await pending.session.close();
+        },
+      };
+    } catch (error) {
+      removeNotificationListener();
+      await session.close();
+      throw providerOAuthStartError(error);
+    }
+  }
+
+  async complete(input: {
+    proof: ProviderOAuthProof;
+  }): Promise<ProviderOAuthCredential> {
+    const pending = this.pending.get(input.proof.code);
+    if (!pending) throw new Error("ChatGPT login attempt is unavailable.");
+    this.pending.delete(input.proof.code);
+    pending.removeNotificationListener();
+    try {
+      const result = asRecord(
+        await pending.session.request("account/read", { refreshToken: false }),
+      );
+      const account = asRecord(result?.account);
+      if (account?.type !== "chatgpt") {
+        throw new Error("ChatGPT account was not connected.");
+      }
+      return {
+        accessToken: "managed-by-openai-app-server",
+        tokenType: "managed",
+        authRealm: this.issuer,
+        managedTransport: "chatgpt_app_server",
+      };
+    } finally {
+      await pending.session.close();
+    }
+  }
+
+  async refresh(input: {
+    credential: ProviderOAuthCredential;
+  }): Promise<ProviderOAuthCredential> {
+    const account = await readChatGptAccount(this.factory, true);
+    if (!account.connected) throw new Error("ChatGPT login has expired.");
+    return input.credential;
+  }
+
+  async revoke(): Promise<void> {
+    await logoutChatGptAccount(this.factory);
+  }
+}
+
+export class ProviderOAuthStartError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ProviderOAuthStartError";
+  }
+}
+
+function providerOAuthStartError(error: unknown): ProviderOAuthStartError {
+  if (error instanceof ProviderOAuthStartError) return error;
+  if (error instanceof ChatGptAppServerError) {
+    return new ProviderOAuthStartError(error.message);
+  }
+  return new ProviderOAuthStartError(
+    "ChatGPT browser login could not be started by the bundled runtime.",
+  );
+}
+
 async function startLoopbackCallback(expectedState: string): Promise<{
   callbackUrl: string;
   completion: Promise<ProviderOAuthProof>;
@@ -263,4 +455,12 @@ function hasControlCharacter(value: string): boolean {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return isRecord(value) ? value : undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value ? value : undefined;
 }

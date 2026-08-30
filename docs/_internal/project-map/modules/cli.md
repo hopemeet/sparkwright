@@ -9,6 +9,54 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-08-20
+- Scope: direct CLI API-key connect now inherits Host's official-endpoint
+  default when no endpoint is supplied. This change adds no CLI endpoint flag;
+  configured/custom endpoint selection is currently the trusted TUI/Protocol
+  flow, while existing connection selection continues to use the stored exact
+  binding.
+- Read: CLI provider connect/selection handler, SDK request defaults, and Host
+  explicit/stored binding semantics.
+- Tests: CLI provider 5/5 plus routed Host/SDK/schema checks passed; the closing
+  release gate passed with no CLI command-shape change.
+
+- Status: Read-only
+- Date: 2026-08-20
+- Scope: `provider list` now reflects Host's more accurate `unverified` status
+  for ambient config/environment API keys. CLI commands, options, secret input,
+  and output shapes are unchanged.
+- Read: provider list/login flow and Host ambient credential projection.
+- Tests: focused CLI ambient provider-list/login regression passed after the
+  Host/CLI build; the closing release gate passed CLI 177/177.
+
+- Status: Read-only
+- Date: 2026-08-18
+- Scope: generic interactive OAuth polling now presents the bundled ChatGPT
+  browser/device methods from Host. No new CLI option, secret shape, or
+  provider-specific credential owner was added.
+- Read: provider connect method selection/polling and Host catalog projection.
+- Tests: routed Host tests and real App Server lifecycle passed; the closing
+  repository gate owns full CLI regression evidence.
+
+- Status: Verified
+- Date: 2026-08-17
+- Scope: the unfinished ChatGPT provider is no longer advertised by
+  `provider connect`. Existing generic OAuth method selection and polling are
+  unchanged; OpenRouter browser login remains available.
+- Read: provider command method selection/polling and Host catalog projection.
+- Tests: CLI provider 5/5 plus routed Host/SDK/schema checks passed.
+
+- Status: Read-only
+- Date: 2026-08-12
+- Scope: OAuth account binding is finalized and enforced behind existing Host
+  methods. CLI connect, opaque connection inventory, and exact-id selection
+  require no new option or output field.
+- Read: CLI provider commands, SDK forwarding, Host OAuth completion/selection,
+  and public connection projection.
+- Tests: CLI provider 5/5 and the routed Host/SDK/schema checks passed; CLI
+  contracts are unchanged.
+
+- Status: Read-only
 - Date: 2026-08-10
 - Scope: CLI credential input and provider commands are unchanged. Interactive
   and stdin submissions still cross the Host secret boundary; the Host-owned

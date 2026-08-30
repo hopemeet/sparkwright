@@ -101,10 +101,29 @@ printf '%s\n' "$OPENAI_API_KEY" | \
 In the TUI, run `/connect`. Existing connections are listed before the login
 methods: press Enter to select one, press `d` to disconnect it without deleting
 the stored credential, or choose `+ add connection` to enter the masked API key
-or browser/device/code login flow. After selection or login, choose a model.
+or browser/device/code login flow. After selection or login, choose a catalog
+model or type its exact provider-local model id. For example, with OpenRouter,
+typing `anthropic/<model-name>` selects
+`openrouter/anthropic/<model-name>` even if model discovery is temporarily
+unavailable.
 The connection is shared with CLI/Host state, so `/model` immediately sees
 models from connected providers. No YAML model list or API-key field is
 required.
+
+ChatGPT account login and OpenAI API keys appear under one `OpenAI` row. Choose
+`Continue with ChatGPT` for the default browser login or `Use OpenAI API key`
+for API billing. `Other sign-in options…` contains device-code login for remote
+or headless terminals where the browser callback cannot return to this device.
+This grouping does not mix credentials or endpoints: ChatGPT and API
+connections remain separate and select only their own models.
+
+For an API key, `/connect` next shows the official endpoint first. If config or
+environment sets a different endpoint, it appears as a separate “Configured
+custom endpoint” choice; “Custom endpoint / gateway…” accepts another URL.
+Host validates custom URLs before the key prompt, and the prompt names the exact
+destination hostname. Selecting a different endpoint creates a new connection;
+an existing key is never copied. Once selected, a stored connection keeps its
+own endpoint even if project `baseURL` later changes.
 
 On macOS, Keychain password handling is isolated from the product terminal.
 `/connect` may briefly show `working…`, then should advance to model selection;
@@ -141,6 +160,8 @@ their official package and endpoint binding is retained. A non-empty provider
 `models` map remains an explicit allowlist. New configs can use
 `modelPolicy.allow|deny` with separate `modelOverrides`. In `/model`, `Ctrl+F`
 toggles a favorite; favorites and recent usage affect picker order only.
+Manual model input does not bypass a configured provider allowlist or deny
+policy.
 
 Inspect the resolved provider/model catalog and credential status without
 printing keys:

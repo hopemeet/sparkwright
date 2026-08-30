@@ -408,7 +408,7 @@ For `provider-auth.ts`, `provider-oauth.ts`, `provider-credential-store.ts`,
 methods, run:
 
 ```bash
-npm --workspace @sparkwright/host test -- test/provider-auth.test.ts test/provider-oauth.test.ts test/provider-credential-store.test.ts test/provider-protocol.test.ts test/model-factory.test.ts test/protocol.test.ts
+npm --workspace @sparkwright/host test -- test/provider-catalog-generator.test.ts test/provider-catalog.test.ts test/provider-catalog-store.test.ts test/provider-catalog-source.test.ts test/provider-auth.test.ts test/provider-oauth.test.ts test/provider-credential-store.test.ts test/provider-protocol.test.ts test/model-factory.test.ts test/protocol.test.ts
 npm --workspace @sparkwright/sdk-core test -- test/client.test.ts
 npm --workspace @sparkwright/cli test -- test/cli.test.ts -t provider
 npm --workspace @sparkwright/tui test -- test/connect-dialog.test.tsx test/model-dialog.test.tsx test/sdk-cutover.test.ts test/build-command-registry.test.ts
@@ -422,8 +422,16 @@ material. Cover 0600/corruption behavior, cross-manager writes and revision
 observation, local secret submission, remote denial, exact endpoint binding,
 no ambient fallback, ambient suppression, transactional migration rollback,
 masked TUI input, principal/client-bound OAuth attempts, TTL/cancel/replay,
-serialized refresh and removal, adapter replacement, abortable waits, and
-fail-fast behavior for clients that did not advertise interactive auth.
+serialized refresh and removal, exact multi-account bindings, completion realm
+rejection, refresh identity-drift rejection, locked legacy identity migration,
+OAuth catalog discovery without raw-envelope fallback, endpoint-only public
+fingerprints, shared refresh failure, migration/refresh races, adapter
+replacement, abortable waits, and fail-fast behavior for clients that did not
+advertise interactive auth. For ChatGPT also cover package-relative App Server
+startup, browser/device presentation and cancellation, managed-marker
+admission, account-visible discovery, read-only isolated turns, dynamic-tool
+projection, built-in-action denial, browser auto-open/fallback, and a real
+version-matched runtime smoke.
 
 For `project-trust.ts`, project-source admission, or trust protocol/UI changes,
 run:

@@ -9,6 +9,15 @@ See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../m
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-08-20
+- Scope: provider endpoint choice and stored-binding resolution finish in Host
+  before adapter construction. Agent Runtime task, Workflow, coordination, and
+  child prompt/outcome contracts are unchanged.
+- Read: Host provider runtime handoff and Agent Runtime assembly boundary.
+- Tests: routed provider and release checks passed; no Agent Runtime contract
+  changed.
+
+- Status: Read-only
 - Date: 2026-08-09
 - Scope: P7.0 stored-connection management visibility is resolved by Host
   before model construction. Task, Workflow, child-agent, and coordination

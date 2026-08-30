@@ -12,6 +12,102 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-22
+- Scope: Host now checks a configured signed base catalog at startup and on a
+  six-hour timer, fetches only when due, coalesces same-process calls, and uses a
+  recoverable cross-process network lease. Background refresh never performs
+  credentialed discovery; failure preserves signed LKG/bundled data. Custom
+  configured providers bypass code-owned connection resolution and selected
+  custom endpoints no longer inherit official catalog inventory.
+- Read: HostService lifecycle, ProviderAuthManager signed/discovery split,
+  ProviderCatalogStore lease/CAS paths, model factory, and generator shards.
+- Tests: focused Host catalog/store/auth/model/generator 61/61, Host/TUI/test
+  typechecks, and TUI exact-model interaction checks passed.
+
+- Status: Verified
+- Date: 2026-08-21
+- Scope: Host composes the code-owned bundled/signed provider catalog with
+  workspace-and-connection-scoped discovery overlays while preserving user
+  provider definitions and policy. Signed refresh is HTTPS-only,
+  size/time bounded, Ed25519-authenticated, rollback-resistant, and degrades to
+  stale LKG or the bundled snapshot without blocking authenticated discovery.
+- Read: provider catalog, generated snapshot, catalog source/store,
+  ProviderAuthManager composition, model construction, Host exports, tests,
+  public configuration/troubleshooting docs, and maintainer operations.
+- Tests: Host provider route 140/140 plus full Host 648/648, SDK Core 15/15,
+  CLI provider 5/5, TUI routed 40/40, schema and test typechecks, catalog
+  generator/source/store regressions, production audit, regression matrix, and
+  package/install checks.
+
+- Status: Verified
+- Date: 2026-08-20
+- Scope: explicit API-key connections now default to each bundled provider's
+  official endpoint. Host separately projects a differing configured binding,
+  validates and normalizes custom endpoint input before secret submission, and
+  persists the exact endpoint in a new connection. A selected stored endpoint
+  becomes runtime authority while config still supplies model policy/options;
+  project `baseURL` cannot redirect the stored key. OAuth remains official-only.
+- Read: ProviderAuthManager catalog/method/secret/selection/model-resolution
+  paths, Host runtime/server dispatch, normalization guards, and model factory.
+- Tests: Host provider auth/protocol/model 41/41, schema consistency, malicious
+  endpoint denial, selected-endpoint immutability, and real PTY endpoint flows
+  passed; the closing release gate passed Host 635/635.
+
+- Status: Verified
+- Date: 2026-08-20
+- Scope: ambient environment/config API keys remain usable connections but are
+  projected as `unverified` unless a driver-owned safe validation has actually
+  run. Credential presence alone no longer produces the stronger `ready`
+  claim, including catalog, login/refresh, and runtime lease projection.
+- Read: ProviderAuthManager catalog/status projection, ambient lifecycle,
+  runtime credential resolution, Protocol dispatch, and CLI/TUI consumers.
+- Tests: Host provider auth/protocol 33/33, CLI ambient provider-list regression,
+  Host build, and real TUI catalog projection passed; the closing release gate
+  passed Host 634/634.
+
+- Status: Verified
+- Date: 2026-08-18
+- Scope: Host now owns the bundled ChatGPT App Server lifecycle, browser/device
+  OAuth driver, managed credential marker, account-visible discovery, and
+  fail-closed `ModelAdapter`. Package-relative resolution replaces all user
+  executable/PATH assumptions. The managed marker is shorter than the macOS
+  Keychain interactive-input boundary, and the exact historical 128-byte
+  truncation is accepted for no-login recovery.
+- Read: `chatgpt-app-server.ts`, provider catalog/auth/OAuth, model
+  builder/factory, exports, tests, and dependency manifest.
+- Tests: focused ChatGPT Host 6/6, Host typecheck/build, historical-marker
+  recovery, and real account/model/text/tool smokes passed; the closing release
+  gate passed Host 634/634 and the production audit/install smokes.
+
+- Status: Verified
+- Date: 2026-08-17
+- Scope: Host no longer owns or launches an external ChatGPT process. The
+  unfinished provider, managed-marker credential, model adapter, and discovery
+  branch were removed. ProviderAuthManager retains generic OAuth/PKCE,
+  credential storage, account binding, refresh locking, grants, and selection.
+- Read: provider catalog/auth/OAuth, model builder/factory, public exports, and
+  first-party ChatGPT design boundary.
+- Tests: focused Host provider/model/Protocol 47/47, Host typecheck/build, and
+  routed SDK/CLI/TUI/schema checks passed.
+
+- Status: Verified
+- Date: 2026-08-12
+- Scope: ProviderAuthManager now finalizes OAuth bindings with code-owned realm
+  and optional account/tenant identity. Completion, exact selection, lazy
+  legacy reconciliation, refresh, runtime lease, and state validation share
+  that binding; authenticated catalog discovery now shares the same resolver.
+  Public fingerprints are endpoint-only, while exact identity remains private.
+  A refresh-specific generation/outcome prevents migration or failure from
+  being misread as another Host's successful refresh.
+- Read: provider auth/OAuth credential envelope, connection state and lock,
+  runtime/catalog resolution, public summary projection, and focused
+  regressions.
+- Tests: focused Host provider route 119/119 and routed SDK/CLI/TUI/schema
+  checks passed; the closing release gate passed Host 632/632, Core 688/688,
+  CLI 177/177, TUI 560/560, 16/16 regressions, production audit, and both
+  install smokes.
+
+- Status: Verified
 - Date: 2026-08-11
 - Scope: ProviderAuthManager now resolves a typed runtime credential instead of
   flattening every OAuth result into an API key. Expiring OAuth credentials
@@ -883,6 +979,14 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 - `packages/host/src/indexed-delegate-tool.ts`
 - `packages/host/src/agent-profiles.ts`
 - `packages/host/src/crash-log.ts`
+- `packages/host/src/provider-catalog.ts`
+- `packages/host/src/provider-catalog-store.ts`
+- `packages/host/src/provider-catalog-source.ts`
+- `packages/host/src/generated/provider-model-catalog.ts`
+- `packages/host/src/provider-auth.ts`
+- `packages/host/src/provider-oauth.ts`
+- `packages/host/src/provider-credential-store.ts`
+- `packages/host/src/chatgpt-app-server.ts`
 - `packages/host/src/model-builder.ts`
 - `packages/host/src/model-factory.ts`
 - `packages/host/src/config.ts`
@@ -902,6 +1006,8 @@ Owns:
   envelope passed to every live episode
 - host protocol method implementations such as `run.start`, `run.resume`, `session.inspect`, `session.compact`, and `capability.inspect`
 - provider/model construction for local host runs
+- offline provider catalog generation, signed global LKG validation, and
+  workspace/connection-scoped authenticated discovery overlays
 - provider pricing resolution for run metadata, session compaction usage hints,
   and `capability.inspect` diagnostics
 - skill, MCP, shell, cron, and agent capability preparation

@@ -8,6 +8,7 @@ import type {
 } from "@sparkwright/protocol";
 import { isBackInput } from "../lib/input-key.js";
 import { windowAroundCursor } from "../lib/list-window.js";
+import { openExternalUrl } from "../lib/open-external-url.js";
 import { useTheme } from "../lib/theme-context.js";
 import { DialogFrame } from "./dialog-frame.js";
 import {
@@ -20,21 +21,49 @@ type ConnectStage =
   | "provider"
   | "connection"
   | "method"
+  | "method_secondary"
+  | "endpoint"
+  | "endpoint_input"
   | "secret"
   | "oauth"
   | "model";
 
 const ADD_CONNECTION_KEY = "__add_connection__";
+const OPENAI_GROUP_KEY = "__openai__";
+const OTHER_METHODS_KEY = "__other_methods__";
+const OFFICIAL_ENDPOINT_KEY = "__official_endpoint__";
+const CONFIGURED_ENDPOINT_KEY = "__configured_endpoint__";
+const CUSTOM_ENDPOINT_KEY = "__custom_endpoint__";
+
+type CatalogProvider = ProviderCatalogSnapshot["providers"][number];
+type AuthMethod = ProviderAuthMethodsSnapshot["methods"][number];
+
+interface ProviderGroup {
+  key: string;
+  displayName: string;
+  providers: CatalogProvider[];
+}
+
+interface AuthMethodChoice {
+  key: string;
+  providerId: string;
+  snapshot: ProviderAuthMethodsSnapshot;
+  method: AuthMethod;
+  label: string;
+  secondary: boolean;
+}
 
 export function ConnectDialog(props: {
   catalog: ProviderCatalogSnapshot | null;
   loading: boolean;
   onLoadMethods: (
     providerId: string,
+    endpoint?: string,
   ) => Promise<ProviderAuthMethodsSnapshot | null>;
   onSubmitSecret: (
     providerId: string,
     methodId: string,
+    endpoint: string,
     secret: string,
   ) => Promise<ProviderConnectionSummary | null>;
   onSelectConnection: (
@@ -63,9 +92,21 @@ export function ConnectDialog(props: {
   const theme = useTheme();
   const [stage, setStage] = useState<ConnectStage>("provider");
   const [cursor, setCursor] = useState(0);
+  const [providerGroupKey, setProviderGroupKey] = useState<string>();
   const [providerId, setProviderId] = useState<string>();
   const [methods, setMethods] = useState<ProviderAuthMethodsSnapshot>();
+  const [methodChoices, setMethodChoices] = useState<AuthMethodChoice[]>([]);
   const [methodId, setMethodId] = useState<string>();
+  const [methodParentStage, setMethodParentStage] = useState<
+    "provider" | "connection"
+  >("provider");
+  const [methodReturnStage, setMethodReturnStage] = useState<
+    "method" | "method_secondary"
+  >("method");
+  const [endpointBinding, setEndpointBinding] =
+    useState<ProviderAuthMethodsSnapshot["binding"]>();
+  const [endpointInput, setEndpointInput] = useState("");
+  const [modelInput, setModelInput] = useState("");
   const [secret, setSecret] = useState("");
   const [oauthCode, setOauthCode] = useState("");
   const [oauthAttempt, setOauthAttempt] =
@@ -74,15 +115,52 @@ export function ConnectDialog(props: {
   const [error, setError] = useState<string>();
   const [connectedCatalog, setConnectedCatalog] =
     useState<ProviderCatalogSnapshot>();
+  const [browserLaunch, setBrowserLaunch] = useState<{
+    url: string;
+    opened: boolean;
+  }>();
 
   const activeCatalog = connectedCatalog ?? props.catalog;
   const providers = activeCatalog?.providers ?? [];
-  const selectedProvider = providers.find(
-    (provider) => provider.id === providerId,
+  const providerGroups = groupCatalogProviders(providers);
+  const selectedGroup = providerGroups.find(
+    (group) => group.key === providerGroupKey,
   );
-  const connections = selectedProvider?.connections ?? [];
-  const methodItems = methods?.methods ?? [];
-  const selectedMethod = methodItems.find((method) => method.id === methodId);
+  const connections =
+    selectedGroup?.providers.flatMap(
+      (provider) => provider.connections ?? [],
+    ) ?? [];
+  const primaryMethodChoices = methodChoices.filter(
+    (choice) => !choice.secondary,
+  );
+  const secondaryMethodChoices = methodChoices.filter(
+    (choice) => choice.secondary,
+  );
+  const selectedMethod = methods?.methods.find(
+    (method) => method.id === methodId,
+  );
+  const endpointItems = methods
+    ? [
+        {
+          key: OFFICIAL_ENDPOINT_KEY,
+          label: `Official endpoint · ${methods.binding.endpoint}`,
+        },
+        ...(methods.configuredBinding
+          ? [
+              {
+                key: CONFIGURED_ENDPOINT_KEY,
+                label: `Configured custom endpoint · ${methods.configuredBinding.endpoint}`,
+              },
+            ]
+          : []),
+        {
+          key: CUSTOM_ENDPOINT_KEY,
+          label: "Custom endpoint / gateway…",
+        },
+      ]
+    : [];
+  const showMethodBinding =
+    methods !== undefined && (stage === "endpoint" || stage === "secret");
   const models = useMemo(
     () =>
       [
@@ -100,29 +178,49 @@ export function ConnectDialog(props: {
   );
   const displayItems =
     stage === "provider"
-      ? providers.map((provider) => ({
-          key: provider.id,
-          label: providerLabel(provider),
+      ? providerGroups.map((group) => ({
+          key: group.key,
+          label: providerGroupLabel(group),
         }))
       : stage === "connection"
         ? [
             ...connections.map((connection) => ({
               key: connection.id,
-              label: connectionLabel(connection),
+              label: connectionLabel(
+                connection,
+                selectedGroup?.key === OPENAI_GROUP_KEY,
+              ),
             })),
             { key: ADD_CONNECTION_KEY, label: "+ add connection" },
           ]
         : stage === "method"
-          ? methodItems.map((method) => ({
-              key: method.id,
-              label: method.label,
-            }))
-          : stage === "model"
-            ? models.map((model) => ({
-                key: model.ref,
-                label: `${props.preferences?.favorites.includes(model.ref) ? "★ " : ""}${model.ref}`,
+          ? [
+              ...primaryMethodChoices.map((choice) => ({
+                key: choice.key,
+                label: choice.label,
+              })),
+              ...(secondaryMethodChoices.length > 0
+                ? [
+                    {
+                      key: OTHER_METHODS_KEY,
+                      label: "Other sign-in options…",
+                    },
+                  ]
+                : []),
+            ]
+          : stage === "method_secondary"
+            ? secondaryMethodChoices.map((choice) => ({
+                key: choice.key,
+                label: choice.label,
               }))
-            : [];
+            : stage === "endpoint"
+              ? endpointItems
+              : stage === "model"
+                ? models.map((model) => ({
+                    key: model.ref,
+                    label: `${props.preferences?.favorites.includes(model.ref) ? "★ " : ""}${model.ref}`,
+                  }))
+                : [];
   const boundedCursor =
     displayItems.length === 0 ? 0 : Math.min(cursor, displayItems.length - 1);
   const { start, visible } = windowAroundCursor(displayItems, boundedCursor, 8);
@@ -131,18 +229,40 @@ export function ConnectDialog(props: {
     if (props.catalog) setConnectedCatalog(props.catalog);
   }, [props.catalog?.revision, props.catalog?.catalogVersion]);
 
-  function openMethods(nextProviderId: string): void {
+  function openMethods(
+    group: ProviderGroup,
+    parentStage: "provider" | "connection",
+  ): void {
     setBusy(true);
     setError(undefined);
-    void props
-      .onLoadMethods(nextProviderId)
-      .then((snapshot) => {
-        if (!snapshot || snapshot.methods.length === 0) {
+    void Promise.all(
+      group.providers.map(async (provider) => {
+        try {
+          return await props.onLoadMethods(provider.id);
+        } catch {
+          return null;
+        }
+      }),
+    )
+      .then((snapshots) => {
+        const availableSnapshots = snapshots.filter(
+          (snapshot): snapshot is ProviderAuthMethodsSnapshot =>
+            snapshot !== null && snapshot.methods.length > 0,
+        );
+        const choices = authMethodChoices(group, availableSnapshots);
+        if (choices.length === 0) {
           setError("This provider has no supported connection method.");
           return;
         }
-        setProviderId(nextProviderId);
-        setMethods(snapshot);
+        setProviderGroupKey(group.key);
+        setProviderId(undefined);
+        setMethods(undefined);
+        setMethodChoices(choices);
+        setMethodId(undefined);
+        setMethodParentStage(parentStage);
+        setMethodReturnStage("method");
+        setEndpointBinding(undefined);
+        setEndpointInput("");
         setCursor(0);
         setStage("method");
       })
@@ -172,7 +292,18 @@ export function ConnectDialog(props: {
         const catalog = await props.onRefresh(providerId);
         if (!active) return;
         setOauthAttempt(next);
-        if (catalog) setConnectedCatalog(catalog);
+        if (catalog) {
+          setConnectedCatalog(catalog);
+          setError(
+            hasAvailableProviderModels(catalog, providerId)
+              ? undefined
+              : "Connected, but no models were returned. Press Ctrl+R to retry.",
+          );
+        } else {
+          setError(
+            "Connected, but model discovery failed. Press Ctrl+R to retry.",
+          );
+        }
         setCursor(0);
         setStage("model");
         setBusy(false);
@@ -192,6 +323,34 @@ export function ConnectDialog(props: {
     };
   }, [stage, oauthAttempt?.id, oauthAttempt?.status]);
 
+  useEffect(() => {
+    const url = oauthAttempt?.authorizationUrl;
+    if (
+      stage !== "oauth" ||
+      oauthAttempt?.flow !== "browser" ||
+      oauthAttempt.status !== "pending" ||
+      !url ||
+      browserLaunch?.url === url
+    ) {
+      return;
+    }
+    let active = true;
+    setBrowserLaunch({ url, opened: false });
+    void openExternalUrl(url).then((opened) => {
+      if (active) setBrowserLaunch({ url, opened });
+    });
+    return () => {
+      active = false;
+    };
+  }, [
+    stage,
+    oauthAttempt?.id,
+    oauthAttempt?.flow,
+    oauthAttempt?.status,
+    oauthAttempt?.authorizationUrl,
+    browserLaunch?.url,
+  ]);
+
   useInput((input, key) => {
     if (busy) return;
     if (isBackInput(input, key)) {
@@ -204,21 +363,39 @@ export function ConnectDialog(props: {
         }
         setError(undefined);
         setCursor(0);
-        setStage(
+        const nextStage =
           stage === "model"
             ? !selectedMethod
               ? "connection"
               : selectedMethod.type === "oauth"
-                ? "method"
+                ? methodReturnStage
                 : "secret"
             : stage === "oauth"
-              ? "method"
+              ? methodReturnStage
               : stage === "secret"
-                ? "method"
-                : stage === "connection"
-                  ? "provider"
-                  : "provider",
-        );
+                ? "endpoint"
+                : stage === "endpoint_input"
+                  ? "endpoint"
+                  : stage === "endpoint"
+                    ? methodReturnStage
+                    : stage === "method_secondary"
+                      ? "method"
+                      : stage === "method"
+                        ? methodParentStage
+                        : stage === "connection"
+                          ? "provider"
+                          : "provider";
+        if (nextStage === "provider") {
+          setProviderGroupKey(undefined);
+          setProviderId(undefined);
+          setMethods(undefined);
+          setMethodChoices([]);
+          setMethodId(undefined);
+          setEndpointBinding(undefined);
+          setEndpointInput("");
+        }
+        if (stage === "model") setModelInput("");
+        setStage(nextStage);
       }
       return;
     }
@@ -257,15 +434,56 @@ export function ConnectDialog(props: {
       }
       return;
     }
+    if (stage === "endpoint_input") {
+      if (key.return) {
+        const endpoint = endpointInput.trim();
+        if (!endpoint || !providerId) return;
+        setBusy(true);
+        setError(undefined);
+        void props
+          .onLoadMethods(providerId, endpoint)
+          .then((snapshot) => {
+            if (!snapshot) {
+              setError(
+                "Endpoint validation failed. Check the URL and try again.",
+              );
+              return;
+            }
+            setEndpointInput(snapshot.binding.endpoint);
+            setEndpointBinding(snapshot.binding);
+            setCursor(0);
+            setStage("secret");
+          })
+          .finally(() => setBusy(false));
+        return;
+      }
+      if (key.backspace || key.delete) {
+        setEndpointInput((current) => [...current].slice(0, -1).join(""));
+        return;
+      }
+      if (key.ctrl && input === "u") {
+        setEndpointInput("");
+        return;
+      }
+      if (!key.ctrl && !key.meta && input && endpointInput.length < 2_048) {
+        setEndpointInput((current) => current + input);
+      }
+      return;
+    }
     if (stage === "secret") {
       if (key.return) {
-        if (!secret || !providerId || !methodId) return;
+        if (!secret || !providerId || !methodId || !endpointBinding) return;
         const submitted = secret;
         setSecret("");
         setBusy(true);
         setError(undefined);
         void props
-          .onSubmitSecret(providerId, methodId, submitted)
+          .onSubmitSecret(
+            providerId,
+            methodId,
+            endpointBinding.endpoint,
+            submitted,
+          )
           .then(async (connection) => {
             if (!connection) {
               setError(
@@ -293,16 +511,63 @@ export function ConnectDialog(props: {
         setSecret((current) => current + input);
       return;
     }
-    if (stage === "provider" && key.ctrl && input === "r") {
+    if (
+      (stage === "provider" || stage === "model") &&
+      key.ctrl &&
+      input === "r"
+    ) {
       setBusy(true);
       setError(undefined);
-      void props
-        .onRefresh()
+      const refresh =
+        stage === "model" ? props.onRefresh(providerId) : props.onRefresh();
+      void refresh
         .then((catalog) => {
-          if (catalog) setConnectedCatalog(catalog);
+          if (!catalog) {
+            setError(
+              stage === "model"
+                ? "Model catalog refresh failed. Press Ctrl+R to retry."
+                : "Provider catalog refresh failed. Press Ctrl+R to retry.",
+            );
+            return;
+          }
+          setConnectedCatalog(catalog);
+          if (
+            stage === "model" &&
+            !hasAvailableProviderModels(catalog, providerId)
+          ) {
+            setError(
+              "Connected, but no models were returned. Press Ctrl+R to retry.",
+            );
+          }
         })
         .finally(() => setBusy(false));
       return;
+    }
+    if (stage === "model") {
+      if (key.tab) {
+        const model = models[boundedCursor];
+        if (model) setModelInput(providerLocalModelId(model.ref, providerId));
+        return;
+      }
+      if (key.return) {
+        const typedModel = normalizeProviderModelRef(providerId, modelInput);
+        const model = models[boundedCursor];
+        if (typedModel) props.onCommitModel(typedModel);
+        else if (model) props.onCommitModel(model.ref);
+        return;
+      }
+      if (key.backspace || key.delete) {
+        setModelInput((current) => [...current].slice(0, -1).join(""));
+        return;
+      }
+      if (key.ctrl && input === "u") {
+        setModelInput("");
+        return;
+      }
+      if (!key.ctrl && !key.meta && input && modelInput.length < 512) {
+        setModelInput((current) => current + input);
+        return;
+      }
     }
     if (
       stage === "connection" &&
@@ -348,31 +613,43 @@ export function ConnectDialog(props: {
     }
     if (!key.return) return;
     if (stage === "provider") {
-      const provider = providers[boundedCursor];
-      if (!provider) return;
-      setProviderId(provider.id);
+      const group = providerGroups[boundedCursor];
+      if (!group) return;
+      setProviderGroupKey(group.key);
+      setProviderId(undefined);
       setMethods(undefined);
+      setMethodChoices([]);
       setMethodId(undefined);
+      setEndpointBinding(undefined);
+      setEndpointInput("");
       setCursor(0);
       setError(undefined);
-      if ((provider.connections?.length ?? 0) > 0) {
+      const connectionCount = group.providers.reduce(
+        (count, provider) => count + (provider.connections?.length ?? 0),
+        0,
+      );
+      if (connectionCount > 0) {
         setStage("connection");
       } else {
-        openMethods(provider.id);
+        openMethods(group, "provider");
       }
       return;
     }
     if (stage === "connection") {
       const item = displayItems[boundedCursor];
-      if (!item || !providerId) return;
+      if (!item || !selectedGroup) return;
       if (item.key === ADD_CONNECTION_KEY) {
-        openMethods(providerId);
+        openMethods(selectedGroup, "connection");
         return;
       }
       const connection = connections.find(
         (candidate) => candidate.id === item.key,
       );
       if (!connection) return;
+      setProviderId(connection.providerId);
+      setMethods(undefined);
+      setMethodChoices([]);
+      setMethodId(undefined);
       setBusy(true);
       setError(undefined);
       void props
@@ -384,22 +661,36 @@ export function ConnectDialog(props: {
           }
           setConnectedCatalog(catalog);
           setCursor(0);
+          setModelInput("");
           setStage("model");
         })
         .finally(() => setBusy(false));
       return;
     }
-    if (stage === "method") {
-      const method = methodItems[boundedCursor];
-      if (!method) return;
+    if (stage === "method" || stage === "method_secondary") {
+      const item = displayItems[boundedCursor];
+      if (stage === "method" && item?.key === OTHER_METHODS_KEY) {
+        setCursor(0);
+        setError(undefined);
+        setStage("method_secondary");
+        return;
+      }
+      const choices =
+        stage === "method" ? primaryMethodChoices : secondaryMethodChoices;
+      const choice = choices.find((candidate) => candidate.key === item?.key);
+      if (!choice) return;
+      const { method, snapshot, providerId: nextProviderId } = choice;
+      setProviderId(nextProviderId);
+      setMethods(snapshot);
       setMethodId(method.id);
+      setMethodReturnStage(stage);
       setCursor(0);
       if (method.type === "oauth") {
-        if (!providerId) return;
         setBusy(true);
         setError(undefined);
+        setBrowserLaunch(undefined);
         void props
-          .onBeginOAuth(providerId, method.id)
+          .onBeginOAuth(nextProviderId, method.id)
           .then((attempt) => {
             if (!attempt) {
               setError("OAuth login could not be started.");
@@ -411,8 +702,29 @@ export function ConnectDialog(props: {
           })
           .finally(() => setBusy(false));
       } else {
-        setStage("secret");
+        setEndpointBinding(undefined);
+        setStage("endpoint");
       }
+      return;
+    }
+    if (stage === "endpoint") {
+      const item = endpointItems[boundedCursor];
+      if (!item || !methods) return;
+      if (item.key === CUSTOM_ENDPOINT_KEY) {
+        setEndpointInput("");
+        setError(undefined);
+        setStage("endpoint_input");
+        return;
+      }
+      const binding =
+        item.key === CONFIGURED_ENDPOINT_KEY
+          ? methods.configuredBinding
+          : methods.binding;
+      if (!binding) return;
+      setEndpointBinding(binding);
+      setError(undefined);
+      setCursor(0);
+      setStage("secret");
       return;
     }
     const model = models[boundedCursor];
@@ -426,17 +738,39 @@ export function ConnectDialog(props: {
           connect
         </Text>
         <Text color={theme.muted}>
-          {"  "}provider → connection or method → model
+          {"  "}provider → connection or sign-in → endpoint → model
         </Text>
       </Box>
-      {methods ? (
-        <Text color={theme.muted}>endpoint: {methods.binding.endpoint}</Text>
+      {showMethodBinding && methods ? (
+        <Text color={theme.muted}>
+          endpoint:{" "}
+          {stage === "secret"
+            ? endpointBinding?.endpoint
+            : methods.binding.endpoint}
+        </Text>
       ) : null}
-      {stage === "secret" ? (
+      {stage === "endpoint_input" ? (
         <>
+          <Text color={theme.warning}>
+            Custom endpoints receive the API key you enter next.
+          </Text>
+          <Box>
+            <Text color={theme.success}>{"› "}Endpoint: </Text>
+            <Text>{endpointInput}</Text>
+            <Text color={theme.accent}>▎</Text>
+          </Box>
           <Text color={theme.muted}>
-            API key is sent only to the local Host credential store. It is not
-            written to config.
+            enter validate · ctrl+u clear · esc back
+          </Text>
+        </>
+      ) : stage === "secret" ? (
+        <>
+          <Text color={theme.warning}>
+            Requests will send this API key to{" "}
+            {endpointHost(endpointBinding?.endpoint)}.
+          </Text>
+          <Text color={theme.muted}>
+            The key is stored by the local Host and is not written to config.
           </Text>
           <Box>
             <Text color={theme.success}>{"› "}API key: </Text>
@@ -450,10 +784,17 @@ export function ConnectDialog(props: {
       ) : stage === "oauth" && oauthAttempt ? (
         <Box flexDirection="column">
           <Text color={theme.muted}>
-            {oauthAttempt.instructions ??
-              "Complete authorization, then return here."}
+            {browserLaunch?.url === oauthAttempt.authorizationUrl &&
+            browserLaunch?.opened
+              ? "Browser opened. Finish signing in, then return to SparkWright."
+              : (oauthAttempt.instructions ??
+                "Complete authorization, then return here.")}
           </Text>
-          {oauthAttempt.authorizationUrl ? (
+          {oauthAttempt.authorizationUrl &&
+          !(
+            browserLaunch?.url === oauthAttempt.authorizationUrl &&
+            browserLaunch?.opened
+          ) ? (
             <Text color={theme.accent}>{oauthAttempt.authorizationUrl}</Text>
           ) : null}
           {oauthAttempt.verificationUrl ? (
@@ -478,17 +819,37 @@ export function ConnectDialog(props: {
           </Text>
         </Box>
       ) : stage === "model" ? (
-        <Text color={theme.success}>
-          Connected. Choose the model for the next run.
-        </Text>
+        <Box flexDirection="column">
+          <Text color={theme.success}>
+            Connected. Choose the model for the next run.
+          </Text>
+          <Text color={theme.muted}>
+            Select a catalog entry or enter its exact model ID.
+          </Text>
+          <Box>
+            <Text color={theme.success}>
+              {"› "}Model ID{providerId ? ` (${providerId}/)` : ""}:{" "}
+            </Text>
+            <Text>{modelInput}</Text>
+            <Text color={theme.accent}>▎</Text>
+          </Box>
+        </Box>
       ) : stage === "connection" ? (
         <Text color={theme.muted}>
           Enter selects for this workspace. Disconnect keeps stored credentials.
         </Text>
+      ) : stage === "method_secondary" ? (
+        <Text color={theme.muted}>
+          Device code is intended for terminals where browser login cannot
+          return to this device.
+        </Text>
       ) : null}
       {props.loading || busy ? <Text color={theme.muted}>working…</Text> : null}
       {error ? <Text color={theme.error}>{error}</Text> : null}
-      {stage !== "secret" && stage !== "oauth" && visible.length > 0 ? (
+      {stage !== "secret" &&
+      stage !== "oauth" &&
+      stage !== "endpoint_input" &&
+      visible.length > 0 ? (
         <Box flexDirection="column" marginTop={1}>
           {visible.map((item, index) => {
             const selected = start + index === boundedCursor;
@@ -504,37 +865,218 @@ export function ConnectDialog(props: {
             );
           })}
         </Box>
-      ) : stage !== "secret" && stage !== "oauth" && !props.loading && !busy ? (
+      ) : stage !== "secret" &&
+        stage !== "oauth" &&
+        stage !== "endpoint_input" &&
+        !props.loading &&
+        !busy ? (
         <Text color={theme.muted}>(no available entries)</Text>
       ) : null}
-      {stage !== "secret" && stage !== "oauth" ? (
+      {stage !== "secret" && stage !== "oauth" && stage !== "endpoint_input" ? (
         <Text color={theme.muted}>
           {stage === "connection"
             ? "↑↓ select · enter use/add · d disconnect · esc back"
-            : "↑↓ select · enter continue · ctrl+r refresh catalog · esc back"}
+            : stage === "model"
+              ? "type exact ID · ↑↓ select · tab fill · enter use · ctrl+r refresh · esc back"
+              : "↑↓ select · enter continue · ctrl+r refresh catalog · esc back"}
         </Text>
       ) : null}
     </DialogFrame>
   );
 }
 
-function providerLabel(
-  provider: NonNullable<ProviderCatalogSnapshot["providers"]>[number],
-): string {
-  const name = provider.displayName ?? provider.id;
-  const count = provider.connections?.length ?? 0;
-  const connectionCount =
-    count > 0 ? ` · ${count} connection${count === 1 ? "" : "s"}` : "";
-  if (provider.connected) return `${name} · connected${connectionCount}`;
-  return `${name} · not connected${connectionCount}`;
+function hasAvailableProviderModels(
+  catalog: ProviderCatalogSnapshot,
+  providerId: string | undefined,
+): boolean {
+  if (!providerId) return false;
+  return (
+    catalog.providers
+      .find((provider) => provider.id === providerId)
+      ?.models.some((model) => model.available !== false) === true
+  );
 }
 
-function connectionLabel(connection: ProviderConnectionSummary): string {
+function normalizeProviderModelRef(
+  providerId: string | undefined,
+  value: string,
+): string | undefined {
+  const modelId = value.trim();
+  if (!providerId || !modelId) return undefined;
+  return modelId.startsWith(`${providerId}/`)
+    ? modelId
+    : `${providerId}/${modelId}`;
+}
+
+function providerLocalModelId(
+  modelRef: string,
+  providerId: string | undefined,
+): string {
+  const prefix = providerId ? `${providerId}/` : "";
+  return prefix && modelRef.startsWith(prefix)
+    ? modelRef.slice(prefix.length)
+    : modelRef;
+}
+
+function groupCatalogProviders(providers: CatalogProvider[]): ProviderGroup[] {
+  const openAiProviders = providers.filter(isOpenAiProvider);
+  let openAiGroupAdded = false;
+  const groups: ProviderGroup[] = [];
+  for (const provider of providers) {
+    if (isOpenAiProvider(provider)) {
+      if (openAiGroupAdded) continue;
+      openAiGroupAdded = true;
+      groups.push({
+        key: OPENAI_GROUP_KEY,
+        displayName: "OpenAI",
+        providers: openAiProviders,
+      });
+      continue;
+    }
+    groups.push({
+      key: provider.id,
+      displayName: provider.displayName ?? provider.id,
+      providers: [provider],
+    });
+  }
+  return groups;
+}
+
+function isOpenAiProvider(provider: CatalogProvider): boolean {
+  return provider.id === "openai" || provider.id === "chatgpt";
+}
+
+function providerGroupLabel(group: ProviderGroup): string {
+  const count = group.providers.reduce(
+    (total, provider) => total + (provider.connections?.length ?? 0),
+    0,
+  );
+  const connectionCount =
+    count > 0 ? ` · ${count} connection${count === 1 ? "" : "s"}` : "";
+  if (group.providers.some((provider) => provider.connected)) {
+    return `${group.displayName} · connected${connectionCount}`;
+  }
+  return `${group.displayName} · not connected${connectionCount}`;
+}
+
+function connectionLabel(
+  connection: ProviderConnectionSummary,
+  showOpenAiIdentity = false,
+): string {
   const marker = connection.selected ? "★" : " ";
-  const identity =
+  const origin =
     connection.source === "stored"
-      ? connection.id.slice(-10)
-      : connection.sourceLabel;
+      ? `stored:${connection.id.slice(-10)}`
+      : connection.source === "config"
+        ? "configured"
+        : connection.sourceLabel;
   const status = connection.grantScope ? connection.status : "disconnected";
-  return `${marker} ${connection.binding.authMethodId} · ${connection.source}:${identity} · ${status}`;
+  const method = connectionMethodLabel(connection.binding.authMethodId);
+  const identity = showOpenAiIdentity
+    ? connection.providerId === "chatgpt"
+      ? `ChatGPT account · ${method}`
+      : "OpenAI API key"
+    : method;
+  return `${marker} ${identity} · ${origin} · ${status}`;
+}
+
+function connectionMethodLabel(methodId: string): string {
+  if (methodId === "api_key") return "API key";
+  if (methodId === "browser") return "browser login";
+  if (methodId === "device") return "device code";
+  return methodId;
+}
+
+function authMethodChoices(
+  group: ProviderGroup,
+  snapshots: ProviderAuthMethodsSnapshot[],
+): AuthMethodChoice[] {
+  if (group.key !== OPENAI_GROUP_KEY) {
+    return snapshots.flatMap((snapshot) =>
+      snapshot.methods.map((method) =>
+        createMethodChoice(snapshot, method, method.label, false),
+      ),
+    );
+  }
+
+  const choices: AuthMethodChoice[] = [];
+  const used = new Set<string>();
+  const add = (
+    providerId: string,
+    predicate: (method: AuthMethod) => boolean,
+    label: string,
+    secondary: boolean,
+  ) => {
+    const snapshot = snapshots.find(
+      (candidate) => candidate.providerId === providerId,
+    );
+    const method = snapshot?.methods.find(predicate);
+    if (!snapshot || !method) return;
+    used.add(methodChoiceKey(providerId, method.id));
+    choices.push(createMethodChoice(snapshot, method, label, secondary));
+  };
+
+  add(
+    "chatgpt",
+    (method) => method.type === "oauth" && method.flow === "browser",
+    "Continue with ChatGPT",
+    false,
+  );
+  add(
+    "openai",
+    (method) => method.type === "api_key",
+    "Use OpenAI API key",
+    false,
+  );
+  add(
+    "chatgpt",
+    (method) => method.type === "oauth" && method.flow === "device",
+    "Sign in with device code",
+    true,
+  );
+
+  for (const snapshot of snapshots) {
+    for (const method of snapshot.methods) {
+      const key = methodChoiceKey(snapshot.providerId, method.id);
+      if (used.has(key)) continue;
+      choices.push(
+        createMethodChoice(
+          snapshot,
+          method,
+          method.label,
+          snapshot.providerId === "chatgpt" && method.flow === "device",
+        ),
+      );
+    }
+  }
+  return choices;
+}
+
+function createMethodChoice(
+  snapshot: ProviderAuthMethodsSnapshot,
+  method: AuthMethod,
+  label: string,
+  secondary: boolean,
+): AuthMethodChoice {
+  return {
+    key: methodChoiceKey(snapshot.providerId, method.id),
+    providerId: snapshot.providerId,
+    snapshot,
+    method,
+    label,
+    secondary,
+  };
+}
+
+function methodChoiceKey(providerId: string, methodId: string): string {
+  return `${providerId}:${methodId}`;
+}
+
+function endpointHost(endpoint: string | undefined): string {
+  if (!endpoint) return "the configured endpoint";
+  try {
+    return new URL(endpoint).host;
+  } catch {
+    return endpoint;
+  }
 }

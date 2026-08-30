@@ -117,11 +117,16 @@ follow the active maps below for the current contract.
   MVP. Active model construction contract: [modules/host.md](modules/host.md).
 - [designs/provider-connections.md](designs/provider-connections.md) — Completed
   P6 design and implementation history, P6.5a runtime-credential hardening,
+  P6.5b OAuth account-binding hardening,
   plus active P7.0 connection switching:
   registry/catalog compatibility, API-key and OAuth connections, signed dynamic
   catalog refresh, model policy, transactional legacy migration, TUI model
   preferences, and multi-connection product surfaces. Active contracts remain
   in the routed Host, Protocol, CLI, TUI, and Edge Package maps.
+- [designs/chatgpt-first-party-connection.md](designs/chatgpt-first-party-connection.md) —
+  Implemented managed ChatGPT connection: bundled package-relative App Server,
+  browser/device login, managed credential marker, account-visible discovery,
+  fail-closed model/tool adapter, and TUI browser launch.
 
 ## Archived Reviews
 
@@ -153,7 +158,7 @@ unsourced [QA convergence stub](../reviews/qa-convergence-plan.md).
 - `packages/host/src/config.ts` or `packages/host/src/config-zod-schema.ts`: [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
 - `packages/host/src/config/*`: [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
 - `packages/host/src/tool-identities.ts`, `packages/host/src/tool-catalog.ts`, `packages/host/src/tool-selectors.ts`, or `packages/host/src/tool-surface.ts`: [modules/host.md](modules/host.md), [modules/coding-tools.md](modules/coding-tools.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/capabilities/README.md](maps/capabilities/README.md)
-- `packages/host/src/provider-catalog.ts`, `packages/host/src/provider-catalog-store.ts`, `packages/host/src/provider-auth.ts`, `packages/host/src/provider-oauth.ts`, `packages/host/src/provider-credential-store.ts`, `packages/host/src/model-builder.ts`, `packages/host/src/model-factory.ts`, `packages/tui/src/components/connect-dialog.tsx`, or `packages/tui/src/lib/model-preferences.ts`: [modules/host.md](modules/host.md), [modules/protocol.md](modules/protocol.md), [modules/cli.md](modules/cli.md), [modules/tui.md](modules/tui.md), [modules/edge-packages.md](modules/edge-packages.md), [designs/provider-connections.md](designs/provider-connections.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md)
+- `packages/host/src/provider-catalog.ts`, `packages/host/src/provider-catalog-store.ts`, `packages/host/src/provider-catalog-source.ts`, `packages/host/src/generated/provider-model-catalog.ts`, `packages/host/src/provider-auth.ts`, `packages/host/src/provider-oauth.ts`, `packages/host/src/provider-credential-store.ts`, `packages/host/src/chatgpt-app-server.ts`, `packages/host/src/model-builder.ts`, `packages/host/src/model-factory.ts`, `scripts/provider-catalog/*`, `packages/tui/src/components/connect-dialog.tsx`, `packages/tui/src/lib/open-external-url.ts`, or `packages/tui/src/lib/model-preferences.ts`: [modules/host.md](modules/host.md), [modules/protocol.md](modules/protocol.md), [modules/cli.md](modules/cli.md), [modules/tui.md](modules/tui.md), [modules/edge-packages.md](modules/edge-packages.md), [designs/provider-connections.md](designs/provider-connections.md), [designs/chatgpt-first-party-connection.md](designs/chatgpt-first-party-connection.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md)
 - `packages/host/src/runtime.ts`, `packages/host/src/run-access.ts`, `packages/host/src/run-security-plan.ts`, or `packages/host/src/run-policy.ts`: [modules/host.md](modules/host.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/host/src/runtime/*`, including interaction/control routing in `execution-interaction-operations.ts`, run preparation in `run-preparation-operations.ts`, Agent/Delegate assembly in `agent-runtime-assembly.ts`, Workflow durable ownership in `workflow-runtime-operations.ts`, and live episode ownership in `workflow-episode-runtime.ts`: [modules/host.md](modules/host.md), [modules/agent-runtime.md](modules/agent-runtime.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/capabilities/agents.md](maps/capabilities/agents.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/approvals.md](maps/safety/approvals.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/safety/shell.md](maps/safety/shell.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/host/src/session-queries.ts` or `packages/host/src/session-compaction.ts`: [modules/host.md](modules/host.md), [maps/session/session-store.md](maps/session/session-store.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
@@ -228,6 +233,77 @@ TUI events; it is not a trace diagnostic report and must not replace
 trace/session inspection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-08-22
+- Scope: provider catalogs now combine a maintained offline seed, optional
+  deployment-signed background refresh with LKG/offline fallback, isolated
+  account discovery, user provider/config policy, and manual TUI model entry.
+  Background refresh is credential-free and cross-process coordinated; no
+  Protocol DTO was added.
+- Read: Host lifecycle/catalog/auth/model owners, TUI connect model stage,
+  generator/maintenance boundary, public configuration, and provider test maps.
+- Tests: focused Host catalog/auth/model/generator 61/61, ConnectDialog 12/12,
+  full TUI 568/568, and Host/TUI/test typechecks passed.
+
+- Status: Verified
+- Date: 2026-08-21
+- Scope: provider metadata now has an explicitly maintained offline snapshot,
+  an opt-in signed LKG refresh path, and account/workspace-scoped discovery
+  overlays. User-defined providers and provider options remain independent of
+  catalog membership; build/test remain network-free and startup contacts only
+  an explicitly configured signed endpoint.
+- Read: Host catalog/auth/store/source owners, offline generator/signing tools,
+  user configuration authority, Provider Edge, maintainer runbook, routed
+  Protocol/CLI/TUI maps, and provider test-map coverage.
+- Tests: generator/source/store/auth focused tests, Host/SDK/CLI/TUI routed
+  suites, schema/typecheck/lint/format gates, catalog no-op regeneration,
+  package notice inspection, project-map drift, production audit, regression
+  matrix, and source/release install smokes.
+
+- Status: Verified
+- Date: 2026-08-18
+- Scope: ChatGPT is now a supported bundled provider. Host owns a
+  package-relative App Server process, generic connection transaction, managed
+  marker, model discovery, and fail-closed model/tool projection. TUI opens the
+  browser and retains the URL only as fallback; Protocol/SDK DTOs are unchanged.
+- Read: routed Host/provider/model files, TUI connect/browser files, Protocol,
+  CLI, Edge, capability/context/trace boundaries, design, and test map.
+- Tests: focused Host 43/43, TUI ConnectDialog 5/5, Host/TUI typecheck, real
+  App Server account/model/text/tool smokes, and real TUI login start/cancel
+  passed before the closing repository gate.
+
+- Status: Verified
+- Date: 2026-08-17
+- Scope: the unfinished external-process ChatGPT provider was removed from
+  source, catalog, product tests, and diagnostic routes. Generic OAuth/PKCE,
+  credential storage, complete account binding, refresh locking, and product
+  presentation remain. A first-party design is cataloged but cannot be exposed
+  until its provider-contract, legal, and security gates are satisfied.
+- Read: provider catalog/auth/OAuth/model construction, routed CLI/TUI/SDK
+  tests, provider design, and capability/context/trace boundaries.
+- Tests: focused Host provider/model/Protocol 47/47, SDK Core 15/15, CLI
+  provider 5/5, TUI routed 33/33, Host typecheck/build, and schema validation
+  passed.
+
+- Status: Verified
+- Date: 2026-08-12
+- Scope: P6.5b keeps OAuth account identity inside the existing Host connection
+  owner, includes realm/account/tenant in complete binding fingerprints,
+  rejects completion/refresh identity drift, and migrates legacy credential
+  identity without changing public DTOs or adding another registry. The final
+  review fix routes authenticated catalog discovery through the same credential
+  resolver, keeps public fingerprints endpoint-only, and records refresh
+  success/failure separately from ordinary connection generation.
+- Read: provider connection design, Host auth owner, routed Protocol/CLI/TUI,
+  Edge, capability, trace, and compaction boundaries, plus focused test route.
+- Route review: public request/result shapes, product input flows, provider
+  adapters, capability admission, trace derivation, and context compaction are
+  unchanged.
+- Tests: focused Host provider route 119/119, SDK Core 15/15, CLI provider 5/5,
+  and TUI routed 33/33 passed before the full `npm run release:check`; the
+  closing gate passed Core 688/688, Host 632/632, CLI 177/177, TUI 560/560,
+  the 16-case regression matrix, production audit, and both install smokes.
 
 - Status: Verified
 - Date: 2026-08-11

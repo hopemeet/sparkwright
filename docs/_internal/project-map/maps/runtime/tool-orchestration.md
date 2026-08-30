@@ -10,6 +10,14 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-08-20
+- Scope: API-key endpoint selection adds no model-visible tool, scheduler,
+  policy, approval, execution, or result-normalization path.
+- Read: trusted provider control dispatch and tool orchestration boundary.
+- Tests: routed provider and release checks passed; tool contracts are
+  unchanged.
+
+- Status: Read-only
 - Date: 2026-08-09
 - Scope: P7.0 connection inventory, selection, and disconnect add no model tool,
   scheduler, extension, approval, or result-normalization path.

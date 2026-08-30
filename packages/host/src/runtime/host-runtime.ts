@@ -467,16 +467,21 @@ export class HostRuntime {
 
   async listProviderAuthMethods(
     providerId: string,
+    endpoint?: string,
   ): Promise<
     | { ok: true; methods: ProviderAuthMethodsSnapshot }
     | { ok: false; error: ProtocolError }
   > {
     try {
       const includeProjectConfig = await this.providerProjectConfigAllowed();
-      const result = await this.opts.providerAuth.authMethods(providerId, {
-        workspaceRoot: this.opts.workspaceRoot,
-        includeProjectConfig,
-      });
+      const result = await this.opts.providerAuth.authMethods(
+        providerId,
+        {
+          workspaceRoot: this.opts.workspaceRoot,
+          includeProjectConfig,
+        },
+        endpoint,
+      );
       return result.ok
         ? result
         : {
@@ -626,6 +631,7 @@ export class HostRuntime {
   async submitProviderSecret(input: {
     providerId: string;
     methodId: string;
+    endpoint?: string;
     secret: string;
     grantScope?: ProviderConnectionGrantScope;
   }): Promise<

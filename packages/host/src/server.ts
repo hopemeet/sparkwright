@@ -650,6 +650,7 @@ async function handleRequest(
     case "provider.auth.methods": {
       const result = await runtime.listProviderAuthMethods(
         req.payload.providerId,
+        req.payload.endpoint,
       );
       if (result.ok) {
         respondOk(
@@ -1178,8 +1179,9 @@ function validateRequestPayload(req: HostRequest): string | undefined {
       );
     case "provider.auth.methods":
       return (
-        requireOnly(req.payload, ["providerId"]) ??
-        requireString(req.payload, "providerId")
+        requireOnly(req.payload, ["providerId", "endpoint"]) ??
+        requireString(req.payload, "providerId") ??
+        optionalString(req.payload, "endpoint")
       );
     case "provider.auth.begin":
       return (
@@ -1213,11 +1215,13 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         requireOnly(req.payload, [
           "providerId",
           "methodId",
+          "endpoint",
           "secret",
           "grantScope",
         ]) ??
         requireString(req.payload, "providerId") ??
         requireString(req.payload, "methodId") ??
+        optionalString(req.payload, "endpoint") ??
         requireString(req.payload, "secret") ??
         optionalEnum(req.payload, "grantScope", ["workspace", "user"])
       );

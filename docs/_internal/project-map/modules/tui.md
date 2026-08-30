@@ -10,6 +10,88 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-08-22
+- Scope: `/connect` model selection now keeps the catalog list but also accepts
+  an exact provider-local model id. OpenRouter nested ids are prefixed with the
+  selected provider exactly once, so a missing/stale catalog no longer blocks
+  setup. Host remains the admission and allow/deny-policy authority.
+- Read: ConnectDialog model-stage input routing, provider-local normalization,
+  catalog selection/Tab fill, and App model commit handoff.
+- Tests: ConnectDialog 12/12, full TUI 568/568, and TUI typecheck passed.
+
+- Status: Verified
+- Date: 2026-08-21
+- Scope: `/connect` presents the code-owned `chatgpt` and `openai` providers as
+  one OpenAI product group without merging credentials, bindings, catalogs, or
+  runtime adapters. Existing connections are aggregated and source-labelled;
+  new connections prefer `Continue with ChatGPT`, retain `Use OpenAI API key`,
+  and place device-code login under `Other sign-in options…` for callback-
+  constrained terminals.
+- Read: ConnectDialog provider grouping, exact-provider method choices,
+  connection/model routing, endpoint stages, and focused Ink regressions.
+- Tests: ConnectDialog 11/11, full TUI 567/567, typecheck/build, and a real PTY
+  walk through the grouped provider, both connection identities, primary and
+  secondary sign-in menus, and OpenAI endpoint selector passed. The closing
+  release gate passed all workspace suites, the 16-case regression matrix,
+  production audit, and both install smokes.
+
+- Status: Verified
+- Date: 2026-08-20
+- Scope: API-key setup now presents official, configured-custom, and editable
+  custom endpoint choices. Official is the default; custom text is validated by
+  Host before the masked key stage, which shows the exact normalized endpoint
+  and destination hostname. Back navigation clears endpoint state, while OAuth
+  bypasses the selector and remains official-only.
+- Read: ConnectDialog endpoint/input/secret stages, RunController/App/layer
+  forwarding, Host methods snapshot, and focused Ink interaction tests.
+- Tests: ConnectDialog 8/8, TUI sdk-cutover 22/22, build/typecheck, and real PTY
+  official/configured/custom endpoint flows passed; the closing release gate
+  passed TUI 564/564.
+
+- Status: Verified
+- Date: 2026-08-20
+- Scope: `/connect` now scopes endpoint presentation to method/credential
+  stages, clears the method binding when returning to the provider picker,
+  labels legacy config credentials as `configured · unverified`, and names the
+  destination hostname before accepting an API key.
+- Read: ConnectDialog stage/back state, connection labels, secret prompt, Host
+  catalog projection, and focused Ink regressions.
+- Tests: ConnectDialog 7/7, TUI build, and real PTY checks for configured
+  status, Zen endpoint lifecycle, stale-endpoint removal, and the API-key
+  destination warning passed; the closing release gate passed TUI 563/563.
+
+- Status: Verified
+- Date: 2026-08-18
+- Scope: `/connect` advertises `ChatGPT`, starts browser/device login through
+  existing DTOs, opens browser URLs without a shell, hides the long URL after a
+  successful desktop launch, and retains it when launch is unavailable. Model
+  discovery failure remains visible instead of becoming a false-success empty
+  picker, and Ctrl+R retries discovery from the model stage.
+- Read: ConnectDialog, `open-external-url.ts`, RunController provider methods,
+  and routed render tests.
+- Tests: ConnectDialog 6/6, TUI typecheck/build, and real TUI ChatGPT browser
+  start/cancel plus seven-model picker passed; the closing release gate passed
+  TUI 562/562.
+
+- Status: Verified
+- Date: 2026-08-17
+- Scope: `/connect` no longer advertises an unfinished ChatGPT method that can
+  fail before producing an authorization URL. Generic OAuth presentation,
+  copyable browser URLs, status polling, and model-picker handoff are unchanged.
+- Read: ConnectDialog, provider catalog projection, and model-picker handoff.
+- Tests: TUI routed 33/33 plus Host/SDK/schema checks passed.
+
+- Status: Read-only
+- Date: 2026-08-12
+- Scope: `/connect` continues to select opaque existing connections or start
+  the existing OAuth flow. Account/tenant identity is enforced by Host and is
+  not added to TUI state, prompts, or rendered output.
+- Read: ConnectDialog/RunController flow, provider DTOs, and Host OAuth account
+  binding projection.
+- Tests: routed TUI 33/33 plus Host/SDK/schema checks passed; TUI contracts are
+  unchanged.
+
 - Status: Read-only
 - Date: 2026-08-10
 - Scope: the `/connect` component and input router are unchanged. Host now

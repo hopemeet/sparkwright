@@ -82,6 +82,12 @@ export async function buildConfiguredAdapter(
       message: `Provider "${selection.providerKey}" bearer authentication realm "${input.credential.runtime.authRealm}" has no code-owned runtime transport in this Host build.`,
     };
   }
+  if (input.credential?.runtime.kind === "chatgpt_app_server") {
+    return {
+      ok: false,
+      message: `Provider "${selection.providerKey}" requires the Host-owned ChatGPT runtime adapter.`,
+    };
+  }
   const apiKey =
     input.credential?.runtime.value ?? envApiKey ?? selection.apiKey;
   if (!apiKey) {

@@ -46,7 +46,7 @@ describe("provider protocol", () => {
           providers: [
             {
               id: "openai",
-              credential: { status: "ready", source: "config" },
+              credential: { status: "unverified", source: "config" },
             },
           ],
         },
@@ -61,10 +61,11 @@ describe("provider protocol", () => {
         envelope: "response",
         ok: true,
         result: {
-          catalogVersion: 3,
+          catalogVersion: 6,
           projection: "all",
           providers: [
             { id: "anthropic", configured: false },
+            { id: "chatgpt", configured: false },
             { id: "google", configured: false },
             { id: "openai", configured: true },
             { id: "openrouter", configured: false },
@@ -226,9 +227,27 @@ describe("provider protocol", () => {
       });
 
       pair.send(
+        request("provider_custom_methods", "provider.auth.methods", {
+          providerId: "openai",
+          endpoint: "https://gateway.example/v1/",
+        }),
+      );
+      await expect(
+        pair.waitFor("provider_custom_methods"),
+      ).resolves.toMatchObject({
+        envelope: "response",
+        ok: true,
+        result: {
+          binding: { endpoint: "https://gateway.example/v1" },
+          methods: [{ id: "api_key", type: "api_key" }],
+        },
+      });
+
+      pair.send(
         request("provider_submit", "provider.auth.submit_secret", {
           providerId: "openai",
           methodId: "api_key",
+          endpoint: "https://gateway.example/v1",
           secret,
         }),
       );
@@ -241,6 +260,7 @@ describe("provider protocol", () => {
             providerId: "openai",
             source: "stored",
             selected: true,
+            binding: { endpoint: "https://gateway.example/v1" },
           },
         },
       });

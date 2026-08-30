@@ -80,12 +80,19 @@ Latest recorded provider smoke:
 - README, roadmap, backlog, and MVP spec describe a runnable pre-v0/v0 kernel, not a planning-only project
 - custom tool example is present and matches public APIs
 - troubleshooting covers CLI build, approval behavior, provider configuration, workspace boundaries, and trace levels
+- generated provider catalog changes followed the
+  [Provider Catalog Maintenance](./PROVIDER_CATALOG.md) review/signing process;
+  the Host package includes `THIRD_PARTY_NOTICES.md`
 
 ## Publish Mechanics
 
 - Update `CHANGELOG.md`.
 - Run `git status --short` and confirm only intended files changed.
 - Run `npm run release:check`.
+- If the generated provider catalog changed, inspect its source digest and
+  added/removed/changed model summary before signing a higher catalog version.
+- Confirm every enabled catalog shard has a recorded access/redistribution
+  review; a public endpoint alone is not release approval.
 - Run the manual deterministic write smoke check above in a resettable workspace.
 - Run the optional provider-backed smoke check when an OpenAI key is available.
 - If provider credentials are not available on the release machine, reference the latest recorded provider smoke before tagging.

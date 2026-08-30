@@ -7,6 +7,8 @@ import { createRunId, type ModelInput } from "@sparkwright/core";
 import { describe, expect, it } from "vitest";
 import { createModel } from "../src/model-factory.js";
 import { ProviderAuthManager } from "../src/provider-auth.js";
+import { BUNDLED_PROVIDER_CATALOG } from "../src/provider-catalog.js";
+import { ProviderCatalogStore } from "../src/provider-catalog-store.js";
 import { MemoryProviderCredentialStore } from "../src/provider-credential-store.js";
 import type { ProviderOAuthDriver } from "../src/provider-oauth.js";
 
@@ -31,12 +33,13 @@ describe("ProviderAuthManager", () => {
         projection: "all",
       });
       expect(all).toMatchObject({
-        catalogVersion: 3,
+        catalogVersion: 6,
         projection: "all",
         catalogState: { generation: 0, source: "bundled", stale: false },
       });
       expect(all.providers.map((provider) => provider.id)).toEqual([
         "anthropic",
+        "chatgpt",
         "google",
         "openai",
         "openrouter",
@@ -94,7 +97,7 @@ describe("ProviderAuthManager", () => {
         credential: {
           id: expect.stringMatching(/^credential_[a-f0-9]{20}$/),
           providerId: "openai",
-          status: "ready",
+          status: "unverified",
           source: "config",
           generation: 0,
         },
@@ -130,7 +133,7 @@ describe("ProviderAuthManager", () => {
       });
       expect(loggedIn).toMatchObject({
         ok: true,
-        profile: { status: "ready", generation: 2 },
+        profile: { status: "unverified", generation: 2 },
       });
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
@@ -205,7 +208,7 @@ describe("ProviderAuthManager", () => {
       });
       expect(refreshed).toMatchObject({
         ok: true,
-        profile: { generation: 1, status: "ready" },
+        profile: { generation: 1, status: "unverified" },
       });
       await expect(waiting).resolves.toMatchObject({
         refreshed: true,
@@ -330,6 +333,56 @@ describe("ProviderAuthManager", () => {
         ok: true,
         resolved: { authSource: expect.stringContaining("stored:") },
       });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not project the official catalog onto a selected custom endpoint", async () => {
+    const root = await mkdtemp(
+      join(tmpdir(), "sparkwright-provider-custom-catalog-"),
+    );
+    const workspace = join(root, "workspace");
+    await mkdir(workspace, { recursive: true });
+    const manager = new ProviderAuthManager({
+      env: { XDG_CONFIG_HOME: join(root, "config") },
+      statePath: join(root, "state", "auth.json"),
+      credentialStore: new MemoryProviderCredentialStore(),
+    });
+    try {
+      const connected = await manager.submitSecret({
+        providerId: "openai",
+        methodId: "api_key",
+        endpoint: "https://gateway.example.test/v1",
+        secret: "custom-endpoint-sentinel",
+        context: { workspaceRoot: workspace },
+      });
+      expect(connected.ok).toBe(true);
+
+      const catalog = await manager.catalog({
+        workspaceRoot: workspace,
+        projection: "available",
+        model: "openai/gateway-model",
+      });
+      expect(catalog.providers).toHaveLength(1);
+      expect(catalog.providers[0]).toMatchObject({
+        id: "openai",
+        connected: true,
+        available: true,
+        models: [
+          {
+            ref: "openai/gateway-model",
+            modelId: "gateway-model",
+            selected: true,
+            available: true,
+          },
+        ],
+      });
+      expect(catalog.providers[0]?.models).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ modelId: "gpt-5.4-mini" }),
+        ]),
+      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -601,7 +654,309 @@ describe("ProviderAuthManager", () => {
     }
   });
 
-  it("binds stored credentials to the exact endpoint and never falls back to env", async () => {
+  it("keeps discovered model inventory isolated across workspaces and connections", async () => {
+    const fixture = await cleanProviderFixture("catalog-workspace-isolation");
+    const workspaceB = join(fixture.root, "workspace-b");
+    await mkdir(workspaceB, { recursive: true });
+    const credentialStore = new MemoryProviderCredentialStore();
+    const manager = new ProviderAuthManager({
+      env: fixture.env,
+      statePath: fixture.statePath,
+      credentialStore,
+      catalogFetch: async (_url, init) => {
+        const authorization = new Headers(init?.headers).get("authorization");
+        const modelId =
+          authorization === "Bearer workspace-a-catalog-secret"
+            ? "workspace-a/model"
+            : authorization === "Bearer workspace-b-catalog-secret"
+              ? "workspace-b/model"
+              : "unexpected/model";
+        return new Response(JSON.stringify({ data: [{ id: modelId }] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+      now: () => new Date("2026-08-09T00:00:00.000Z"),
+    });
+    try {
+      await manager.submitSecret({
+        providerId: "openrouter",
+        methodId: "api_key",
+        secret: "workspace-a-catalog-secret",
+        context: { workspaceRoot: fixture.workspace },
+      });
+      await manager.submitSecret({
+        providerId: "openrouter",
+        methodId: "api_key",
+        secret: "workspace-b-catalog-secret",
+        context: { workspaceRoot: workspaceB },
+      });
+      await expect(
+        manager.refreshCatalog({
+          providerId: "openrouter",
+          context: { workspaceRoot: fixture.workspace },
+        }),
+      ).resolves.toMatchObject({ ok: true });
+      await expect(
+        manager.refreshCatalog({
+          providerId: "openrouter",
+          context: { workspaceRoot: workspaceB },
+        }),
+      ).resolves.toMatchObject({ ok: true });
+
+      const catalogA = await manager.catalog({
+        workspaceRoot: fixture.workspace,
+        projection: "available",
+      });
+      const catalogB = await manager.catalog({
+        workspaceRoot: workspaceB,
+        projection: "available",
+      });
+      expect(
+        catalogA.providers.find((provider) => provider.id === "openrouter")
+          ?.models,
+      ).toEqual([
+        expect.objectContaining({ ref: "openrouter/workspace-a/model" }),
+      ]);
+      expect(
+        catalogB.providers.find((provider) => provider.id === "openrouter")
+          ?.models,
+      ).toEqual([
+        expect.objectContaining({ ref: "openrouter/workspace-b/model" }),
+      ]);
+      expect(JSON.stringify({ catalogA, catalogB })).not.toContain(
+        "catalog-secret",
+      );
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps signed refresh failure independent from authenticated discovery", async () => {
+    const fixture = await cleanProviderFixture("catalog-source-independence");
+    const credentialStore = new MemoryProviderCredentialStore();
+    const manager = new ProviderAuthManager({
+      env: fixture.env,
+      statePath: fixture.statePath,
+      credentialStore,
+      signedCatalogSource: async () => {
+        throw new Error("signed catalog unavailable");
+      },
+      catalogFetch: async () =>
+        new Response(
+          JSON.stringify({ data: [{ id: "discovery-still-runs/model" }] }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        ),
+      now: () => new Date("2026-08-09T00:00:00.000Z"),
+    });
+    try {
+      await manager.submitSecret({
+        providerId: "openrouter",
+        methodId: "api_key",
+        secret: "source-independence-secret",
+        context: { workspaceRoot: fixture.workspace },
+      });
+      await expect(
+        manager.refreshCatalog({
+          context: { workspaceRoot: fixture.workspace },
+        }),
+      ).resolves.toMatchObject({
+        ok: true,
+        result: {
+          status: "updated",
+          refreshedProviders: ["openrouter"],
+          catalogState: { source: "discovery" },
+        },
+      });
+      const catalog = await manager.catalog({
+        workspaceRoot: fixture.workspace,
+        projection: "available",
+      });
+      expect(
+        catalog.providers.find((provider) => provider.id === "openrouter")
+          ?.models,
+      ).toEqual([
+        expect.objectContaining({
+          ref: "openrouter/discovery-still-runs/model",
+        }),
+      ]);
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("coalesces due signed background refreshes without running provider discovery", async () => {
+    const fixture = await cleanProviderFixture(
+      "catalog-background-singleflight",
+    );
+    let sourceCalls = 0;
+    let releaseSource: (() => void) | undefined;
+    const sourceGate = new Promise<void>((resolve) => {
+      releaseSource = resolve;
+    });
+    const manager = new ProviderAuthManager({
+      env: fixture.env,
+      statePath: fixture.statePath,
+      catalogTrustedKeys: { "test-key": "unused-for-network-failure" },
+      signedCatalogSource: async () => {
+        sourceCalls += 1;
+        await sourceGate;
+        throw new Error("catalog source unavailable");
+      },
+      catalogFetch: async () => {
+        throw new Error("authenticated discovery must not run");
+      },
+    });
+    try {
+      const first = manager.refreshSignedCatalogIfDue();
+      const second = manager.refreshSignedCatalogIfDue();
+      await waitFor(() => sourceCalls === 1);
+      releaseSource?.();
+      await expect(Promise.all([first, second])).resolves.toEqual([
+        "failed",
+        "failed",
+      ]);
+      expect(sourceCalls).toBe(1);
+    } finally {
+      releaseSource?.();
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("uses one cross-process lease for due signed background refresh", async () => {
+    const fixture = await cleanProviderFixture("catalog-background-lease");
+    let firstSourceCalls = 0;
+    let secondSourceCalls = 0;
+    let releaseSource: (() => void) | undefined;
+    const sourceGate = new Promise<void>((resolve) => {
+      releaseSource = resolve;
+    });
+    const common = {
+      env: fixture.env,
+      statePath: fixture.statePath,
+      catalogTrustedKeys: { "test-key": "unused-for-network-failure" },
+    };
+    const firstManager = new ProviderAuthManager({
+      ...common,
+      signedCatalogSource: async () => {
+        firstSourceCalls += 1;
+        await sourceGate;
+        throw new Error("catalog source unavailable");
+      },
+    });
+    const secondManager = new ProviderAuthManager({
+      ...common,
+      signedCatalogSource: async () => {
+        secondSourceCalls += 1;
+        throw new Error("second Host must not fetch while leased");
+      },
+    });
+    try {
+      const first = firstManager.refreshSignedCatalogIfDue();
+      await waitFor(() => firstSourceCalls === 1);
+      await expect(secondManager.refreshSignedCatalogIfDue()).resolves.toBe(
+        "busy",
+      );
+      expect(secondSourceCalls).toBe(0);
+      releaseSource?.();
+      await expect(first).resolves.toBe("failed");
+    } finally {
+      releaseSource?.();
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not contact the signed catalog source in offline mode", async () => {
+    const fixture = await cleanProviderFixture("catalog-background-offline");
+    let sourceCalls = 0;
+    let discoveryCalls = 0;
+    const credentialStore = new MemoryProviderCredentialStore();
+    const manager = new ProviderAuthManager({
+      env: { ...fixture.env, SPARKWRIGHT_OFFLINE: "1" },
+      statePath: fixture.statePath,
+      credentialStore,
+      catalogTrustedKeys: { "test-key": "unused" },
+      signedCatalogSource: async () => {
+        sourceCalls += 1;
+        throw new Error("offline source must not run");
+      },
+      catalogFetch: async () => {
+        discoveryCalls += 1;
+        throw new Error("offline discovery must not run");
+      },
+    });
+    try {
+      await manager.submitSecret({
+        providerId: "openrouter",
+        methodId: "api_key",
+        secret: "offline-catalog-secret",
+        context: { workspaceRoot: fixture.workspace },
+      });
+      await expect(manager.refreshSignedCatalogIfDue()).resolves.toBe(
+        "disabled",
+      );
+      await expect(
+        manager.refreshCatalog({
+          providerId: "openrouter",
+          context: { workspaceRoot: fixture.workspace },
+        }),
+      ).resolves.toMatchObject({
+        ok: true,
+        result: { status: "unchanged", refreshedProviders: [] },
+      });
+      expect(sourceCalls).toBe(0);
+      expect(discoveryCalls).toBe(0);
+      const catalog = await manager.catalog({
+        workspaceRoot: fixture.workspace,
+        projection: "all",
+      });
+      expect(catalog.catalogState).toMatchObject({
+        source: "bundled",
+        stale: false,
+      });
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a fresh signed catalog without redundant background requests", async () => {
+    const fixture = await cleanProviderFixture("catalog-background-fresh");
+    const now = new Date("2026-08-09T00:00:00.000Z");
+    const store = new ProviderCatalogStore({
+      path: join(fixture.root, "provider-catalog.json"),
+      now: () => now,
+    });
+    await store.publish({
+      expectedGeneration: 0,
+      source: "signed",
+      fetchedAt: now.toISOString(),
+      expiresAt: "2026-08-11T00:00:00.000Z",
+      catalog: BUNDLED_PROVIDER_CATALOG,
+    });
+    let sourceCalls = 0;
+    const manager = new ProviderAuthManager({
+      env: fixture.env,
+      statePath: fixture.statePath,
+      catalogStore: store,
+      now: () => now,
+      catalogTrustedKeys: { "test-key": "unused" },
+      signedCatalogSource: async () => {
+        sourceCalls += 1;
+        throw new Error("fresh catalog must not be fetched");
+      },
+    });
+    try {
+      await expect(manager.refreshSignedCatalogIfDue()).resolves.toBe("fresh");
+      expect(sourceCalls).toBe(0);
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a selected stored endpoint immutable and never follows config or falls back to env", async () => {
     const fixture = await providerFixture(undefined);
     const credentialStore = new MemoryProviderCredentialStore();
     const env = {
@@ -634,8 +989,15 @@ describe("ProviderAuthManager", () => {
         env,
       });
       expect(changedEndpoint).toMatchObject({
-        ok: false,
-        message: expect.stringContaining("different endpoint"),
+        ok: true,
+        resolved: {
+          selection: { baseURL: "https://api.openai.com/v1" },
+          lease: {
+            connection: {
+              binding: { endpoint: "https://api.openai.com/v1" },
+            },
+          },
+        },
       });
       expect(JSON.stringify(changedEndpoint)).not.toContain(
         "ambient-key-must-not-be-used",
@@ -651,6 +1013,126 @@ describe("ProviderAuthManager", () => {
       expect(missingStoredSecret).toMatchObject({
         ok: false,
         message: expect.stringContaining("no stored credential"),
+      });
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("defaults explicit API-key setup to official and lets a selected custom binding own runtime endpoint", async () => {
+    const fixture = await providerFixture(undefined);
+    const credentialStore = new MemoryProviderCredentialStore();
+    const manager = new ProviderAuthManager({
+      env: fixture.env,
+      statePath: fixture.statePath,
+      credentialStore,
+    });
+    const configuredEndpoint = "https://opencode.ai/zen/v1";
+    const customEndpoint = "https://gateway.example/v1";
+    try {
+      await writeProviderConfig(
+        fixture.workspace,
+        undefined,
+        configuredEndpoint,
+      );
+      const methods = await manager.authMethods("openai", {
+        workspaceRoot: fixture.workspace,
+      });
+      expect(methods).toMatchObject({
+        ok: true,
+        methods: {
+          binding: { endpoint: "https://api.openai.com/v1" },
+          configuredBinding: { endpoint: configuredEndpoint },
+        },
+      });
+
+      const customMethods = await manager.authMethods(
+        "openai",
+        { workspaceRoot: fixture.workspace },
+        `${customEndpoint}/`,
+      );
+      expect(customMethods).toMatchObject({
+        ok: true,
+        methods: { binding: { endpoint: customEndpoint } },
+      });
+
+      await expect(
+        manager.submitSecret({
+          providerId: "openai",
+          methodId: "api_key",
+          endpoint: "https://user:password@attacker.example/v1",
+          secret: "rejected-endpoint-key",
+          context: { workspaceRoot: fixture.workspace },
+        }),
+      ).resolves.toMatchObject({
+        ok: false,
+        message: expect.stringContaining("must not contain user information"),
+      });
+      expect(
+        (
+          await manager.catalog({
+            workspaceRoot: fixture.workspace,
+            projection: "all",
+          })
+        ).providers.find((provider) => provider.id === "openai")?.connections,
+      ).toEqual([]);
+
+      const connected = await manager.submitSecret({
+        providerId: "openai",
+        methodId: "api_key",
+        endpoint: `${customEndpoint}/`,
+        secret: "stored-custom-endpoint-key",
+        context: { workspaceRoot: fixture.workspace },
+      });
+      expect(connected).toMatchObject({
+        ok: true,
+        connection: {
+          status: "unverified",
+          binding: { endpoint: customEndpoint },
+        },
+      });
+
+      const catalog = await manager.catalog({
+        workspaceRoot: fixture.workspace,
+        projection: "all",
+      });
+      expect(
+        catalog.providers.find((provider) => provider.id === "openai"),
+      ).toMatchObject({
+        connected: true,
+        available: true,
+        connections: [
+          {
+            selected: true,
+            status: "unverified",
+            binding: { endpoint: customEndpoint },
+          },
+        ],
+      });
+
+      await expect(
+        manager.resolveModelConnection({
+          workspaceRoot: fixture.workspace,
+          modelRef: "openai/gpt-test",
+        }),
+      ).resolves.toMatchObject({
+        ok: true,
+        resolved: {
+          selection: { baseURL: customEndpoint },
+          providerConfig: { baseURL: customEndpoint },
+          lease: { connection: { binding: { endpoint: customEndpoint } } },
+        },
+      });
+
+      await expect(
+        manager.authMethods(
+          "openai",
+          { workspaceRoot: fixture.workspace },
+          "http://attacker.example/v1",
+        ),
+      ).resolves.toMatchObject({
+        ok: false,
+        message: expect.stringContaining("must use HTTPS"),
       });
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
@@ -842,6 +1324,318 @@ describe("ProviderAuthManager", () => {
     }
   });
 
+  it("keeps multiple OAuth accounts isolated behind exact opaque connections", async () => {
+    const fixture = await cleanProviderFixture("oauth-multi-account");
+    const credentialStore = new MemoryProviderCredentialStore();
+    const credentials = [
+      {
+        accessToken: "oauth-account-a-token",
+        refreshToken: "oauth-account-a-refresh",
+        tokenType: "api_key",
+        accountSlot: "account-a",
+        tenant: "tenant-a",
+      },
+      {
+        accessToken: "oauth-account-b-token",
+        refreshToken: "oauth-account-b-refresh",
+        tokenType: "api_key",
+        accountSlot: "account-b",
+        tenant: "tenant-b",
+      },
+    ];
+    const manager = new ProviderAuthManager({
+      env: fixture.env,
+      statePath: fixture.statePath,
+      credentialStore,
+      oauthDrivers: [
+        fakeOAuthDriver({
+          complete: async () => credentials.shift()!,
+        }),
+      ],
+    });
+    const context = oauthContext(fixture.workspace, "principal", "client");
+    try {
+      const accountA = await connectFakeOAuth(manager, context);
+      const accountB = await connectFakeOAuth(manager, context);
+      expect(accountA.id).not.toBe(accountB.id);
+      expect(accountA.binding.endpointFingerprint).toBe(
+        accountB.binding.endpointFingerprint,
+      );
+
+      const catalog = await manager.catalog({
+        workspaceRoot: fixture.workspace,
+        projection: "all",
+      });
+      const connections = catalog.providers.find(
+        (provider) => provider.id === "openrouter",
+      )?.connections;
+      expect(connections).toHaveLength(2);
+      expect(
+        connections?.find((entry) => entry.id === accountA.id),
+      ).toMatchObject({ selected: false });
+      expect(
+        connections?.find((entry) => entry.id === accountB.id),
+      ).toMatchObject({ selected: true });
+      expect(JSON.stringify(catalog)).not.toContain("account-a");
+      expect(JSON.stringify(catalog)).not.toContain("tenant-a");
+
+      const persisted = JSON.parse(
+        await readFile(fixture.statePath, "utf8"),
+      ) as {
+        connections: Record<
+          string,
+          {
+            binding: {
+              bindingFingerprint?: string;
+              accountSlot?: string;
+              tenant?: string;
+            };
+          }
+        >;
+      };
+      expect(persisted.connections[accountA.id]?.binding).toMatchObject({
+        accountSlot: "account-a",
+        tenant: "tenant-a",
+      });
+      expect(persisted.connections[accountB.id]?.binding).toMatchObject({
+        accountSlot: "account-b",
+        tenant: "tenant-b",
+      });
+      expect(
+        persisted.connections[accountA.id]?.binding.bindingFingerprint,
+      ).not.toBe(
+        persisted.connections[accountB.id]?.binding.bindingFingerprint,
+      );
+
+      await manager.manageConnection({
+        action: "select",
+        connectionId: accountA.id,
+        context: { workspaceRoot: fixture.workspace },
+      });
+      await expect(
+        manager.resolveModelConnection({
+          workspaceRoot: fixture.workspace,
+          modelRef: "openrouter/openrouter/auto",
+        }),
+      ).resolves.toMatchObject({
+        ok: true,
+        resolved: {
+          lease: {
+            connection: { id: accountA.id },
+            credential: { kind: "api_key", value: "oauth-account-a-token" },
+          },
+        },
+      });
+
+      await manager.manageConnection({
+        action: "select",
+        connectionId: accountB.id,
+        context: { workspaceRoot: fixture.workspace },
+      });
+      await expect(
+        manager.resolveModelConnection({
+          workspaceRoot: fixture.workspace,
+          modelRef: "openrouter/openrouter/auto",
+        }),
+      ).resolves.toMatchObject({
+        ok: true,
+        resolved: {
+          lease: {
+            connection: { id: accountB.id },
+            credential: { kind: "api_key", value: "oauth-account-b-token" },
+          },
+        },
+      });
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an OAuth credential whose realm differs from the code-owned issuer", async () => {
+    const fixture = await cleanProviderFixture("oauth-realm-mismatch");
+    const credentialStore = new MemoryProviderCredentialStore();
+    const manager = new ProviderAuthManager({
+      env: fixture.env,
+      statePath: fixture.statePath,
+      credentialStore,
+      oauthDrivers: [
+        fakeOAuthDriver({
+          complete: async () => ({
+            accessToken: "realm-mismatch-token",
+            tokenType: "api_key",
+            authRealm: "https://unexpected.example",
+          }),
+        }),
+      ],
+    });
+    const context = oauthContext(fixture.workspace, "principal", "client");
+    try {
+      const started = await manager.beginOAuth({
+        providerId: "openrouter",
+        methodId: "oauth_pkce",
+        context,
+      });
+      if (!started.ok) return;
+      const state = new URL(started.attempt.authorizationUrl!).searchParams.get(
+        "state",
+      )!;
+      await expect(
+        manager.completeOAuth({
+          attemptId: started.attempt.id,
+          proof: { code: "valid-code", state },
+          context,
+        }),
+      ).resolves.toMatchObject({
+        ok: true,
+        attempt: { status: "failed" },
+      });
+      const catalog = await manager.catalog({
+        workspaceRoot: fixture.workspace,
+        projection: "all",
+      });
+      expect(
+        catalog.providers.find((provider) => provider.id === "openrouter")
+          ?.connections,
+      ).toHaveLength(0);
+      expect(JSON.stringify(catalog)).not.toContain("realm-mismatch-token");
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects OAuth account drift during refresh without replacing the stored credential", async () => {
+    const fixture = await cleanProviderFixture("oauth-refresh-account-drift");
+    const credentialStore = new MemoryProviderCredentialStore();
+    const manager = new ProviderAuthManager({
+      env: fixture.env,
+      statePath: fixture.statePath,
+      credentialStore,
+      oauthDrivers: [
+        fakeOAuthDriver({
+          complete: async () => ({
+            accessToken: "oauth-original-account-token",
+            refreshToken: "oauth-original-refresh-token",
+            tokenType: "api_key",
+            accountSlot: "account-a",
+            tenant: "tenant-a",
+          }),
+          refresh: async ({ credential }) => ({
+            ...credential,
+            accessToken: "oauth-drifted-account-token",
+            accountSlot: "account-b",
+          }),
+        }),
+      ],
+    });
+    const context = oauthContext(fixture.workspace, "principal", "client");
+    try {
+      const connection = await connectFakeOAuth(manager, context);
+      const originalSecret = await credentialStore.get(connection.id);
+      await expect(
+        manager.manageConnection({
+          action: "refresh",
+          connectionId: connection.id,
+          context: { workspaceRoot: fixture.workspace },
+        }),
+      ).resolves.toMatchObject({
+        ok: false,
+        message: expect.stringContaining("no ambient credential"),
+      });
+      expect(await credentialStore.get(connection.id)).toBe(originalSecret);
+      expect(await credentialStore.get(connection.id)).not.toContain(
+        "oauth-drifted-account-token",
+      );
+      await expect(
+        manager.resolveModelConnection({
+          workspaceRoot: fixture.workspace,
+          modelRef: "openrouter/openrouter/auto",
+        }),
+      ).resolves.toMatchObject({
+        ok: false,
+        message: expect.stringContaining("needs_refresh"),
+      });
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("migrates legacy OAuth credential identity into the selected connection binding", async () => {
+    const fixture = await cleanProviderFixture("oauth-account-migration");
+    const credentialStore = new MemoryProviderCredentialStore();
+    const manager = new ProviderAuthManager({
+      env: fixture.env,
+      statePath: fixture.statePath,
+      credentialStore,
+      oauthDrivers: [fakeOAuthDriver()],
+    });
+    const context = oauthContext(fixture.workspace, "principal", "client");
+    try {
+      const connection = await connectFakeOAuth(manager, context);
+      await credentialStore.put(
+        connection.id,
+        `sparkwright.oauth.v1:${JSON.stringify({
+          accessToken: "legacy-account-token",
+          refreshToken: "legacy-account-refresh",
+          tokenType: "api_key",
+          accountSlot: "legacy-account",
+          tenant: "legacy-tenant",
+        })}`,
+      );
+
+      await expect(
+        manager.resolveModelConnection({
+          workspaceRoot: fixture.workspace,
+          modelRef: "openrouter/openrouter/auto",
+        }),
+      ).resolves.toMatchObject({
+        ok: true,
+        resolved: {
+          lease: {
+            connection: {
+              id: connection.id,
+              generation: connection.generation + 1,
+            },
+            credential: { kind: "api_key", value: "legacy-account-token" },
+          },
+        },
+      });
+
+      const persisted = JSON.parse(
+        await readFile(fixture.statePath, "utf8"),
+      ) as {
+        connections: Record<
+          string,
+          {
+            generation: number;
+            binding: {
+              endpointFingerprint: string;
+              bindingFingerprint?: string;
+              accountSlot?: string;
+              tenant?: string;
+            };
+          }
+        >;
+        selections: Record<string, string>;
+      };
+      expect(persisted.connections[connection.id]).toMatchObject({
+        generation: connection.generation + 1,
+        binding: {
+          accountSlot: "legacy-account",
+          tenant: "legacy-tenant",
+        },
+      });
+      expect(
+        persisted.connections[connection.id]?.binding.bindingFingerprint,
+      ).not.toBeUndefined();
+      expect(
+        persisted.connections[connection.id]?.binding.endpointFingerprint,
+      ).toBe(connection.binding.endpointFingerprint);
+      expect(Object.values(persisted.selections)).toContain(connection.id);
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
   it("removes temporary OAuth state on cancellation and expiry", async () => {
     const fixture = await cleanProviderFixture("oauth-terminal");
     let now = new Date("2026-08-09T00:00:00.000Z");
@@ -991,6 +1785,158 @@ describe("ProviderAuthManager", () => {
       ).resolves.toMatchObject({
         ok: false,
         message: expect.stringContaining("needs_refresh"),
+      });
+    } finally {
+      releaseRefresh();
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports the same failed outcome to concurrent OAuth refresh callers", async () => {
+    const fixture = await cleanProviderFixture("oauth-refresh-failed-flight");
+    const credentialStore = new MemoryProviderCredentialStore();
+    let refreshCount = 0;
+    let releaseRefresh!: () => void;
+    const refreshGate = new Promise<void>((resolveGate) => {
+      releaseRefresh = resolveGate;
+    });
+    const driver = fakeOAuthDriver({
+      refresh: async () => {
+        refreshCount += 1;
+        await refreshGate;
+        throw new Error("shared refresh failure");
+      },
+    });
+    const first = new ProviderAuthManager({
+      env: fixture.env,
+      statePath: fixture.statePath,
+      credentialStore,
+      oauthDrivers: [driver],
+    });
+    const second = new ProviderAuthManager({
+      env: fixture.env,
+      statePath: fixture.statePath,
+      credentialStore,
+      oauthDrivers: [driver],
+    });
+    const context = oauthContext(fixture.workspace, "principal", "client");
+    try {
+      const connection = await connectFakeOAuth(first, context);
+      const one = first.manageConnection({
+        action: "refresh",
+        connectionId: connection.id,
+        context: { workspaceRoot: fixture.workspace },
+      });
+      const two = second.manageConnection({
+        action: "refresh",
+        connectionId: connection.id,
+        context: { workspaceRoot: fixture.workspace },
+      });
+      while (refreshCount === 0) {
+        await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+      }
+      releaseRefresh();
+      const [firstResult, secondResult] = await Promise.all([one, two]);
+      expect(refreshCount).toBe(1);
+      expect(firstResult).toMatchObject({
+        ok: false,
+        message: expect.stringContaining("no ambient credential"),
+      });
+      expect(secondResult).toMatchObject({
+        ok: false,
+        message: expect.stringContaining("no ambient credential"),
+      });
+      const catalog = await first.catalog({
+        workspaceRoot: fixture.workspace,
+        projection: "all",
+      });
+      expect(
+        catalog.providers
+          .find((provider) => provider.id === "openrouter")
+          ?.connections?.find((entry) => entry.id === connection.id),
+      ).toMatchObject({ status: "needs_refresh" });
+    } finally {
+      releaseRefresh();
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not let legacy identity migration satisfy a concurrent explicit refresh", async () => {
+    const fixture = await cleanProviderFixture("oauth-migrate-refresh-race");
+    const credentialStore = new MemoryProviderCredentialStore();
+    let refreshCount = 0;
+    let releaseRefresh!: () => void;
+    const refreshGate = new Promise<void>((resolveGate) => {
+      releaseRefresh = resolveGate;
+    });
+    const driver = fakeOAuthDriver({
+      refresh: async ({ credential }) => {
+        refreshCount += 1;
+        await refreshGate;
+        return {
+          ...credential,
+          accessToken: "migrated-and-refreshed-token",
+        };
+      },
+    });
+    const first = new ProviderAuthManager({
+      env: fixture.env,
+      statePath: fixture.statePath,
+      credentialStore,
+      oauthDrivers: [driver],
+    });
+    const second = new ProviderAuthManager({
+      env: fixture.env,
+      statePath: fixture.statePath,
+      credentialStore,
+      oauthDrivers: [driver],
+    });
+    const context = oauthContext(fixture.workspace, "principal", "client");
+    try {
+      const connection = await connectFakeOAuth(first, context);
+      await credentialStore.put(
+        connection.id,
+        `sparkwright.oauth.v1:${JSON.stringify({
+          accessToken: "legacy-race-token",
+          refreshToken: "legacy-race-refresh",
+          tokenType: "api_key",
+          accountSlot: "legacy-race-account",
+          tenant: "legacy-race-tenant",
+        })}`,
+      );
+
+      const resolution = first.resolveModelConnection({
+        workspaceRoot: fixture.workspace,
+        modelRef: "openrouter/openrouter/auto",
+      });
+      const refresh = second.manageConnection({
+        action: "refresh",
+        connectionId: connection.id,
+        context: { workspaceRoot: fixture.workspace },
+      });
+      while (refreshCount === 0) {
+        await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+      }
+      releaseRefresh();
+      const [resolved, refreshed] = await Promise.all([resolution, refresh]);
+      expect(resolved).toMatchObject({ ok: true });
+      expect(refreshed).toMatchObject({ ok: true });
+      expect(refreshCount).toBe(1);
+      await expect(
+        first.resolveModelConnection({
+          workspaceRoot: fixture.workspace,
+          modelRef: "openrouter/openrouter/auto",
+        }),
+      ).resolves.toMatchObject({
+        ok: true,
+        resolved: {
+          lease: {
+            credential: {
+              kind: "api_key",
+              value: "migrated-and-refreshed-token",
+            },
+          },
+        },
       });
     } finally {
       releaseRefresh();
@@ -1319,4 +2265,12 @@ async function providerMock(): Promise<{
         server.close((error) => (error ? rejectClose(error) : resolveClose())),
       ),
   };
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error("Timed out waiting for provider-auth test condition.");
 }

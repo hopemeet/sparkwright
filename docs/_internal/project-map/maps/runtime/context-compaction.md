@@ -10,6 +10,28 @@ See [../session/resume-replay.md](../session/resume-replay.md).
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-08-18
+- Scope: ChatGPT consumes the ordinary assembled `PromptMessage[]`; it adds no
+  ContextItem, compaction artifact, replay field, or summarizer contract.
+- Read: App Server prompt projection and Core compaction boundary.
+- Tests: focused adapter tests passed; compaction contracts are unchanged.
+
+- Status: Read-only
+- Date: 2026-08-17
+- Scope: removing the unfinished ChatGPT adapter changes no ContextItem,
+  compaction artifact, replay field, or summarizer contract.
+- Read: provider/model construction and Core compaction boundary.
+- Tests: no compaction-specific test was run; focused Host tests passed.
+
+- Status: Read-only
+- Date: 2026-08-12
+- Scope: OAuth account binding is pre-run Host connection state and does not
+  enter context items, compaction input, follow-up evidence, or replay fields.
+- Read: provider resolution and context-compaction ownership boundary.
+- Tests: focused routed provider checks passed; compaction contracts are
+  unchanged.
+
+- Status: Read-only
 - Date: 2026-08-09
 - Scope: P7.0 connection selection is pre-run control state. It adds no context
   item, compaction input, follow-up evidence, or replay field.

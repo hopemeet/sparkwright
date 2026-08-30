@@ -11,6 +11,15 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-08-20
+- Scope: selected provider endpoints are resolved by Host before Agent model
+  construction. Agent precedence, delegation, child admission, and authority
+  inheritance are unchanged.
+- Read: Host connection resolution and Agent capability boundary.
+- Tests: routed provider/model and release checks passed; Agent contracts are
+  unchanged.
+
+- Status: Read-only
 - Date: 2026-08-09
 - Scope: P7.0 management inventory does not change Agent model precedence,
   delegation, child admission, or tool authority. A disconnected connection

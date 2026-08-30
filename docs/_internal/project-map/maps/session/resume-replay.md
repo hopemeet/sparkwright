@@ -10,6 +10,16 @@ See [session-store.md](session-store.md) and [../runtime/context-compaction.md](
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-08-18
+- Scope: ChatGPT model-discovery failure and model-stage Ctrl+R retry affect
+  only the next-run provider catalog. Resume records, replay inputs, and
+  durability guarantees are unchanged.
+- Read: TUI connect refresh flow, Host catalog publication, and the existing
+  next-run model-selection boundary.
+- Tests: ConnectDialog 6/6 and the full release gate passed; no resume/replay
+  behavior changed.
+
+- Status: Read-only
 - Date: 2026-08-09
 - Scope: Switching a provider connection affects future model resolution only;
   it does not change resume records, replay inputs, or durability guarantees.

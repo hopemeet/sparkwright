@@ -10,6 +10,15 @@ See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-08-20
+- Scope: endpoint selection remains a trusted-local provider-control flow and
+  does not widen model-facing approvals. Remote secret submission remains
+  denied by the existing provider authorities.
+- Read: provider request admission and approval boundary.
+- Tests: routed local/remote provider and release checks passed; approval
+  contracts are unchanged.
+
+- Status: Read-only
 - Date: 2026-08-09
 - Scope: P7.0 remains a trusted-local pre-run provider control path. It neither
   widens run approvals nor exposes credential actions to the model.

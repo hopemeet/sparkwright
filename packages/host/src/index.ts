@@ -29,6 +29,22 @@ export { runHostMain } from "./main.js";
 export { buildConfiguredAdapter } from "./model-builder.js";
 export type { BuildAdapterInput } from "./model-builder.js";
 export {
+  CHATGPT_APP_SERVER_RUNTIME_ID,
+  ChatGptAppServerError,
+  createChatGptAppServerSession,
+  createChatGptModelAdapter,
+  listChatGptModels,
+  logoutChatGptAccount,
+  readChatGptAccount,
+} from "./chatgpt-app-server.js";
+export type {
+  ChatGptAppServerFactory,
+  ChatGptAppServerNotification,
+  ChatGptAppServerRequest,
+  ChatGptAppServerSession,
+  ChatGptModelInfo,
+} from "./chatgpt-app-server.js";
+export {
   ProviderAuthManager,
   normalizeProviderEndpoint,
   providerAuthStatePath,
@@ -62,15 +78,28 @@ export type {
 } from "./provider-credential-store.js";
 export {
   ProviderCatalogStore,
+  providerCatalogDigest,
   providerCatalogStatePath,
   verifySignedProviderCatalogArtifact,
 } from "./provider-catalog-store.js";
 export type {
   ProviderCatalogStateSnapshot,
   ProviderCatalogStoreOptions,
+  ProviderDiscoveryStateSnapshot,
   SignedProviderCatalogArtifact,
   SignedProviderCatalogPayload,
 } from "./provider-catalog-store.js";
+export {
+  createHttpSignedProviderCatalogSource,
+  normalizeSignedProviderCatalogSourceResult,
+  readSignedProviderCatalogSource,
+} from "./provider-catalog-source.js";
+export type {
+  SignedProviderCatalogSource,
+  SignedProviderCatalogSourceLike,
+  SignedProviderCatalogSourceRequest,
+  SignedProviderCatalogSourceResult,
+} from "./provider-catalog-source.js";
 export {
   PROJECT_TRUST_SCOPES,
   ProjectTrustManager,

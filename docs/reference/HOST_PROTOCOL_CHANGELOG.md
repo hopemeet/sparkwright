@@ -6,6 +6,12 @@ major; breaking changes bump the major.
 
 ## Unreleased
 
+- Extend the provider API-key flow with an optional exact `endpoint` on
+  `provider.auth.methods` and `provider.auth.submit_secret`, plus an optional
+  `configuredBinding` in the methods snapshot. Omission means the code-owned
+  official endpoint. Host validates custom endpoints before secret entry, and
+  selected stored endpoints remain immutable runtime authority.
+
 - Add P6.4 catalog refresh and cache state: trusted-local-only
   `provider.catalog.refresh`, signed-artifact verification, authenticated
   code-owned model discovery, generation-CAS publication, LKG/TTL fallback,
