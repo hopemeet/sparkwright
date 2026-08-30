@@ -18,12 +18,7 @@
 // stable surface is the `createRun` factory plus the `RunHandle` interface.
 // =============================================================================
 
-import {
-  createContextItemId,
-  createId,
-  createRunId,
-  createSpanId,
-} from "./ids.js";
+import { createContextItemId, createRunId, createSpanId } from "./ids.js";
 import {
   emitInSpan,
   openSpan,
@@ -182,11 +177,7 @@ const DEFAULT_MODEL_RETRY_BACKOFF_MULTIPLIER = 2;
 const DEFAULT_MODEL_RETRY_JITTER: "full" | "none" = "full";
 const DEFAULT_MODEL_RETRY_RESPECT_RETRY_AFTER = true;
 const DEFAULT_MAX_REVIVAL_TURNS = 5;
-const FORCED_CONTINUATION_SOURCES = [
-  "interaction",
-  "revival",
-  "workflow",
-] as const;
+const FORCED_CONTINUATION_SOURCES = ["revival", "workflow"] as const;
 
 interface RunBudgetAccountDescriptor {
   account: RunBudgetAccount;
@@ -210,7 +201,6 @@ class ForcedContinuationBudgetLedger {
   ) {
     this.configured = { ...configured };
     this.used = {
-      interaction: integerOrZero(seed?.used.interaction),
       revival: integerOrZero(seed?.used.revival),
       workflow: integerOrZero(seed?.used.workflow),
     };
@@ -270,7 +260,6 @@ function resolveForcedContinuationBudgetConfig(
     }
   }
   return {
-    interaction: configured.interaction ?? DEFAULT_MAX_REVIVAL_TURNS,
     revival: configured.revival ?? DEFAULT_MAX_REVIVAL_TURNS,
     workflow: configured.workflow ?? DEFAULT_MAX_REVIVAL_TURNS,
   };
@@ -540,8 +529,6 @@ export interface CredentialRefreshRequest {
   modelError: ModelErrorEnvelope;
   /** 1-based attempt count for this refresh prompt within the current step. */
   attempt: number;
-  /** Run-scoped cancellation for hosts waiting on an external auth action. */
-  signal?: AbortSignal;
 }
 
 export interface CredentialRefreshResponse {
@@ -560,12 +547,7 @@ export type CredentialResolver = (
 ) => Promise<CredentialRefreshResponse> | CredentialRefreshResponse;
 
 export type RunCommandAcceptance =
-  | {
-      accepted: true;
-      commandId: string;
-      status: "queued" | "applied";
-      duplicate: boolean;
-    }
+  | { accepted: true }
   | { accepted: false; reason: "terminal" | "closing" };
 
 export interface RunLoopServices {
@@ -738,11 +720,6 @@ export class SparkwrightRun implements RunHandle {
   private outputRecoveriesUsed = 0;
   private readonly forcedContinuationBudget: ForcedContinuationBudgetLedger;
   private readonly commandQueue: RunCommand[] = [];
-  private readonly commandStatuses = new Map<
-    string,
-    "queued" | "applied" | "rejected"
-  >();
-  private acceptingCommands = true;
   private readonly notificationSources: NotificationSource[];
   private readonly taskRevivalSource?: TaskRevivalSource;
   private readonly loadedDeferredTools = new Set<string>();
@@ -764,7 +741,6 @@ export class SparkwrightRun implements RunHandle {
   private lastModelInputTokens?: number;
   private lastLoopState?: RunLoopState;
   private readonly credentialResolver?: CredentialResolver;
-  private readonly credentialRefreshSteps = new Set<number>();
   private readonly autoCheckpointEveryNSteps?: number;
   private lastAutoCheckpointStep = 0;
   private seedLoopState?: RunLoopState;
@@ -1699,12 +1675,6 @@ export class SparkwrightRun implements RunHandle {
           this.lastLoopState = cloneLoopState(state);
           continue;
         }
-        const steeredState = this.continueForPendingCommands(state);
-        if (steeredState) {
-          state = steeredState;
-          this.lastLoopState = cloneLoopState(state);
-          continue;
-        }
         return this.complete("final_answer", {
           message: output.message,
           stepsUsed: state.step,
@@ -1849,14 +1819,13 @@ export class SparkwrightRun implements RunHandle {
       // --- Phase 8: assemble next state ------------------------------------
       this.context = state.context;
       const nextContext = await this.finalizeTurnContext(state.context);
-      const nextState: RunLoopState = {
+      state = {
         ...state,
         context: nextContext,
         step: state.step + 1,
         turnCount: state.turnCount + 1,
         transition: { reason: "next_turn" },
       };
-      state = this.continueForPendingCommands(state, nextState) ?? nextState;
       this.lastLoopState = cloneLoopState(state);
     }
 
@@ -1880,9 +1849,6 @@ export class SparkwrightRun implements RunHandle {
   private async finishWithBudgetWrapUp(
     state: RunLoopState,
   ): Promise<RunResult> {
-    // This turn is already outside the ordinary step loop and cannot promise
-    // another consumable boundary. Let callers spill late input to follow-up.
-    this.acceptingCommands = false;
     const hardFail = (): RunResult =>
       this.fail(
         "max_steps_exceeded",
@@ -2761,8 +2727,6 @@ export class SparkwrightRun implements RunHandle {
     if (isTerminalState(this.record.state) && this.result) {
       return this.result;
     }
-    this.acceptingCommands = false;
-    this.rejectPendingCommands("run_cancelled");
     this.setState("cancelled", "manual_cancelled");
     // Trip the internal abort controller so any mid-stream model call or
     // in-flight tool that honors `RuntimeContext.abortSignal` tears down
@@ -2812,28 +2776,15 @@ export class SparkwrightRun implements RunHandle {
     if (isTerminalState(this.record.state)) {
       return { accepted: false, reason: "terminal" };
     }
-    if (!this.acceptingCommands || this.abortController.signal.aborted) {
+    if (this.abortController.signal.aborted) {
       return { accepted: false, reason: "closing" };
     }
-    const commandId = command.commandId ?? (createId("command") as string);
-    const priorStatus = this.commandStatuses.get(commandId);
-    if (priorStatus === "queued" || priorStatus === "applied") {
-      return {
-        accepted: true,
-        commandId,
-        status: priorStatus,
-        duplicate: true,
-      };
-    }
-    const acceptedCommand = { ...command, commandId } as RunCommand;
-    this.commandQueue.push(acceptedCommand);
-    this.commandStatuses.set(commandId, "queued");
+    this.commandQueue.push(command);
     this.events.emit("run.command.enqueued", {
-      commandId,
       commandType: command.type,
       metadata: command.metadata ?? {},
     });
-    return { accepted: true, commandId, status: "queued", duplicate: false };
+    return { accepted: true };
   }
 
   injectUserMessage(input: {
@@ -2860,10 +2811,7 @@ export class SparkwrightRun implements RunHandle {
   private consumePendingCommands(state: RunLoopState): RunResult | undefined {
     while (this.commandQueue.length > 0) {
       const command = this.commandQueue.shift()!;
-      const commandId = command.commandId!;
-      this.commandStatuses.set(commandId, "applied");
       this.events.emit("run.command.applied", {
-        commandId,
         commandType: command.type,
         step: state.step,
         metadata: command.metadata ?? {},
@@ -2911,74 +2859,11 @@ export class SparkwrightRun implements RunHandle {
       });
       state.transition = {
         reason: "command_injected",
-        metadata: { commandId, ...(command.metadata ?? {}) },
+        metadata: command.metadata,
       };
     }
 
     return undefined;
-  }
-
-  private continueForPendingCommands(
-    state: RunLoopState,
-    preparedState?: RunLoopState,
-  ): RunLoopState | undefined {
-    if (this.commandQueue.length === 0) return undefined;
-    const next: RunLoopState = preparedState ?? {
-      ...state,
-      step: state.step + 1,
-      turnCount: state.turnCount + 1,
-      transition: { reason: "next_turn" },
-    };
-    if (next.step <= this.maxSteps) return next;
-
-    // A queued cancel needs no model turn. Admit one Phase-1 boundary even
-    // after the ordinary step budget so it is applied instead of stranded.
-    const hasCancel = this.commandQueue.some(
-      (command) => command.type === "cancel",
-    );
-    const hasUserMessage = this.commandQueue.some(
-      (command) => command.type === "user_message",
-    );
-    if (hasCancel || !hasUserMessage) {
-      return {
-        ...next,
-        transition: {
-          reason: "next_turn",
-          metadata: { forcedContinuationSource: "interaction" },
-        },
-      };
-    }
-    if (!this.forcedContinuationBudget.hasRemaining("interaction")) {
-      this.emitForcedContinuationBudgetExceeded("interaction", {
-        step: state.step,
-        reason: "command_injected",
-      });
-      this.rejectPendingCommands("interaction_budget_exceeded", state.step);
-      return undefined;
-    }
-    this.forcedContinuationBudget.consume("interaction");
-    return {
-      ...next,
-      transition: {
-        reason: "next_turn",
-        metadata: { forcedContinuationSource: "interaction" },
-      },
-    };
-  }
-
-  private rejectPendingCommands(reason: string, step?: number): void {
-    while (this.commandQueue.length > 0) {
-      const command = this.commandQueue.shift()!;
-      const commandId = command.commandId!;
-      this.commandStatuses.set(commandId, "rejected");
-      this.events.emit("run.command.rejected", {
-        commandId,
-        commandType: command.type,
-        reason,
-        ...(step !== undefined ? { step } : {}),
-        metadata: command.metadata ?? {},
-      });
-    }
   }
 
   private createRuntimeContext(input?: {
@@ -3939,8 +3824,6 @@ export class SparkwrightRun implements RunHandle {
     step: number,
   ): Promise<boolean> {
     if (!this.credentialResolver) return false;
-    if (this.credentialRefreshSteps.has(step)) return false;
-    this.credentialRefreshSteps.add(step);
     const category = modelError.category as "auth" | "quota";
     const previousState = this.record.state;
     this.setState("waiting_credentials");
@@ -3957,7 +3840,6 @@ export class SparkwrightRun implements RunHandle {
         message,
         modelError,
         attempt: 1,
-        signal: this.abortController.signal,
       });
       if (!response.refreshed) {
         // Failed to refresh — fall back to the normal fail() path. Move
@@ -5120,8 +5002,6 @@ export class SparkwrightRun implements RunHandle {
     if (isTerminalState(this.record.state) && this.result) {
       return this.result;
     }
-    this.acceptingCommands = false;
-    this.rejectPendingCommands("run_completed");
     const factLedger = this.factLedger.snapshot();
     const assessment = assessRun(this.events.all(), {
       factLedger,
@@ -5179,8 +5059,6 @@ export class SparkwrightRun implements RunHandle {
     if (isTerminalState(this.record.state) && this.result) {
       return this.result;
     }
-    this.acceptingCommands = false;
-    this.rejectPendingCommands("run_failed");
     const safeMetadata = sanitizeFailureMetadata(metadata);
     const failureMetadata = { ...safeMetadata };
     const failure = {
@@ -5290,9 +5168,7 @@ function isTerminalState(state: RunState): boolean {
 
 function isSourceBudgetedForcedContinuation(state: RunLoopState): boolean {
   const source = state.transition.metadata?.forcedContinuationSource;
-  return (
-    source === "interaction" || source === "revival" || source === "workflow"
-  );
+  return source === "revival" || source === "workflow";
 }
 
 function isWorkflowProjectionHookName(hookName: string | undefined): boolean {

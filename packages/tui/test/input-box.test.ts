@@ -13,8 +13,8 @@ import {
   inputLineViewport,
   inputMaxVisibleLines,
   inputVisualLines,
+  suggestionWindow,
 } from "../src/components/input-box.js";
-import { windowAroundCursor } from "../src/lib/list-window.js";
 import type { StashFile } from "../src/lib/stash.js";
 
 function stripAnsi(text: string): string {
@@ -183,7 +183,7 @@ describe("suggestionWindow", () => {
   it("keeps the selected item visible after moving past the first page", () => {
     const items = Array.from({ length: 12 }, (_, i) => `cmd-${i + 1}`);
 
-    const page = windowAroundCursor(items, 6, 6);
+    const page = suggestionWindow(items, 6, 6);
 
     expect(page.start).toBe(3);
     expect(page.visible).toEqual([
@@ -199,7 +199,7 @@ describe("suggestionWindow", () => {
   it("clamps the window near the end of the list", () => {
     const items = Array.from({ length: 12 }, (_, i) => `cmd-${i + 1}`);
 
-    const page = windowAroundCursor(items, 11, 6);
+    const page = suggestionWindow(items, 11, 6);
 
     expect(page.start).toBe(6);
     expect(page.visible).toEqual([

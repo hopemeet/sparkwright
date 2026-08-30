@@ -275,7 +275,6 @@ export function isExplicitVerificationCommand(command: string): boolean {
       command,
     ) ||
     /\b(npm|pnpm|yarn)\s+(run\s+)?(test|verify|check|lint)\b/.test(command) ||
-    /\bnode(?:js)?\s+--test\b/.test(command) ||
     /\b(vitest|jest|mocha)\b/.test(command) ||
     /\bpython(?:\d+(?:\.\d+)*)?\s+-m\s+(unittest|pytest|[^;\s]+\.cli)\b/.test(
       command,

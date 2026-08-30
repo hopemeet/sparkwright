@@ -14,18 +14,8 @@ into a release.
 - Example configs are validated by `npm run schema:check`.
 - Extension metadata is traceable through run metadata, tool governance, or
   documented experimental events.
-- Registration ids are unique and stable; declared tool names do not collide
-  with built-in or other registered extension tools.
-- `describe()`, `listTools()`, and context `load()` are discovery-only and do
-  not perform writes, process launches, or network side effects.
-- Context preparation rejects forged conversation turns and stays within the
-  configured item/payload limits.
 - Defaults are conservative: external tools are risky or approval-gated unless
   explicitly configured otherwise.
-- Argument-dependent tool policy and concurrency classifiers are covered by
-  fail-closed tests.
-- Capability inspection distinguishes declared extension surfaces from the
-  effective selector-filtered tool catalog.
 - Unit tests cover parser/config validation, policy gates, and failure cases.
 - At least one runnable example demonstrates composition with core.
 

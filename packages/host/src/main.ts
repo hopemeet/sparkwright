@@ -141,17 +141,7 @@ export async function runHostMain(argv: string[]): Promise<void> {
       defaultModel: args.model,
       defaultAccessMode: args.accessMode,
       defaultTraceLevel: args.traceLevel,
-      authContext: unauthenticatedConnection(
-        "local-stdio",
-        [
-          "provider_catalog.read",
-          "provider_connection.manage",
-          "provider_secret.submit",
-          "provider_auth.manage",
-          "project_trust.manage",
-        ],
-        "local",
-      ),
+      authContext: unauthenticatedConnection("local-stdio"),
     });
     return;
   }

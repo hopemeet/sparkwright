@@ -123,7 +123,6 @@ export function createHostClientRunMetadata(
 
 export function createHostStartRunRequest(input: {
   goal: string;
-  projectCommand?: RunStartRequestPayload["projectCommand"];
   sessionId?: string;
   controlSessionId?: string;
   modelName?: string;
@@ -140,7 +139,6 @@ export function createHostStartRunRequest(input: {
 }): RunStartRequestPayload {
   return {
     goal: input.goal,
-    ...(input.projectCommand ? { projectCommand: input.projectCommand } : {}),
     ...(input.input ? { input: input.input } : {}),
     sessionId: input.sessionId,
     ...(input.controlSessionId

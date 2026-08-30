@@ -106,7 +106,6 @@ export type HostToolCatalogSource =
   | "todo"
   | "mcp"
   | "delegate"
-  | "extension"
   | "core";
 
 export interface HostToolCatalogEntry {
@@ -139,7 +138,6 @@ export function createReadOnlyChildToolCatalog(input: {
 export function createDynamicChildToolCatalog(input: {
   workspaceRoot: string;
   toolConfig?: CapabilityToolsConfig;
-  extensionTools?: readonly ToolDefinition[];
   shell?: ShellConfig;
   skillRoots?: readonly string[];
   configPaths?: readonly string[];
@@ -167,9 +165,6 @@ export function createDynamicChildToolCatalog(input: {
               }),
               "shell",
             ),
-            ...(input.extensionTools ?? []).map((tool) =>
-              catalogEntry(tool, "extension"),
-            ),
           ],
           input.toolConfig,
         ),
@@ -183,7 +178,6 @@ export function createDynamicChildToolCatalog(input: {
 export function createConfiguredDelegateChildToolCatalog(input: {
   workspaceRoot: string;
   toolConfig?: CapabilityToolsConfig;
-  extensionTools?: readonly ToolDefinition[];
   shell?: ShellConfig;
   skillRoots?: readonly string[];
   configPaths?: readonly string[];
@@ -203,9 +197,6 @@ export function createConfiguredDelegateChildToolCatalog(input: {
                 extraForcedDenyWrite: input.configPaths,
               }),
               "shell",
-            ),
-            ...(input.extensionTools ?? []).map((tool) =>
-              catalogEntry(tool, "extension"),
             ),
           ],
           input.toolConfig,
@@ -247,7 +238,6 @@ export function createMainHostToolCatalog(input: {
   todoPath: string;
   preparedSkills?: PreparedToolSource | null;
   preparedMcp?: PreparedToolSource | null;
-  extensionTools?: readonly ToolDefinition[];
   delegateTools?: ToolDefinition[];
   delegateAgentTool?: ToolDefinition;
   delegateParallelTool?: ToolDefinition;
@@ -328,7 +318,6 @@ export function catalogEntryOrigin(
       return "local:@sparkwright/core";
     case "mcp":
     case "delegate":
-    case "extension":
       return undefined;
   }
 }
@@ -343,7 +332,6 @@ function createMainHostToolCatalogList(input: {
   todoPath: string;
   preparedSkills?: PreparedToolSource | null;
   preparedMcp?: PreparedToolSource | null;
-  extensionTools?: readonly ToolDefinition[];
   delegateTools?: ToolDefinition[];
   delegateAgentTool?: ToolDefinition;
   delegateParallelTool?: ToolDefinition;
@@ -428,9 +416,6 @@ function createMainHostToolCatalogList(input: {
     ...(input.preparedMcp?.tools ?? []).map((tool) =>
       catalogEntry(tool, "mcp"),
     ),
-    ...(input.extensionTools ?? []).map((tool) =>
-      catalogEntry(tool, "extension"),
-    ),
     ...(input.delegateTools ?? []).map((tool) =>
       catalogEntry(tool, "delegate"),
     ),
@@ -479,7 +464,6 @@ function applyWorkspaceMutationLeases(
     "coding",
     "shell",
     "skill",
-    "extension",
   ]);
   return entries.map((entry) =>
     eligibleSources.has(entry.source) ||
@@ -502,7 +486,6 @@ function applyToolConfigToCatalog(
   entries: HostToolCatalogEntry[],
   config: CapabilityToolsConfig | undefined,
 ): HostToolCatalogEntry[] {
-  assertNoExtensionToolCollisions(entries);
   const metadataByName = new Map(
     entries.map((entry) => [entry.definition.name, entry]),
   );
@@ -523,24 +506,6 @@ function applyToolConfigToCatalog(
     }
     return { ...metadata, definition };
   });
-}
-
-function assertNoExtensionToolCollisions(
-  entries: HostToolCatalogEntry[],
-): void {
-  const owners = new Map<string, HostToolCatalogSource[]>();
-  for (const entry of entries) {
-    const prior = owners.get(entry.definition.name) ?? [];
-    if (
-      prior.length > 0 &&
-      (entry.source === "extension" || prior.includes("extension"))
-    ) {
-      throw new Error(
-        `Tool name collision for "${entry.definition.name}": ${prior.join(", ")} conflicts with ${entry.source}.`,
-      );
-    }
-    owners.set(entry.definition.name, [...prior, entry.source]);
-  }
 }
 
 function intersectAllowlists(

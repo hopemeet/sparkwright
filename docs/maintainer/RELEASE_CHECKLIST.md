@@ -10,16 +10,9 @@ npm run release:check
 ```
 
 `release:check` runs typecheck, lint, format check, schema validation,
-build-backed tests, a high-severity production dependency audit, a
-deterministic read-only CLI smoke test, the deterministic regression matrix,
-the project-trust process-denial regression, and source/packed-tarball install
-smoke tests in temporary projects.
-Both install smokes repeat the production audit inside the installed app, so a
-fresh consumer dependency graph cannot bypass the repository lockfile gate.
-The release-manifest gate checks every public workspace package, exact
-cross-package versions, lockfile identity, built entrypoints, publish metadata,
-dependency topology, and absence of first-party install lifecycle scripts.
-Packed and source installation use `--ignore-scripts`.
+build-backed tests, a deterministic read-only CLI smoke test, the deterministic
+regression matrix, and source/packed-tarball install smoke tests in temporary
+projects.
 
 For a broader pre-push manual pass across runtime, CLI, host/SDK, gateway,
 skills, MCP, provider registry, trace, and examples, use
@@ -67,36 +60,24 @@ Latest recorded provider smoke:
 
 ## Release Readiness Gate
 
-- all public `@sparkwright/*` package versions match
-- all public package entrypoints point at existing built `dist` files
-- internal package dependency ranges exactly match the release version
-- `package-lock.json` records the same workspace names and versions as manifests
-- public manifests use `publishConfig.access=public`, include `dist`, and define no first-party `preinstall`/`install`/`postinstall`
+- package versions match across `@sparkwright/core`, `@sparkwright/cli`, and `@sparkwright/provider-ai-sdk`
+- package entrypoints point at `dist`
+- `package-lock.json` records the same workspace package versions as the manifests
 - protocol docs and `schemas/*.json` include all current event types and stop reasons
-- `npm run schema:check` validates all protocol schemas and locks Host protocol source/docs/schema versions and request/error enums
-- project trust regressions cover canonical roots, separate worktrees, symlink rejection, manifest-change invalidation, external `0600` hash-only state, local mutation authority, remote mutation denial, and no untrusted project command/MCP execution
-- `npm run security:audit:production` reports no high or critical production dependency vulnerabilities
-- source and packed-release install smokes report no high or critical production dependency vulnerabilities in their fresh consumer graphs
+- `npm run schema:check` validates all protocol schemas
 - README, roadmap, backlog, and MVP spec describe a runnable pre-v0/v0 kernel, not a planning-only project
 - custom tool example is present and matches public APIs
 - troubleshooting covers CLI build, approval behavior, provider configuration, workspace boundaries, and trace levels
-- generated provider catalog changes followed the
-  [Provider Catalog Maintenance](./PROVIDER_CATALOG.md) review/signing process;
-  the Host package includes `THIRD_PARTY_NOTICES.md`
 
 ## Publish Mechanics
 
 - Update `CHANGELOG.md`.
 - Run `git status --short` and confirm only intended files changed.
 - Run `npm run release:check`.
-- If the generated provider catalog changed, inspect its source digest and
-  added/removed/changed model summary before signing a higher catalog version.
-- Confirm every enabled catalog shard has a recorded access/redistribution
-  review; a public endpoint alone is not release approval.
 - Run the manual deterministic write smoke check above in a resettable workspace.
 - Run the optional provider-backed smoke check when an OpenAI key is available.
 - If provider credentials are not available on the release machine, reference the latest recorded provider smoke before tagging.
-- Run `npm run check:release-manifests` and use the printed dependency order to publish every public package.
+- Publish packages in dependency order: `@sparkwright/core`, `@sparkwright/provider-ai-sdk`, then `@sparkwright/cli`.
 - Use npm 2FA/provenance settings appropriate for the publishing account.
 - Create a git tag for the released version.
 - After publishing, install the CLI in a clean temporary project and run the read-only golden path.

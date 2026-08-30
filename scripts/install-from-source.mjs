@@ -69,7 +69,7 @@ try {
     );
   }
 
-  run(npm, ["install", "--ignore-scripts", "--omit=dev", ...tarballs], appDir);
+  run(npm, ["install", "--omit=dev", ...tarballs], appDir);
   writeVersionBin(join(binDir, "sparkwright"));
 
   rmSync(versionDir, { recursive: true, force: true });

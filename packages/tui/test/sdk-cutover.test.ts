@@ -1,10 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   mkdir,
   mkdtemp,
   readFile,
   readdir,
-  rm,
   stat,
   writeFile,
 } from "node:fs/promises";
@@ -14,8 +13,6 @@ import {
   createWorkspaceRevision,
   SESSION_COMPACT_SCHEMA_VERSION,
 } from "@sparkwright/core";
-import { ProjectTrustManager } from "@sparkwright/host";
-import type { ProjectTrustScope } from "@sparkwright/protocol";
 import {
   FileWorkflowChannelStore,
   FileWorkflowStore,
@@ -123,21 +120,6 @@ async function waitForFileText(path: string): Promise<string> {
  * the TUI accidentally re-introduced @sparkwright/core as a dependency.
  */
 describe("TUI ↔ host via sdk-node", () => {
-  let stateHome: string;
-  let previousStateHome: string | undefined;
-
-  beforeEach(async () => {
-    previousStateHome = process.env.XDG_STATE_HOME;
-    stateHome = await mkdtemp(join(tmpdir(), "sparkwright-tui-state-"));
-    process.env.XDG_STATE_HOME = stateHome;
-  });
-
-  afterEach(async () => {
-    if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME;
-    else process.env.XDG_STATE_HOME = previousStateHome;
-    await rm(stateHome, { recursive: true, force: true });
-  });
-
   it("stops a workflow through a binding-authorized durable command", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-channel-"));
     const rootDir = join(workspace, ".sparkwright", "workflow-runs");
@@ -221,7 +203,6 @@ describe("TUI ↔ host via sdk-node", () => {
       ].join("\n"),
       "utf8",
     );
-    await trustProject(workspace, ["workflows"]);
     const store = new EventStore();
     const controller = new RunController({
       workspaceRoot: workspace,
@@ -427,7 +408,6 @@ describe("TUI ↔ host via sdk-node", () => {
       JSON.stringify({ identity: { model: "deterministic" } }),
       "utf8",
     );
-    await trustProject(workspace, ["config"]);
     const store = new EventStore();
     const controller = new RunController({
       workspaceRoot: workspace,
@@ -696,49 +676,6 @@ describe("TUI ↔ host via sdk-node", () => {
     controller.shutdown();
   });
 
-  it("sends only project command identity for Host-side resolution", async () => {
-    const workspace = await mkdtemp(
-      join(tmpdir(), "sparkwright-tui-project-command-"),
-    );
-    const commandDir = join(workspace, ".sparkwright", "command");
-    await mkdir(commandDir, { recursive: true });
-    await writeFile(
-      join(commandDir, "review.md"),
-      "Host resolved: $ARGUMENTS",
-      "utf8",
-    );
-    await trustProject(workspace, ["commands"]);
-    const store = new EventStore();
-    const controller = new RunController({
-      workspaceRoot: workspace,
-      modelName: "deterministic",
-      store,
-    });
-
-    try {
-      await controller.start("/review src", {
-        projectCommand: { name: "review", rest: "src" },
-      });
-      await waitForDone(store);
-
-      const trace = await readFile(
-        join(
-          workspace,
-          ".sparkwright",
-          "sessions",
-          controller.getSessionId(),
-          "trace.jsonl",
-        ),
-        "utf8",
-      );
-      expect(trace).toContain("Host resolved: src");
-      expect(trace).not.toContain('"goal":"/review src"');
-    } finally {
-      controller.shutdown();
-      await rm(workspace, { recursive: true, force: true });
-    }
-  }, 30_000);
-
   it("loads the initial session without remounting the transcript header", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));
     const sessionRoot = await mkdtemp(
@@ -772,7 +709,6 @@ describe("TUI ↔ host via sdk-node", () => {
       ["---", "name: bad", "---", "Missing description.", ""].join("\n"),
       "utf8",
     );
-    await trustProject(workspace, ["skills"]);
     const store = new EventStore();
     const controller = new RunController({
       workspaceRoot: workspace,
@@ -820,7 +756,6 @@ describe("TUI ↔ host via sdk-node", () => {
       }),
       "utf8",
     );
-    await trustProject(workspace, ["config"]);
     const sessionRoot = await mkdtemp(
       join(tmpdir(), "sparkwright-tui-sessions-"),
     );
@@ -1238,20 +1173,6 @@ describe("TUI ↔ host via sdk-node", () => {
     }
   }, 30_000);
 });
-
-async function trustProject(
-  workspaceRoot: string,
-  scopes: ProjectTrustScope[],
-): Promise<void> {
-  const manager = new ProjectTrustManager();
-  const snapshot = await manager.inspect(workspaceRoot);
-  const granted = await manager.grant({
-    workspaceRoot,
-    expectedManifestHash: snapshot.manifestHash,
-    scopes,
-  });
-  if (!granted.ok) throw new Error(granted.message);
-}
 
 async function readTrace(path: string): Promise<
   Array<{

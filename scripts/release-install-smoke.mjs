@@ -59,8 +59,7 @@ try {
     );
   }
 
-  run(npm, ["install", "--ignore-scripts", ...tarballs], installDir);
-  run(npm, ["audit", "--omit=dev", "--audit-level=high"], installDir);
+  run(npm, ["install", ...tarballs], installDir);
   writeFileSync(
     join(installDir, "import-smoke.mjs"),
     publicPackages
@@ -121,11 +120,7 @@ try {
 
   assertWriteSmokeResult(writeSmokeWorkspace);
 } finally {
-  if (process.env.SPARKWRIGHT_KEEP_INSTALL_SMOKE === "1") {
-    console.log(`Keeping release install smoke directory: ${tempRoot}`);
-  } else {
-    rmSync(tempRoot, { recursive: true, force: true });
-  }
+  rmSync(tempRoot, { recursive: true, force: true });
 }
 
 function getPublicWorkspacePackages() {

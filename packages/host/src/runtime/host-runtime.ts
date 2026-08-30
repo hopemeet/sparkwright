@@ -3,8 +3,6 @@ import {
   asSessionId,
   createContextItemId,
   createSessionId,
-  isBackgroundTaskPolicy,
-  isRunAccessMode,
   type ContentPart,
   type ContextItem,
   type RunId,
@@ -17,11 +15,7 @@ import {
   type WorkflowRunId,
   type WorkflowRunStatus,
 } from "@sparkwright/agent-runtime";
-import type {
-  HostInjectMessageOutcome,
-  HostRunControlOutcome,
-  HostRuntimeOptions,
-} from "./contracts.js";
+import type { HostRuntimeOptions } from "./contracts.js";
 import {
   contentPartsFromRunInput,
   ExecutionInteractionOperations,
@@ -59,23 +53,11 @@ import {
   type WorkflowResumeRequestPayload,
   type WorkflowRunSnapshot,
   type RunInputPart,
-  type SessionForkRequestPayload,
   type SessionCompactionInspectReport,
   type TaskRecordSnapshot,
   type CapabilitySnapshot,
-  type ProviderCatalogSnapshot,
-  type ProviderCatalogRefreshResult,
-  type ProviderCredentialProfileSummary,
-  type ProviderListRequestPayload,
-  type ProviderAuthMethodsSnapshot,
-  type ProviderAuthAttemptSummary,
-  type ProviderConnectionGrantScope,
-  type ProviderConnectionSummary,
-  type ProjectTrustScope,
-  type ProjectTrustSnapshot,
 } from "@sparkwright/protocol";
 import { buildAccessMetadata, resolveRunAccessFields } from "../run-access.js";
-import { isProjectScopeTrusted } from "../project-trust.js";
 import { HostExecution } from "../host-execution.js";
 import {
   findHostRunDirectory,
@@ -149,7 +131,6 @@ export class HostRuntime {
   private readonly capabilities: CapabilityRuntimeOperations;
   private readonly runPreparation: RunPreparationOperations;
   private readonly interactions: ExecutionInteractionOperations;
-  private interactiveProviderAuth = false;
   private currentExecution: HostExecution | null = null;
   // One abort for the complete interactive execution, including assembly and
   // every todo/workflow episode. Core run cancellation remains run-scoped.
@@ -159,14 +140,6 @@ export class HostRuntime {
     this.opts = {
       ...opts,
       workspaceRoot: resolve(opts.workspaceRoot),
-      ...(opts.extensions
-        ? {
-            extensions: opts.extensions.map((extension) => ({
-              ...extension,
-              ...(extension.limits ? { limits: { ...extension.limits } } : {}),
-            })),
-          }
-        : {}),
       ...(opts.sessionRootDir
         ? { sessionRootDir: resolve(opts.sessionRootDir) }
         : {}),
@@ -210,8 +183,6 @@ export class HostRuntime {
       accessModeCeiling: this.opts.accessModeCeiling,
       defaultBackgroundTasks: this.opts.defaultBackgroundTasks,
       backgroundTasksCeiling: this.opts.backgroundTasksCeiling,
-      extensions: this.opts.extensions,
-      projectTrust: this.opts.projectTrust,
       emit: this.opts.emit,
       includeDevSkills: devSkillsEnabled,
       prepareMcp: ({ config, shellSandbox }) =>
@@ -226,14 +197,11 @@ export class HostRuntime {
       workspaceRoot: this.opts.workspaceRoot,
       sessionRootDir: this.opts.sessionRootDir,
       extraMcpServers: this.opts.extraMcpServers,
-      extensions: this.opts.extensions,
       workspaceLeaseCoordinator: this.opts.workspaceLeaseCoordinator,
       taskManager: this.tasks.manager,
       agents,
       capabilities: this.capabilities,
       workflowEpisodes: this.workflowEpisodes,
-      providerAuth: this.opts.providerAuth,
-      projectTrust: this.opts.projectTrust,
       createInteractionChannel: (runIdHolder) =>
         this.interactions.createInteractionChannel(runIdHolder),
     });
@@ -241,11 +209,6 @@ export class HostRuntime {
 
   hasActiveRun(): boolean {
     return this.interactions.hasActiveRun();
-  }
-
-  /** Enable auth-failure waits for a trusted interactive client connection. */
-  enableInteractiveProviderAuth(): void {
-    this.interactiveProviderAuth = true;
   }
 
   /** @internal HostService lookup without mirroring execution truth. */
@@ -267,27 +230,6 @@ export class HostRuntime {
 
   executionDriverHandle(executionId: string) {
     return this.interactions.executionDriverHandle(executionId);
-  }
-
-  followUpDefaults(
-    runId: string,
-  ): Pick<
-    RunStartRequestPayload,
-    "model" | "accessMode" | "backgroundTasks" | "traceLevel"
-  > {
-    const active = this.currentExecution?.activeRun;
-    if (!active || !this.currentExecution?.ownsRun(runId)) return {};
-    const metadata = active.run.record.metadata;
-    const model = metadata.requestedModel;
-    const accessMode = metadata.accessMode;
-    const backgroundTasks = metadata.backgroundTasks;
-    const traceLevel = metadata.traceLevel;
-    return {
-      ...(typeof model === "string" ? { model } : {}),
-      ...(isRunAccessMode(accessMode) ? { accessMode } : {}),
-      ...(isBackgroundTaskPolicy(backgroundTasks) ? { backgroundTasks } : {}),
-      ...(isTraceLevel(traceLevel) ? { traceLevel } : {}),
-    };
   }
 
   private releaseUnstartedExecution(execution: HostExecution): void {
@@ -369,405 +311,6 @@ export class HostRuntime {
     | { ok: false; error: ProtocolError }
   > {
     return await this.capabilities.inspect(input);
-  }
-
-  async listProviders(
-    input: ProviderListRequestPayload = {},
-    options: { connectionVisibility?: "granted" | "managed" } = {},
-  ): Promise<
-    | { ok: true; catalog: ProviderCatalogSnapshot }
-    | { ok: false; error: ProtocolError }
-  > {
-    try {
-      const trust = await this.opts.projectTrust.inspect(
-        this.opts.workspaceRoot,
-      );
-      const includeProjectConfig = isProjectScopeTrusted(trust, "config");
-      return {
-        ok: true,
-        catalog: await this.opts.providerAuth.catalog({
-          workspaceRoot: this.opts.workspaceRoot,
-          ...(input.model ? { model: input.model } : {}),
-          ...(input.projection ? { projection: input.projection } : {}),
-          ...(options.connectionVisibility
-            ? { connectionVisibility: options.connectionVisibility }
-            : {}),
-          includeProjectConfig,
-        }),
-      };
-    } catch (error) {
-      return {
-        ok: false,
-        error: {
-          code: "internal_error",
-          message: error instanceof Error ? error.message : String(error),
-        },
-      };
-    }
-  }
-
-  async refreshProviderCatalog(
-    providerId?: string,
-  ): Promise<
-    | { ok: true; result: ProviderCatalogRefreshResult }
-    | { ok: false; error: ProtocolError }
-  > {
-    try {
-      const includeProjectConfig = await this.providerProjectConfigAllowed();
-      const result = await this.opts.providerAuth.refreshCatalog({
-        ...(providerId ? { providerId } : {}),
-        context: {
-          workspaceRoot: this.opts.workspaceRoot,
-          includeProjectConfig,
-        },
-      });
-      return result.ok
-        ? result
-        : {
-            ok: false,
-            error: { code: "invalid_payload", message: result.message },
-          };
-    } catch (error) {
-      return { ok: false, error: providerOperationError(error) };
-    }
-  }
-
-  async updateProviderAuth(
-    action: "login" | "logout" | "refresh",
-    profileId: string,
-  ): Promise<
-    | { ok: true; profile: ProviderCredentialProfileSummary }
-    | { ok: false; error: ProtocolError }
-  > {
-    try {
-      const trust = await this.opts.projectTrust.inspect(
-        this.opts.workspaceRoot,
-      );
-      const includeProjectConfig = isProjectScopeTrusted(trust, "config");
-      const result = await this.opts.providerAuth.act(action, profileId, {
-        workspaceRoot: this.opts.workspaceRoot,
-        includeProjectConfig,
-      });
-      return result.ok
-        ? result
-        : {
-            ok: false,
-            error: { code: "invalid_payload", message: result.message },
-          };
-    } catch (error) {
-      return {
-        ok: false,
-        error: {
-          code: "internal_error",
-          message: error instanceof Error ? error.message : String(error),
-        },
-      };
-    }
-  }
-
-  async listProviderAuthMethods(
-    providerId: string,
-    endpoint?: string,
-  ): Promise<
-    | { ok: true; methods: ProviderAuthMethodsSnapshot }
-    | { ok: false; error: ProtocolError }
-  > {
-    try {
-      const includeProjectConfig = await this.providerProjectConfigAllowed();
-      const result = await this.opts.providerAuth.authMethods(
-        providerId,
-        {
-          workspaceRoot: this.opts.workspaceRoot,
-          includeProjectConfig,
-        },
-        endpoint,
-      );
-      return result.ok
-        ? result
-        : {
-            ok: false,
-            error: { code: "invalid_payload", message: result.message },
-          };
-    } catch (error) {
-      return { ok: false, error: providerOperationError(error) };
-    }
-  }
-
-  async beginProviderOAuth(input: {
-    providerId: string;
-    methodId: string;
-    promptValues?: Record<string, string>;
-    grantScope?: ProviderConnectionGrantScope;
-    principalId: string;
-    clientConnectionId: string;
-  }): Promise<
-    | { ok: true; attempt: ProviderAuthAttemptSummary }
-    | { ok: false; error: ProtocolError }
-  > {
-    try {
-      const includeProjectConfig = await this.providerProjectConfigAllowed();
-      const result = await this.opts.providerAuth.beginOAuth({
-        providerId: input.providerId,
-        methodId: input.methodId,
-        ...(input.promptValues ? { promptValues: input.promptValues } : {}),
-        ...(input.grantScope ? { grantScope: input.grantScope } : {}),
-        context: {
-          workspaceRoot: this.opts.workspaceRoot,
-          includeProjectConfig,
-          principalId: input.principalId,
-          clientConnectionId: input.clientConnectionId,
-        },
-      });
-      return result.ok
-        ? result
-        : {
-            ok: false,
-            error: { code: "invalid_payload", message: result.message },
-          };
-    } catch (error) {
-      return { ok: false, error: providerOperationError(error) };
-    }
-  }
-
-  async inspectProviderOAuth(input: {
-    attemptId: string;
-    principalId: string;
-    clientConnectionId: string;
-  }): Promise<
-    | { ok: true; attempt: ProviderAuthAttemptSummary }
-    | { ok: false; error: ProtocolError }
-  > {
-    try {
-      const result = await this.opts.providerAuth.oauthStatus({
-        attemptId: input.attemptId,
-        context: {
-          workspaceRoot: this.opts.workspaceRoot,
-          principalId: input.principalId,
-          clientConnectionId: input.clientConnectionId,
-        },
-      });
-      return result.ok
-        ? result
-        : {
-            ok: false,
-            error: { code: "invalid_payload", message: result.message },
-          };
-    } catch (error) {
-      return { ok: false, error: providerOperationError(error) };
-    }
-  }
-
-  async completeProviderOAuth(input: {
-    attemptId: string;
-    code: string;
-    state?: string;
-    nonce?: string;
-    principalId: string;
-    clientConnectionId: string;
-  }): Promise<
-    | { ok: true; attempt: ProviderAuthAttemptSummary }
-    | { ok: false; error: ProtocolError }
-  > {
-    try {
-      const result = await this.opts.providerAuth.completeOAuth({
-        attemptId: input.attemptId,
-        proof: {
-          code: input.code,
-          ...(input.state ? { state: input.state } : {}),
-          ...(input.nonce ? { nonce: input.nonce } : {}),
-        },
-        context: {
-          workspaceRoot: this.opts.workspaceRoot,
-          principalId: input.principalId,
-          clientConnectionId: input.clientConnectionId,
-        },
-      });
-      return result.ok
-        ? result
-        : {
-            ok: false,
-            error: { code: "invalid_payload", message: result.message },
-          };
-    } catch (error) {
-      return { ok: false, error: providerOperationError(error) };
-    }
-  }
-
-  async cancelProviderOAuth(input: {
-    attemptId: string;
-    principalId: string;
-    clientConnectionId: string;
-  }): Promise<
-    | { ok: true; attempt: ProviderAuthAttemptSummary }
-    | { ok: false; error: ProtocolError }
-  > {
-    try {
-      const result = await this.opts.providerAuth.cancelOAuth({
-        attemptId: input.attemptId,
-        context: {
-          workspaceRoot: this.opts.workspaceRoot,
-          principalId: input.principalId,
-          clientConnectionId: input.clientConnectionId,
-        },
-      });
-      return result.ok
-        ? result
-        : {
-            ok: false,
-            error: { code: "invalid_payload", message: result.message },
-          };
-    } catch (error) {
-      return { ok: false, error: providerOperationError(error) };
-    }
-  }
-
-  async cancelProviderOAuthAttempts(input: {
-    principalId: string;
-    clientConnectionId: string;
-  }): Promise<void> {
-    await this.opts.providerAuth.cancelOAuthAttemptsForConnection(input);
-  }
-
-  async submitProviderSecret(input: {
-    providerId: string;
-    methodId: string;
-    endpoint?: string;
-    secret: string;
-    grantScope?: ProviderConnectionGrantScope;
-  }): Promise<
-    | {
-        ok: true;
-        connection: ProviderConnectionSummary;
-        revision: number;
-      }
-    | { ok: false; error: ProtocolError }
-  > {
-    try {
-      const includeProjectConfig = await this.providerProjectConfigAllowed();
-      const result = await this.opts.providerAuth.submitSecret({
-        ...input,
-        context: {
-          workspaceRoot: this.opts.workspaceRoot,
-          includeProjectConfig,
-        },
-      });
-      return result.ok
-        ? result
-        : {
-            ok: false,
-            error: { code: "invalid_payload", message: result.message },
-          };
-    } catch (error) {
-      void error;
-      return {
-        ok: false,
-        error: {
-          code: "internal_error",
-          message: "Provider secret submission failed.",
-        },
-      };
-    }
-  }
-
-  async manageProviderConnection(input: {
-    action: "select" | "disconnect" | "logout" | "remove" | "refresh";
-    connectionId: string;
-    grantScope?: ProviderConnectionGrantScope;
-  }): Promise<
-    | {
-        ok: true;
-        connection?: ProviderConnectionSummary;
-        connectionId: string;
-        revision: number;
-      }
-    | { ok: false; error: ProtocolError }
-  > {
-    try {
-      const includeProjectConfig = await this.providerProjectConfigAllowed();
-      const result = await this.opts.providerAuth.manageConnection({
-        ...input,
-        context: {
-          workspaceRoot: this.opts.workspaceRoot,
-          includeProjectConfig,
-        },
-      });
-      return result.ok
-        ? result
-        : {
-            ok: false,
-            error: { code: "invalid_payload", message: result.message },
-          };
-    } catch (error) {
-      return { ok: false, error: providerOperationError(error) };
-    }
-  }
-
-  private async providerProjectConfigAllowed(): Promise<boolean> {
-    const trust = await this.opts.projectTrust.inspect(this.opts.workspaceRoot);
-    return isProjectScopeTrusted(trust, "config");
-  }
-
-  async inspectProjectTrust(): Promise<
-    | { ok: true; snapshot: ProjectTrustSnapshot }
-    | { ok: false; error: ProtocolError }
-  > {
-    try {
-      return {
-        ok: true,
-        snapshot: await this.opts.projectTrust.inspect(this.opts.workspaceRoot),
-      };
-    } catch (error) {
-      return {
-        ok: false,
-        error: {
-          code: "internal_error",
-          message: error instanceof Error ? error.message : String(error),
-        },
-      };
-    }
-  }
-
-  async updateProjectTrust(input: {
-    action: "grant" | "revoke";
-    expectedManifestHash?: string;
-    scopes?: readonly ProjectTrustScope[];
-  }): Promise<
-    | { ok: true; snapshot: ProjectTrustSnapshot }
-    | { ok: false; error: ProtocolError }
-  > {
-    try {
-      const result =
-        input.action === "grant"
-          ? await this.opts.projectTrust.grant({
-              workspaceRoot: this.opts.workspaceRoot,
-              expectedManifestHash: input.expectedManifestHash!,
-              ...(input.scopes ? { scopes: input.scopes } : {}),
-            })
-          : await this.opts.projectTrust.revoke({
-              workspaceRoot: this.opts.workspaceRoot,
-              ...(input.scopes ? { scopes: input.scopes } : {}),
-            });
-      return result.ok
-        ? result
-        : {
-            ok: false,
-            error: {
-              code: result.code,
-              message: result.message,
-              ...(result.snapshot
-                ? { details: { projectTrust: result.snapshot } }
-                : {}),
-            },
-          };
-    } catch (error) {
-      return {
-        ok: false,
-        error: {
-          code: "internal_error",
-          message: error instanceof Error ? error.message : String(error),
-        },
-      };
-    }
   }
 
   /**
@@ -1097,7 +640,6 @@ export class HostRuntime {
       modelRef,
       access,
       sessionId: resumeSessionId,
-      interactiveProviderAuth: this.interactiveProviderAuth,
       targetPath: payload.targetPath,
       confidentialPaths: payload.confidentialPaths,
       confidentialDefaults: payload.confidentialDefaults,
@@ -1212,7 +754,6 @@ export class HostRuntime {
       modelRef: payload.model ?? this.opts.defaultModel,
       access,
       sessionId,
-      interactiveProviderAuth: this.interactiveProviderAuth,
       targetPath: effectiveResumePayload.targetPath,
       confidentialPaths: effectiveResumePayload.confidentialPaths,
       confidentialDefaults: effectiveResumePayload.confidentialDefaults,
@@ -1330,15 +871,6 @@ export class HostRuntime {
         },
       };
     }
-    if (payload.projectCommand && (payload.workflow || controlSessionId)) {
-      return {
-        ok: false,
-        error: {
-          code: "invalid_payload",
-          message: "projectCommand is only valid for an ordinary main run",
-        },
-      };
-    }
     if (controlSessionId === sessionId) {
       return {
         ok: false,
@@ -1350,13 +882,9 @@ export class HostRuntime {
     }
     const prepared = await this.runPreparation.prepare({
       goal: payload.goal,
-      ...(payload.projectCommand
-        ? { projectCommand: payload.projectCommand }
-        : {}),
       modelRef,
       access,
       sessionId,
-      interactiveProviderAuth: this.interactiveProviderAuth,
       targetPath: payload.targetPath,
       confidentialPaths: payload.confidentialPaths,
       confidentialDefaults: payload.confidentialDefaults,
@@ -1378,8 +906,6 @@ export class HostRuntime {
     });
     if (!prepared.ok) return prepared;
     const env = prepared.env;
-    const effectivePayload: RunStartRequestPayload =
-      env.goal === payload.goal ? payload : { ...payload, goal: env.goal };
 
     // Thread prior turns of this session into context so the model can see
     // the conversation history. Each completed prior run contributes a
@@ -1388,17 +914,13 @@ export class HostRuntime {
     const priorContext = await loadHostSessionConversation(
       { workspaceRoot: env.workspaceRoot, sessionRootDir: env.sessionRootDir },
       sessionId,
-      payload.metadata?.interactionMode === "follow_up" &&
-        typeof payload.metadata.previousRunId === "string"
-        ? { evidenceRunId: payload.metadata.previousRunId }
-        : undefined,
     );
     const initialInputParts = contentPartsFromRunInput(payload.input?.parts);
     const initialInputContext = userInputContextItem({
       content:
         initialInputParts.length > 0
-          ? `User request attachments for: ${env.goal}`
-          : env.goal,
+          ? `User request attachments for: ${payload.goal}`
+          : payload.goal,
       parts: initialInputParts,
       source: "run.start",
       metadata: payload.input?.metadata,
@@ -1407,7 +929,7 @@ export class HostRuntime {
     const started = await this.workflowEpisodes.startFresh({
       execution,
       env,
-      payload: effectivePayload,
+      payload,
       sessionId,
       permissionMode,
       shouldWrite,
@@ -1424,20 +946,21 @@ export class HostRuntime {
     };
   }
 
-  cancelRun(runId: string, reason?: string): HostRunControlOutcome {
+  cancelRun(
+    runId: string,
+    reason?: string,
+  ): { ok: true } | { ok: false; error: ProtocolError } {
     return this.opts.executionCoordinator.cancelRun(this, runId, reason);
   }
 
   injectRunMessage(
     runId: string,
     input: {
-      commandId: string;
-      mode: "steer" | "follow_up";
       content: string;
       parts?: readonly RunInputPart[];
       metadata?: Record<string, unknown>;
     },
-  ): HostInjectMessageOutcome {
+  ): { ok: true } | { ok: false; error: ProtocolError } {
     return this.opts.executionCoordinator.injectRunMessage(this, runId, input);
   }
 
@@ -1508,38 +1031,32 @@ export class HostRuntime {
       llm?: boolean;
     } = {},
   ): Promise<SessionCompactResult> {
-    const trust = await this.opts.projectTrust.inspect(this.opts.workspaceRoot);
-    const configTrusted = isProjectScopeTrusted(trust, "config");
     return await compactHostSession({
-      context: { ...this.opts, projectConfigTrusted: configTrusted },
+      context: this.opts,
       sessionId,
       reason,
       manualLlm: options.llm === true,
     });
   }
 
-  /** Fork a session into a self-contained file-backed snapshot. */
-  async forkSession(request: SessionForkRequestPayload): Promise<
+  /**
+   * Fork a session at an optional event sequence into a brand-new session,
+   * using core's forkSessionFromEvent over the file-backed session store.
+   * The new session's run references are copied; subsequent runs extend the
+   * fork rather than the original.
+   */
+  async forkSession(
+    sourceSessionId: string,
+    forkAtSequence?: number,
+  ): Promise<
     | {
         ok: true;
         forkedSessionId: string;
-        copiedRunCount: number;
-        forkPoint: SessionForkRequestPayload["forkPoint"] | null;
         copiedEventCount: number;
         truncatedAtSequence: number | null;
       }
     | { ok: false; error: ProtocolError }
   > {
-    return await forkHostSession(this.opts, request);
+    return await forkHostSession(this.opts, sourceSessionId, forkAtSequence);
   }
-}
-
-function providerOperationError(error: unknown): ProtocolError {
-  return {
-    code: "internal_error",
-    message:
-      error instanceof Error
-        ? error.message
-        : "Provider connection operation failed.",
-  };
 }

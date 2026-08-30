@@ -99,16 +99,6 @@ TUI /skills
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-08-08
-- Scope: project Skill roots are omitted from discovery, indexing, and
-  inline-shell preprocessing until their independent Project Trust scope is
-  admitted. User Skills and the deterministic loader remain available.
-- Read: project trust manifest, Host Skill-root resolution, run/capability
-  preparation, CLI/TUI discovery, and the existing Skill runtime boundary.
-- Tests: focused Host trust/preparation and TUI project-discovery coverage
-  passed; the real Host regression confirmed pre-execution denial.
-
-- Status: Verified
 - Date: 2026-08-02
 - Scope: removed privileged Skill mutation, proposal/history/learning state,
   config, UI, and Stats rollups; retained layered loading, deterministic

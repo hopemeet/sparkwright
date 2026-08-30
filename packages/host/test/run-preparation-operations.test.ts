@@ -9,7 +9,6 @@ import { CapabilityRuntimeOperations } from "../src/runtime/capability-runtime-o
 import { RunPreparationOperations } from "../src/runtime/run-preparation-operations.js";
 import { resolveRunAccessFields } from "../src/run-access.js";
 import { WorkspaceLeaseCoordinator } from "../src/workspace-lease-coordinator.js";
-import { ProjectTrustManager } from "../src/project-trust.js";
 
 const tempDirs: string[] = [];
 
@@ -35,9 +34,6 @@ describe("RunPreparationOperations", () => {
       taskManager,
       taskRootDir: join(workspaceRoot, ".sparkwright", "tasks"),
       defaultModel: "deterministic",
-      projectTrust: new ProjectTrustManager({
-        statePath: join(workspaceRoot, ".test-state", "project-trust.json"),
-      }),
       emit: () => {},
       prepareMcp: async () => ({ servers: [], prepared: null }),
     });

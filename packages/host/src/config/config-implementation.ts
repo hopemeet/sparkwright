@@ -105,7 +105,6 @@ import {
   MCP_TOOL_SCHEMA_LOAD_MODES,
   modelSchema,
   MODEL_COST_CONFIG_KEYS,
-  MODEL_POLICY_CONFIG_KEYS,
   PROVIDER_CONFIG_KEYS,
   PROVIDER_MODEL_CONFIG_KEYS,
   RUN_BUDGET_CONFIG_KEYS,
@@ -3614,141 +3613,79 @@ function validateProvider(
     );
     if (providerOptions) provider.providerOptions = providerOptions;
   }
-  const models = validateProviderModelMap(
-    raw.models,
-    `providers.${key}.models`,
-    filePath,
-    errors,
-  );
-  if (models) provider.models = models;
-  if (raw.modelPolicy !== undefined) {
-    const field = `providers.${key}.modelPolicy`;
-    if (!isRecord(raw.modelPolicy)) {
-      errors.push({ file: filePath, field, message: "must be an object" });
-    } else {
-      validateKnownKeys(
-        raw.modelPolicy,
-        field,
-        filePath,
-        errors,
-        new Set<string>(MODEL_POLICY_CONFIG_KEYS),
-      );
-      const policy: NonNullable<ProviderConfig["modelPolicy"]> = {};
-      for (const policyKey of MODEL_POLICY_CONFIG_KEYS) {
-        const value = raw.modelPolicy[policyKey];
-        if (value === undefined) continue;
-        if (
-          Array.isArray(value) &&
-          value.every((entry) => typeof entry === "string" && entry.length > 0)
-        ) {
-          policy[policyKey] = [...new Set(value)];
-        } else {
+  if (raw.models !== undefined) {
+    if (isRecord(raw.models)) {
+      const models: Record<string, ProviderModelConfig> = {};
+      for (const [modelId, entry] of Object.entries(raw.models)) {
+        const modelField = `providers.${key}.models.${modelId}`;
+        if (!isRecord(entry)) {
           errors.push({
             file: filePath,
-            field: `${field}.${policyKey}`,
-            message: "must be an array of non-empty model ids",
+            field: modelField,
+            message: "must be an object",
           });
+          continue;
         }
-      }
-      provider.modelPolicy = policy;
-    }
-  }
-  const modelOverrides = validateProviderModelMap(
-    raw.modelOverrides,
-    `providers.${key}.modelOverrides`,
-    filePath,
-    errors,
-  );
-  if (modelOverrides) provider.modelOverrides = modelOverrides;
-  if (
-    raw.models !== undefined &&
-    (raw.modelPolicy !== undefined || raw.modelOverrides !== undefined)
-  ) {
-    errors.push({
-      file: filePath,
-      field: `providers.${key}.models`,
-      message:
-        "legacy models cannot be combined with modelPolicy or modelOverrides; move metadata to modelOverrides and ids to modelPolicy.allow",
-    });
-    delete provider.modelPolicy;
-    delete provider.modelOverrides;
-  }
-  return provider;
-}
-
-function validateProviderModelMap(
-  raw: unknown,
-  field: string,
-  filePath: string,
-  errors: SharedConfigError[],
-): Record<string, ProviderModelConfig> | undefined {
-  if (raw === undefined) return undefined;
-  if (!isRecord(raw)) {
-    errors.push({ file: filePath, field, message: "must be an object" });
-    return undefined;
-  }
-  const models: Record<string, ProviderModelConfig> = {};
-  for (const [modelId, entry] of Object.entries(raw)) {
-    const modelField = `${field}.${modelId}`;
-    if (!isRecord(entry)) {
-      errors.push({
-        file: filePath,
-        field: modelField,
-        message: "must be an object",
-      });
-      continue;
-    }
-    const modelConfig: ProviderModelConfig = {};
-    validateKnownKeys(
-      entry,
-      modelField,
-      filePath,
-      errors,
-      new Set<string>(PROVIDER_MODEL_CONFIG_KEYS),
-    );
-    if (entry.cost !== undefined) {
-      if (isRecord(entry.cost)) {
-        const cost: ModelCost = {};
-        const costField = `${modelField}.cost`;
+        const modelConfig: ProviderModelConfig = {};
         validateKnownKeys(
-          entry.cost,
-          costField,
+          entry,
+          modelField,
           filePath,
           errors,
-          new Set<string>(MODEL_COST_CONFIG_KEYS),
+          new Set<string>(PROVIDER_MODEL_CONFIG_KEYS),
         );
-        for (const costKey of MODEL_COST_CONFIG_KEYS) {
-          const value = entry.cost[costKey];
-          if (value === undefined) continue;
-          if (typeof value === "number") cost[costKey] = value;
-          else
+        if (entry.cost !== undefined) {
+          if (isRecord(entry.cost)) {
+            const cost: ModelCost = {};
+            const costField = `${modelField}.cost`;
+            validateKnownKeys(
+              entry.cost,
+              costField,
+              filePath,
+              errors,
+              new Set<string>(MODEL_COST_CONFIG_KEYS),
+            );
+            for (const field of MODEL_COST_CONFIG_KEYS) {
+              const v = entry.cost[field];
+              if (v === undefined) continue;
+              if (typeof v === "number") cost[field] = v;
+              else
+                errors.push({
+                  file: filePath,
+                  field: `${costField}.${field}`,
+                  message: "must be a number",
+                });
+            }
+            modelConfig.cost = cost;
+          } else {
             errors.push({
               file: filePath,
-              field: `${costField}.${costKey}`,
-              message: "must be a number",
+              field: `providers.${key}.models.${modelId}.cost`,
+              message: "must be an object",
             });
+          }
         }
-        modelConfig.cost = cost;
-      } else {
-        errors.push({
-          file: filePath,
-          field: `${modelField}.cost`,
-          message: "must be an object",
-        });
+        if (entry.providerOptions !== undefined) {
+          const providerOptions = validateProviderOptions(
+            entry.providerOptions,
+            `providers.${key}.models.${modelId}.providerOptions`,
+            filePath,
+            errors,
+          );
+          if (providerOptions) modelConfig.providerOptions = providerOptions;
+        }
+        models[modelId] = modelConfig;
       }
+      provider.models = models;
+    } else {
+      errors.push({
+        file: filePath,
+        field: `providers.${key}.models`,
+        message: "must be an object",
+      });
     }
-    if (entry.providerOptions !== undefined) {
-      const providerOptions = validateProviderOptions(
-        entry.providerOptions,
-        `${modelField}.providerOptions`,
-        filePath,
-        errors,
-      );
-      if (providerOptions) modelConfig.providerOptions = providerOptions;
-    }
-    models[modelId] = modelConfig;
   }
-  return models;
+  return provider;
 }
 
 function validateProviderOptions(
@@ -4146,20 +4083,10 @@ function validateShared(
   return { config, sources, errors };
 }
 
-export interface LoadHostConfigOptions {
-  /**
-   * `restricted` keeps only project values that can tighten safety or affect
-   * local presentation. Executable/outbound project configuration is omitted
-   * until the Host has pinned and trusted that config manifest.
-   */
-  projectMode?: "trusted" | "restricted";
-}
-
 /** Load + merge the shared config fields across the resolution order. */
 export async function loadHostConfig(
   cwd: string,
   env: Record<string, string | undefined> = process.env,
-  options: LoadHostConfigOptions = {},
 ): Promise<LoadedSharedConfig> {
   const order = configLayerResolutionOrder(cwd, env);
   const merged: SharedConfig = {};
@@ -4203,35 +4130,6 @@ export async function loadHostConfig(
     }
     const v = validateShared(r.value, `${label}:${path}`, path, label);
     errors.push(...v.errors);
-    if (label === "project" && options.projectMode === "restricted") {
-      const restricted = restrictUntrustedProjectConfig(v.config);
-      if (restricted.removedFields.length > 0) {
-        warnings.push({
-          file: path,
-          field: "(projectTrust)",
-          message: `ignored until this project capability manifest is trusted: ${restricted.removedFields.join(", ")}`,
-        });
-      }
-      v.config = restricted.config;
-      if (v.config.model === undefined) delete v.sources.model;
-      if (v.config.providers === undefined) delete v.sources.providers;
-      if (v.config.workspace === undefined) delete v.sources.workspace;
-      if (v.config.shell === undefined) delete v.sources.shell;
-      if (v.config.tasks === undefined) delete v.sources.tasks;
-      if (v.config.runBudget === undefined) delete v.sources.runBudget;
-      if (v.config.maxSteps === undefined) delete v.sources.maxSteps;
-      if (v.config.traceLevel === undefined) delete v.sources.traceLevel;
-    }
-    for (const [providerId, provider] of Object.entries(
-      v.config.providers ?? {},
-    )) {
-      if (!provider.apiKey) continue;
-      warnings.push({
-        file: path,
-        field: `identity.providers.${providerId}.apiKey`,
-        message: `legacy config credential; migrate it with "sparkwright provider migrate ${providerId} --remove-config"`,
-      });
-    }
     if (v.config.workspace !== undefined) {
       v.config.workspace = isAbsolute(v.config.workspace)
         ? v.config.workspace
@@ -4270,7 +4168,6 @@ export async function loadHostConfig(
       };
     }
     // Providers merge by key (a later file adds/overrides individual entries),
-    // with project modelPolicy conservatively intersecting user policy,
     // top-level tools merge by explicit set semantics, capabilities merge by
     // sub-capability (skills/mcp/agents/web), and policy.sandbox merges
     // conservatively so a project cannot downgrade a user-defined sandbox
@@ -4291,14 +4188,7 @@ export async function loadHostConfig(
     } = v.config;
     Object.assign(merged, rest);
     if (providers) {
-      const nextProviders = { ...(merged.providers ?? {}) };
-      for (const [providerId, provider] of Object.entries(providers)) {
-        nextProviders[providerId] =
-          label === "project" && nextProviders[providerId]
-            ? mergeProjectProviderPolicy(nextProviders[providerId], provider)
-            : provider;
-      }
-      merged.providers = nextProviders;
+      merged.providers = { ...(merged.providers ?? {}), ...providers };
     }
     if (layerShell) {
       merged.shell = mergeShellConfig(merged.shell, layerShell);
@@ -4421,150 +4311,6 @@ export async function loadHostConfig(
   return { config: merged, sources, attempted, errors, warnings };
 }
 
-function mergeProjectProviderPolicy(
-  base: ProviderConfig,
-  project: ProviderConfig,
-): ProviderConfig {
-  const baseLegacyAllow = Object.keys(base.models ?? {});
-  const basePolicy =
-    baseLegacyAllow.length > 0 ? { allow: baseLegacyAllow } : base.modelPolicy;
-  if (project.models && Object.keys(project.models).length > 0) {
-    const models = Object.fromEntries(
-      Object.entries(project.models).filter(([modelId]) =>
-        providerPolicyAllows(basePolicy, modelId),
-      ),
-    );
-    return Object.keys(models).length > 0
-      ? { ...project, models }
-      : { ...project, models: undefined, modelPolicy: { allow: [] } };
-  }
-  const baseAllow = basePolicy?.allow;
-  const projectAllow = project.modelPolicy?.allow;
-  const allow =
-    baseAllow === undefined
-      ? projectAllow
-      : projectAllow === undefined
-        ? baseAllow
-        : baseAllow.filter((modelId) => projectAllow.includes(modelId));
-  const deny = [
-    ...new Set([
-      ...(basePolicy?.deny ?? []),
-      ...(project.modelPolicy?.deny ?? []),
-    ]),
-  ];
-  const modelPolicy =
-    allow !== undefined || deny.length > 0
-      ? {
-          ...(allow !== undefined ? { allow } : {}),
-          ...(deny.length > 0 ? { deny } : {}),
-        }
-      : undefined;
-  return {
-    ...project,
-    ...(project.models ? { models: undefined } : {}),
-    ...(modelPolicy ? { modelPolicy } : {}),
-  };
-}
-
-function providerPolicyAllows(
-  policy: ProviderConfig["modelPolicy"],
-  modelId: string,
-): boolean {
-  return (
-    (policy?.allow === undefined || policy.allow.includes(modelId)) &&
-    !policy?.deny?.includes(modelId)
-  );
-}
-
-function restrictUntrustedProjectConfig(input: SharedConfig): {
-  config: SharedConfig;
-  removedFields: string[];
-} {
-  const config: SharedConfig = {};
-  const removedFields: string[] = [];
-  const preserve = <K extends keyof SharedConfig>(key: K): void => {
-    if (input[key] !== undefined) config[key] = input[key];
-  };
-
-  preserve("accessMode");
-  preserve("backgroundTasks");
-  preserve("confidentialPaths");
-  preserve("write");
-  preserve("theme");
-  preserve("mouse");
-  preserve("keybindings");
-  preserve("vim");
-  if (input.confidentialDefaults === true) config.confidentialDefaults = true;
-
-  if (input.tools) {
-    const { defer: _defer, ...tighteningTools } = input.tools;
-    if (Object.keys(tighteningTools).length > 0) config.tools = tighteningTools;
-    if (input.tools.defer !== undefined) removedFields.push("tools.defer");
-  }
-
-  const sandbox = restrictiveProjectSandbox(input.shell?.sandbox);
-  if (sandbox) config.shell = { sandbox };
-  if (input.shell) {
-    const shellKeys = Object.keys(input.shell).filter(
-      (key) => key !== "sandbox",
-    );
-    removedFields.push(...shellKeys.map((key) => `shell.${key}`));
-    if (input.shell.sandbox && !sandbox) removedFields.push("policy.sandbox");
-  }
-
-  if (input.capabilities?.web?.security === "hardened") {
-    config.capabilities = { web: { security: "hardened" } };
-  }
-
-  for (const field of [
-    "model",
-    "providers",
-    "workspace",
-    "tasks",
-    "runBudget",
-    "maxSteps",
-    "traceLevel",
-  ] as const) {
-    if (input[field] !== undefined) removedFields.push(field);
-  }
-  if (input.capabilities) {
-    for (const key of Object.keys(input.capabilities)) {
-      if (key === "web" && input.capabilities.web?.security === "hardened") {
-        continue;
-      }
-      removedFields.push(`capabilities.${key}`);
-    }
-  }
-  if (input.confidentialDefaults === false) {
-    removedFields.push("policy.confidentialDefaults=false");
-  }
-  return { config, removedFields: [...new Set(removedFields)].sort() };
-}
-
-function restrictiveProjectSandbox(
-  input: ShellSandboxConfig | undefined,
-): ShellSandboxConfig | undefined {
-  if (!input) return undefined;
-  const filesystem = input.filesystem
-    ? {
-        ...(input.filesystem.denyRead?.length
-          ? { denyRead: [...input.filesystem.denyRead] }
-          : {}),
-        ...(input.filesystem.denyWrite?.length
-          ? { denyWrite: [...input.filesystem.denyWrite] }
-          : {}),
-        ...(input.filesystem.tmp === false ? { tmp: false } : {}),
-      }
-    : undefined;
-  const out: ShellSandboxConfig = {
-    ...(input.mode === "enforce" ? { mode: "enforce" } : {}),
-    ...(input.failIfUnavailable === true ? { failIfUnavailable: true } : {}),
-    ...(filesystem && Object.keys(filesystem).length > 0 ? { filesystem } : {}),
-    ...(input.network?.mode === "deny" ? { network: { mode: "deny" } } : {}),
-  };
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
 /** Split a "provider/model" reference. No slash → modelId is empty. */
 export function parseModelRef(ref: string): ParsedModelRef {
   const i = ref.indexOf("/");
@@ -4618,25 +4364,13 @@ export function resolveModelSelection(
       message: `Provider "${providerKey}" uses npm "${npm}", which is not supported (supported: ${supported}).`,
     };
   }
-  const legacyModelIds = Object.keys(provider.models ?? {});
-  const availableModelIds =
-    legacyModelIds.length > 0
-      ? legacyModelIds
-      : (provider.modelPolicy?.allow ?? []);
-  if (legacyModelIds.length > 0 && !legacyModelIds.includes(modelId)) {
+  const configuredModelIds = Object.keys(provider.models ?? {});
+  if (configuredModelIds.length > 0 && !configuredModelIds.includes(modelId)) {
     return {
       kind: "error",
-      message: `Model "${ref}" is not configured for provider "${providerKey}". Available models: ${availableModelIds.join(", ")}.`,
+      message: `Model "${ref}" is not configured for provider "${providerKey}". Available models: ${configuredModelIds.join(", ")}.`,
     };
   }
-  if (!providerPolicyAllows(provider.modelPolicy, modelId)) {
-    return {
-      kind: "error",
-      message: `Model "${ref}" is not allowed by provider "${providerKey}" modelPolicy${availableModelIds.length > 0 ? `. Available models: ${availableModelIds.filter((id) => !provider.modelPolicy?.deny?.includes(id)).join(", ")}` : ""}.`,
-    };
-  }
-  const modelConfig =
-    provider.models?.[modelId] ?? provider.modelOverrides?.[modelId];
   return {
     kind: "configured",
     providerKey,
@@ -4644,10 +4378,10 @@ export function resolveModelSelection(
     npm,
     baseURL: provider.baseURL,
     apiKey: provider.apiKey,
-    cost: modelConfig?.cost,
+    cost: provider.models?.[modelId]?.cost,
     providerOptions: mergeProviderOptions(
       provider.providerOptions,
-      modelConfig?.providerOptions,
+      provider.models?.[modelId]?.providerOptions,
     ),
   };
 }

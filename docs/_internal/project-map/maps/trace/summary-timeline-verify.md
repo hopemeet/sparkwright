@@ -11,50 +11,6 @@ See [raw-trace.md](raw-trace.md) for source data and [export-diagnostics.md](exp
 ## Last Verified
 
 - Status: Read-only
-- Date: 2026-08-18
-- Scope: ChatGPT login remains pre-run control state and model output/tool calls
-  enter existing Core events. No App Server line, token, account detail, or new
-  trace/summary/timeline/verify schema is introduced.
-- Read: App Server projection and trace diagnostic boundary.
-- Tests: focused Host and real model/tool smokes passed; trace schemas are
-  unchanged.
-
-- Status: Read-only
-- Date: 2026-08-17
-- Scope: removing the unfinished ChatGPT adapter does not change raw trace,
-  summary, timeline, report, verify, or run-assessment schemas. Provider login
-  remains a pre-run control.
-- Read: provider/model construction and trace diagnostic boundary.
-- Tests: no trace-diagnostic-specific test was run; focused Host tests passed.
-
-- Status: Read-only
-- Date: 2026-08-12
-- Scope: Host-private OAuth account bindings and their legacy reconciliation do
-  not add raw trace events or change summary, timeline, report, verify, or run
-  assessment derivation.
-- Read: provider connection mutation/resolution and trace diagnostic boundary.
-- Tests: focused routed provider checks passed; trace diagnostic contracts are
-  unchanged.
-
-- Status: Read-only
-- Date: 2026-08-09
-- Scope: P7.0 connection switching does not change raw trace events or summary,
-  timeline, report, verify, and run-assessment derivation.
-- Read: provider connection controls and trace diagnostic boundary.
-- Tests: focused connection checks and the full release gate passed; diagnostic
-  contracts are unchanged.
-
-- Status: Read-only
-- Date: 2026-08-08
-- Scope: Project Trust adds admission diagnostics but does not change trace
-  summary, timeline, report, verify, or run-assessment derivation. These views
-  continue to consume the canonical raw event log.
-- Read: CLI trust handling, Host protocol errors, Core events, and trace
-  diagnostic commands.
-- Tests: schema and focused trust coverage passed; trace derivation contracts
-  were unchanged.
-
-- Status: Read-only
 - Date: 2026-08-02
 - Scope: CLI Skill commands and Stats rendering changed, but trace summary,
   timeline, verify, run assessment, and CLI exit semantics are unchanged.
@@ -422,13 +378,6 @@ trace.jsonl
   guard.
 
 ## Last Verified
-
-- Status: Read-only
-- Date: 2026-08-09
-- Scope: P6.4 does not add run events or change summary, timeline, integrity,
-  or verification semantics.
-- Read: provider control path and trace diagnostics boundary.
-- Tests: affected provider tests and the full release gate passed.
 
 - Status: Verified
 - Date: 2026-07-16T10:44:25+0800

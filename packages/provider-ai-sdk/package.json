@@ -34,7 +34,7 @@
   "dependencies": {
     "@sparkwright/core": "0.1.0",
     "@sparkwright/provider-registry": "0.1.0",
-    "ai": "6.0.184"
+    "ai": "^6.0.184"
   },
   "publishConfig": {
     "access": "public"

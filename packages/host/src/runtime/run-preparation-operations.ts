@@ -1,11 +1,8 @@
 import { isAbsolute, join, relative, resolve } from "node:path";
 import {
   createRun,
-  prepareExtensions,
   type EventEmitter,
-  type ExtensionRegistration,
   type InteractionChannel,
-  type PreparedExtensions,
   type RunId,
   type WorkflowHook,
 } from "@sparkwright/core";
@@ -21,11 +18,7 @@ import {
   prepareMcpToolsForRun,
   type McpServerConfig,
 } from "@sparkwright/mcp-adapter";
-import type {
-  ProjectCommandReference,
-  ProtocolError,
-  TraceLevel,
-} from "@sparkwright/protocol";
+import type { ProtocolError, TraceLevel } from "@sparkwright/protocol";
 import { RECOMMENDED_FOREGROUND_TIMEOUT_MS } from "@sparkwright/shell-tool";
 import type { ResolvedShellSandboxConfig } from "@sparkwright/shell-sandbox";
 import { prepareSkillsForRun } from "@sparkwright/skills";
@@ -43,10 +36,6 @@ import type { CapabilityMcpConfig } from "../config/contracts.js";
 import { createExecutionResources } from "../execution-resources.js";
 import { resolveExecutionPlan } from "../execution-plan.js";
 import { createModel } from "../model-factory.js";
-import {
-  ProjectCommandTrustRequiredError,
-  resolveHostProjectCommand,
-} from "../project-command-resolution.js";
 import type { ResolvedRunAccess } from "../run-access.js";
 import { createHostRunPolicy } from "../run-policy.js";
 import { prepareHostRunSecurityPlan } from "../run-security-plan.js";
@@ -66,16 +55,9 @@ import {
 import { createWorkflowProjectionHooks } from "../workflow-projection.js";
 import { loadLayeredWorkflowAssets } from "../workflows.js";
 import type { WorkspaceLeaseCoordinator } from "../workspace-lease-coordinator.js";
-import type { ProviderAuthManager } from "../provider-auth.js";
-import {
-  isProjectScopeTrusted,
-  summarizeProjectTrust,
-  type ProjectTrustManager,
-} from "../project-trust.js";
 import type { AgentRuntimeAssembly } from "./agent-runtime-assembly.js";
 import {
   capabilitySnapshotAgentProfiles,
-  capabilityExtensionSummaries,
   createSkillPreprocessOptions,
   inlineShellCapabilitySummary,
   modelCapabilitySummary,
@@ -216,8 +198,6 @@ function extractSkillSourcePath(message: string): string | undefined {
 }
 
 export interface PreparedHostRunEnvironment extends WorkflowEpisodeEnvironment {
-  goal: string;
-  preparedExtensions: PreparedExtensions;
   preparedSkills: PreparedSkills | null;
   preparedMcp: PreparedMcp | null;
   toolCatalog: HostToolCatalogEntry[];
@@ -257,7 +237,6 @@ export function assembleRuntimeWorkflowHooks(
 
 export interface RunPreparationInput {
   goal: string;
-  projectCommand?: ProjectCommandReference;
   modelRef?: string;
   access: ResolvedRunAccess;
   sessionId: string;
@@ -274,14 +253,12 @@ export interface RunPreparationInput {
   workflowWaitingInputMetadata?: Record<string, unknown>;
   runMetadata?: Record<string, unknown>;
   runStoreMetadata?: Record<string, unknown>;
-  interactiveProviderAuth?: boolean;
 }
 
 export interface RunPreparationOperationsOptions {
   workspaceRoot: string;
   sessionRootDir?: string;
   extraMcpServers?: readonly McpServerConfig[];
-  extensions?: readonly ExtensionRegistration[];
   workspaceLeaseCoordinator: WorkspaceLeaseCoordinator;
   taskManager: TaskManager;
   agents: Pick<AgentRuntimeAssembly, "prepareRun">;
@@ -290,8 +267,6 @@ export interface RunPreparationOperationsOptions {
     "captureRunSnapshot" | "recordIndexFailure" | "summarize"
   >;
   workflowEpisodes: Pick<WorkflowEpisodeRuntime, "prepare">;
-  providerAuth?: ProviderAuthManager;
-  projectTrust?: ProjectTrustManager;
   createInteractionChannel(runIdHolder: {
     value: string | null;
   }): InteractionChannel;
@@ -317,6 +292,19 @@ export class RunPreparationOperations {
       traceLevel: input.traceLevel,
       access: input.access,
     });
+    const model = await createModel({
+      modelRef: plan.modelRef,
+      goal: plan.goal,
+      workspaceRoot: plan.workspaceRoot,
+      targetPath: plan.targetPath,
+    });
+    if (!model.ok) {
+      return {
+        ok: false,
+        error: { code: "invalid_payload", message: model.message },
+      };
+    }
+
     const workspaceRoot = plan.workspaceRoot;
     const resources = createExecutionResources(plan);
     const { workspace, trace, pendingExtensionEvents } = resources;
@@ -325,27 +313,7 @@ export class RunPreparationOperations {
     const runIdHolder: { value: string | null } = { value: null };
     const interactionChannel =
       this.options.createInteractionChannel(runIdHolder);
-    const projectTrust = this.options.projectTrust
-      ? await this.options.projectTrust.inspect(workspaceRoot)
-      : undefined;
-    const configTrusted = projectTrust
-      ? isProjectScopeTrusted(projectTrust, "config")
-      : true;
-    const commandsTrusted = projectTrust
-      ? isProjectScopeTrusted(projectTrust, "commands")
-      : true;
-    const skillsTrusted = projectTrust
-      ? isProjectScopeTrusted(projectTrust, "skills")
-      : true;
-    const agentsTrusted = projectTrust
-      ? isProjectScopeTrusted(projectTrust, "agents")
-      : true;
-    const workflowsTrusted = projectTrust
-      ? isProjectScopeTrusted(projectTrust, "workflows")
-      : true;
-    const loadedConfig = await loadHostConfig(workspaceRoot, process.env, {
-      projectMode: configTrusted ? "trusted" : "restricted",
-    });
+    const loadedConfig = await loadHostConfig(workspaceRoot);
     const baseToolConfig = loadedConfig.config.tools;
     const shellConfig = loadedConfig.config.shell;
     const hookConfig = loadedConfig.config.capabilities?.hooks;
@@ -362,7 +330,6 @@ export class RunPreparationOperations {
       loadedConfig,
       requestConfidentialPaths: input.confidentialPaths,
       requestConfidentialDefaults: input.confidentialDefaults,
-      includeProjectSkills: skillsTrusted,
     });
     const runAccess = securityPlan.access;
     const confidentialPaths = securityPlan.confidentialPaths;
@@ -370,83 +337,6 @@ export class RunPreparationOperations {
     const skillRoots = securityPlan.skillRoots;
     const shellSandbox = securityPlan.shellSandboxStatus;
     const mcpShellSandbox = securityPlan.shellSandbox;
-    let effectiveGoal = input.goal;
-    let projectCommandMetadata:
-      | Awaited<ReturnType<typeof resolveHostProjectCommand>>["metadata"]
-      | undefined;
-    if (input.projectCommand) {
-      try {
-        const resolvedCommand = await resolveHostProjectCommand({
-          command: input.projectCommand,
-          workspaceRoot,
-          emitter: pendingExtensionEvents,
-          sandbox: mcpShellSandbox,
-          includeProject: commandsTrusted,
-        });
-        effectiveGoal = resolvedCommand.goal;
-        projectCommandMetadata = resolvedCommand.metadata;
-      } catch (error) {
-        const trustError = error instanceof ProjectCommandTrustRequiredError;
-        const commandTrustStatus = projectTrust?.scopes.find(
-          (scope) => scope.scope === "commands",
-        )?.status;
-        return {
-          ok: false,
-          error: {
-            code: trustError
-              ? commandTrustStatus === "changed"
-                ? "project_trust_changed"
-                : "project_trust_required"
-              : "invalid_payload",
-            message: error instanceof Error ? error.message : String(error),
-            ...(trustError && projectTrust
-              ? { details: { projectTrust } }
-              : {}),
-          },
-        };
-      }
-    }
-    let preparedExtensions: PreparedExtensions;
-    try {
-      preparedExtensions = await prepareExtensions(
-        this.options.extensions ?? [],
-        {
-          goal: effectiveGoal,
-          agentId: MAIN_AGENT_ID,
-          metadata: {
-            cwd: workspaceRoot,
-            sessionId: input.sessionId,
-          },
-        },
-      );
-    } catch (error) {
-      return {
-        ok: false,
-        error: {
-          code: "invalid_payload",
-          message: error instanceof Error ? error.message : String(error),
-        },
-      };
-    }
-    const model = await createModel({
-      modelRef: plan.modelRef,
-      goal: effectiveGoal,
-      workspaceRoot: plan.workspaceRoot,
-      targetPath: plan.targetPath,
-      ...(this.options.providerAuth
-        ? { providerAuth: this.options.providerAuth }
-        : {}),
-      ...(input.interactiveProviderAuth
-        ? { waitForCredentialRefresh: true }
-        : {}),
-      includeProjectConfig: configTrusted,
-    });
-    if (!model.ok) {
-      return {
-        ok: false,
-        error: { code: "invalid_payload", message: model.message },
-      };
-    }
     const skillPreprocess = createSkillPreprocessOptions({
       skillConfig,
       emitter: pendingExtensionEvents,
@@ -458,7 +348,7 @@ export class RunPreparationOperations {
     try {
       preparedSkills = existingPreparedSkillRoots.length
         ? await prepareSkillsForRun({
-            goal: effectiveGoal,
+            goal: input.goal,
             skillRoots: existingPreparedSkillRoots,
             agent: {
               allowedSkills: skillConfig?.allowedSkills,
@@ -477,7 +367,7 @@ export class RunPreparationOperations {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await this.options.capabilities.recordIndexFailure({
-        goal: effectiveGoal,
+        goal: input.goal,
         sessionId: input.sessionId,
         traceLevel: input.traceLevel ?? "standard",
         message,
@@ -523,7 +413,7 @@ export class RunPreparationOperations {
     });
     const sessionStore = resources.sessionStore;
     const agentRuntime = await this.options.agents.prepareRun({
-      goal: effectiveGoal,
+      goal: input.goal,
       workspaceRoot,
       ...(input.targetPath ? { targetPath: input.targetPath } : {}),
       sessionId: input.sessionId,
@@ -531,7 +421,6 @@ export class RunPreparationOperations {
       sessionStore,
       traceLevel,
       baseToolConfig,
-      extensionTools: preparedExtensions.tools,
       ...(agentConfig ? { agentConfig } : {}),
       ...(loadedConfig.config.runBudget
         ? { runBudget: loadedConfig.config.runBudget }
@@ -551,8 +440,6 @@ export class RunPreparationOperations {
       interactionChannel,
       allowReadWriteWorkspaceAccess: runAccess.shouldWrite,
       backgroundTasks: runAccess.backgroundTasks,
-      includeProjectAgents: agentsTrusted,
-      includeProjectConfig: configTrusted,
     });
     const {
       mainAgent,
@@ -577,7 +464,6 @@ export class RunPreparationOperations {
       todoPath: join(sessionRootDir, input.sessionId, "todo.md"),
       preparedSkills,
       preparedMcp,
-      extensionTools: preparedExtensions.tools,
       delegateTools,
       delegateAgentTool,
       delegateParallelTool,
@@ -599,25 +485,14 @@ export class RunPreparationOperations {
     const admittedDelegateParallelTool = delegateParallelTool
       ? tools.find((tool) => tool.name === delegateParallelTool.name)
       : undefined;
-    const workflows = await loadLayeredWorkflowAssets(
-      workspaceRoot,
-      process.env,
-      { includeProject: workflowsTrusted },
-    );
+    const workflows = await loadLayeredWorkflowAssets(workspaceRoot);
     const workflowEpisode = await this.options.workflowEpisodes.prepare({
-      goal: effectiveGoal,
+      goal: input.goal,
       sessionId: input.sessionId,
       sessionRootDir,
       workspaceRoot,
       workflows,
       parentModelRef: model.resolved.modelRef,
-      ...(this.options.providerAuth
-        ? { providerAuth: this.options.providerAuth }
-        : {}),
-      ...(input.interactiveProviderAuth
-        ? { waitForCredentialRefresh: true }
-        : {}),
-      includeProjectConfig: configTrusted,
       ...(input.workflowName ? { workflowName: input.workflowName } : {}),
       ...(input.workflowRunId ? { workflowRunId: input.workflowRunId } : {}),
       ...(input.controlSessionId
@@ -676,7 +551,6 @@ export class RunPreparationOperations {
       model: modelCapabilitySummary(model.resolved),
       access: input.access,
       toolCatalog,
-      extensions: capabilityExtensionSummaries(preparedExtensions.extensions),
       indexedSkills: preparedSkills?.indexedSkills ?? [],
       loadedSkills: preparedSkills?.loadedSkills ?? [],
       skillInlineShell: inlineShellCapabilitySummary(
@@ -697,7 +571,6 @@ export class RunPreparationOperations {
       workflowRules,
       eventRules,
       workflows: workflowCapabilitySummary(workflows),
-      projectTrust,
     });
 
     const mcpWorkspaceCwdServers = configuredMcpWorkspaceCwdServers(
@@ -706,13 +579,7 @@ export class RunPreparationOperations {
     );
     const runMetadata: Record<string, unknown> = {
       source: "host",
-      ...(projectTrust
-        ? { projectTrust: summarizeProjectTrust(projectTrust) }
-        : {}),
       ...(input.runMetadata ?? {}),
-      ...(projectCommandMetadata
-        ? { projectCommand: projectCommandMetadata }
-        : {}),
       sessionId: input.sessionId,
       workspaceRoot,
       permissionMode: runAccess.permissionMode,
@@ -731,13 +598,6 @@ export class RunPreparationOperations {
             },
           }
         : {}),
-      ...(preparedExtensions.extensions.length > 0
-        ? {
-            extensions: capabilityExtensionSummaries(
-              preparedExtensions.extensions,
-            ),
-          }
-        : {}),
       resolvedModel: model.resolved,
       capabilitySnapshot:
         this.options.capabilities.summarize(capabilitySnapshot),
@@ -745,9 +605,6 @@ export class RunPreparationOperations {
     const runStoreMetadata: Record<string, unknown> = {
       ...runMetadata,
       ...(input.runStoreMetadata ?? {}),
-      ...(projectCommandMetadata
-        ? { projectCommand: projectCommandMetadata }
-        : {}),
       ...(preparedSkills
         ? {
             indexedSkills: preparedSkills.indexedSkills,
@@ -774,7 +631,6 @@ export class RunPreparationOperations {
     return {
       ok: true,
       env: {
-        goal: effectiveGoal,
         workspaceRoot,
         workspace,
         sessionRootDir,
@@ -784,15 +640,11 @@ export class RunPreparationOperations {
         runIdHolder,
         interactionChannel,
         model: model.adapter,
-        ...(model.credentialResolver
-          ? { credentialResolver: model.credentialResolver }
-          : {}),
         modelRef: model.resolved.modelRef,
         resolvedModel: model.resolved,
         workflowModelAdapters,
         preparedSkills,
         preparedMcp,
-        preparedExtensions,
         mainAgent,
         toolCatalog,
         tools,

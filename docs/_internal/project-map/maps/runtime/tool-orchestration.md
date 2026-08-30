@@ -9,51 +9,6 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 
 ## Last Verified
 
-- Status: Read-only
-- Date: 2026-08-20
-- Scope: API-key endpoint selection adds no model-visible tool, scheduler,
-  policy, approval, execution, or result-normalization path.
-- Read: trusted provider control dispatch and tool orchestration boundary.
-- Tests: routed provider and release checks passed; tool contracts are
-  unchanged.
-
-- Status: Read-only
-- Date: 2026-08-09
-- Scope: P7.0 connection inventory, selection, and disconnect add no model tool,
-  scheduler, extension, approval, or result-normalization path.
-- Read: CLI/TUI connection controls and tool orchestration boundary.
-- Tests: focused connection checks and the full release gate passed; tool
-  contracts are unchanged.
-
-- Status: Read-only
-- Date: 2026-08-09
-- Scope: P6.4 provider catalog, migration, and picker changes add no tool,
-  scheduler, extension, or result-normalization path.
-- Read: Host provider/config owners and tool orchestration boundary.
-- Tests: affected Host/TUI tests and the full release gate passed.
-
-- Status: Verified
-- Date: 2026-08-08
-- Scope: Extension tools enter the existing Host catalog only after Core
-  normalizes provenance, side effects, risk, approval, idempotency,
-  concurrency, delegation, and interrupt defaults. Tool name collisions with
-  registered extensions fail before filtering/execution.
-- Read: Core Extension preparation/tool control, Host catalog/selectors,
-  runtime assembly, and focused approval/collision tests.
-- Tests: Core Extension 8/8, Host Extension 4/4, affected package typechecks,
-  and full `npm run release:check` passed.
-
-- Status: Verified
-- Date: 2026-08-08
-- Scope: verified interaction ordering across tool execution: steering never
-  aborts or mutates an in-flight serial/concurrent tool batch, and Core applies
-  the queued command only at the next Phase-1 turn boundary.
-- Read: Core tool-batch loop, command queue/terminal continuation, Host
-  injection path, and gated tool-order regression.
-- Tests: focused Core interaction/tool ordering and full Core 678/678 passed;
-  full `npm run release:check` passed, including the 16-case regression matrix
-  and source/package install smokes.
-
 - Status: Verified
 - Date: 2026-08-02
 - Scope: removed deferred `create_skill`/`update_skill` catalog entries and
@@ -505,7 +460,6 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 - `packages/core/src/tool-orchestration.ts`
 - `packages/core/src/runtime/tool-result-analysis.ts`
 - `packages/core/src/tools.ts`
-- `packages/core/src/extensions.ts`
 - `packages/host/src/tool-catalog.ts`
 - `packages/host/src/tool-surface.ts`
 - `packages/host/src/run-security-plan.ts`
@@ -522,9 +476,6 @@ See [../safety/workspace-writes.md](../safety/workspace-writes.md), [../safety/s
 ## Data Flow
 
 ```txt
-trusted Extension registration
-  -> fail-closed Core tool normalization
-  -> Host catalog/selector admission
 model tool calls
   -> host tool catalog assembly
   -> canonical Agent/Profile admission
@@ -545,10 +496,6 @@ model tool calls
 - `ToolDefinition.delegation` defaults to `parent_only`; only explicit
   `child` definitions can enter an in-process child resolver. Completion does
   not change the child tool inventory.
-- Extension tools use the same `ToolDefinition` path. Missing side effects are
-  treated as external and approval-required; argument-dependent policy is
-  normalized at call time, and concurrency requires an explicit classifier
-  plus effective read-only replay safety.
 - `ToolEffect` is the canonical terminal progress fact: changed, observed,
   no-change, or blocked with target/epoch/revision/retry/reason metadata.
   Repeated no-progress decisions compare structured effects and state epochs;

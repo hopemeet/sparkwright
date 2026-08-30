@@ -11,7 +11,6 @@ export {
   projectConfigCandidatePaths,
   projectConfigPath,
   readConfigFileObject,
-  removeLegacyProviderApiKey,
   resolveConfigWriteTarget,
   serializeConfigFileObject,
   userConfigCandidatePaths,

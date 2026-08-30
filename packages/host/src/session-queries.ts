@@ -6,8 +6,7 @@ import {
   asSessionId,
   buildTraceTimelineFile,
   createContextItemId,
-  factLedgerSnapshotFromUnknown,
-  forkSession,
+  forkSessionFromEvent,
   loadSessionCompactArtifact,
   loadTraceEventsFile,
   sessionCompactArtifactToContextItem,
@@ -15,10 +14,7 @@ import {
   summarizeTraceFile,
   validateSessionTraceConsistency,
   type ContextItem,
-  type FactLedgerSnapshot,
   type RunId,
-  type SessionForkPoint,
-  type SessionRecord,
   type SessionCompactArtifact,
   type SessionCompactionMeasurement,
   type SessionEvent,
@@ -27,7 +23,6 @@ import {
 } from "@sparkwright/core";
 import type {
   ProtocolError,
-  SessionForkRequestPayload,
   SessionCompactionInspectArtifact,
   SessionCompactionInspectEvent,
   SessionCompactionInspectReport,
@@ -47,16 +42,6 @@ export interface CompletedHostSessionTurn {
   goal: string;
   message: string;
   traceFacts?: SessionTraceFacts;
-  factLedger?: FactLedgerSnapshot;
-}
-
-export interface LoadHostSessionConversationOptions {
-  evidenceRunId?: string;
-}
-
-interface HostSessionRunFacts {
-  traceFacts: SessionTraceFacts;
-  factLedger?: FactLedgerSnapshot;
 }
 
 export type LocatedHostRunDirectory = {
@@ -144,7 +129,6 @@ export async function findHostRunDirectory(
 export async function loadHostSessionConversation(
   context: SessionQueryContext,
   sessionId: string,
-  options: LoadHostSessionConversationOptions = {},
 ): Promise<ContextItem[]> {
   const turns = await loadCompletedHostSessionTurns(context, sessionId);
   const sessionRootDir = sessionRootDirFor(context);
@@ -201,15 +185,6 @@ export async function loadHostSessionConversation(
   for (const turn of turns.slice(startAt)) {
     items.push(...sessionTurnToContextItems(turn));
   }
-  if (options.evidenceRunId) {
-    const evidenceTurn = turns.find(
-      (turn) => turn.runId === options.evidenceRunId,
-    );
-    const evidence = evidenceTurn
-      ? sessionTurnEvidenceContextItem(sessionId, evidenceTurn)
-      : undefined;
-    if (evidence) items.push(evidence);
-  }
   return [...items, ...todoContext];
 }
 
@@ -228,7 +203,7 @@ export async function loadCompletedHostSessionTurns(
   }
   if (runIds.length === 0) return [];
 
-  const runFacts = await loadHostSessionTraceFacts(context, sessionId);
+  const traceFacts = await loadHostSessionTraceFacts(context, sessionId);
   const runsDir = join(sessionRootDir, sessionId, "agents", "main", "runs");
   const turns: CompletedHostSessionTurn[] = [];
   for (const runId of runIds) {
@@ -238,14 +213,7 @@ export async function loadCompletedHostSessionTurns(
       "message",
     );
     if (!goal || !message) continue;
-    const facts = runFacts.get(runId);
-    turns.push({
-      runId,
-      goal,
-      message,
-      traceFacts: facts?.traceFacts,
-      factLedger: facts?.factLedger,
-    });
+    turns.push({ runId, goal, message, traceFacts: traceFacts.get(runId) });
   }
   return turns;
 }
@@ -274,7 +242,7 @@ async function findRunInSession(
 async function loadHostSessionTraceFacts(
   context: SessionQueryContext,
   sessionId: string,
-): Promise<Map<RunId, HostSessionRunFacts>> {
+): Promise<Map<RunId, SessionTraceFacts>> {
   let events: SparkwrightEvent[];
   try {
     events = await loadTraceEventsFile(
@@ -283,11 +251,11 @@ async function loadHostSessionTraceFacts(
   } catch {
     return new Map();
   }
-  const byRun = new Map<RunId, HostSessionRunFacts>();
+  const byRun = new Map<RunId, SessionTraceFacts>();
   for (const event of events) {
     const runId = event.runId;
     if (!runId) continue;
-    const facts = byRun.get(runId) ?? { traceFacts: {} };
+    const facts = byRun.get(runId) ?? {};
     collectSessionTraceFact(facts, event);
     byRun.set(runId, facts);
   }
@@ -422,13 +390,12 @@ export async function inspectHostSessionCompaction(
 
 export async function forkHostSession(
   context: SessionQueryContext,
-  request: SessionForkRequestPayload,
+  sourceSessionId: string,
+  forkAtSequence?: number,
 ): Promise<
   | {
       ok: true;
       forkedSessionId: string;
-      copiedRunCount: number;
-      forkPoint: SessionForkPoint | null;
       copiedEventCount: number;
       truncatedAtSequence: number | null;
     }
@@ -436,79 +403,27 @@ export async function forkHostSession(
 > {
   let safeSource: string;
   try {
-    safeSource = asSessionId(request.sourceSessionId);
+    safeSource = asSessionId(sourceSessionId);
   } catch (error) {
     return protocolFailure("invalid_payload", error);
   }
   try {
     const store = new FileSessionStore({ rootDir: sessionRootDirFor(context) });
-    const source = await store.get(safeSource);
-    if (!source) return sessionNotFound(safeSource);
-    const forkPoint = await resolveHostForkPoint(store, source, request);
-    const result = await forkSession({
+    const result = await forkSessionFromEvent({
       sourceSessionId: safeSource,
-      ...(forkPoint ? { forkPoint } : {}),
+      forkAtSequence,
       store,
-      metadata: { forkedVia: "host" },
+      metadata: { forkedVia: "tui" },
     });
     return {
       ok: true,
       forkedSessionId: result.forked.id,
-      copiedRunCount: result.copiedRunCount,
-      forkPoint: result.forkPoint,
-      copiedEventCount: result.copiedRunCount,
-      truncatedAtSequence: request.forkAtSequence ?? null,
+      copiedEventCount: result.copiedEventCount,
+      truncatedAtSequence: result.truncatedAtSequence,
     };
   } catch (error) {
-    return protocolFailure(
-      error instanceof Error && /fork point run/i.test(error.message)
-        ? "invalid_payload"
-        : "internal_error",
-      error,
-    );
+    return protocolFailure("internal_error", error);
   }
-}
-
-async function resolveHostForkPoint(
-  store: FileSessionStore,
-  source: SessionRecord,
-  request: SessionForkRequestPayload,
-): Promise<SessionForkPoint | undefined> {
-  if (request.forkPoint && request.forkAtSequence !== undefined) {
-    throw new Error("forkPoint and forkAtSequence are mutually exclusive");
-  }
-  if (request.forkPoint) {
-    const runId = source.runIds.find(
-      (candidate) => candidate === request.forkPoint?.runId,
-    );
-    if (!runId) {
-      throw new Error(
-        `Fork point run ${request.forkPoint.runId} is not part of session ${source.id}`,
-      );
-    }
-    return {
-      runId,
-      position: request.forkPoint.position,
-    };
-  }
-  if (request.forkAtSequence === undefined) return undefined;
-
-  let lastRunId: RunId | undefined;
-  for await (const event of store.loadEvents(source.id)) {
-    if (event.sequence > request.forkAtSequence) break;
-    if (
-      event.type !== "session.run_appended" ||
-      !isPlainRecord(event.payload)
-    ) {
-      continue;
-    }
-    const runId = recordString(event.payload, "runId");
-    const member = source.runIds.find((candidate) => candidate === runId);
-    if (member) lastRunId = member;
-  }
-  if (lastRunId) return { runId: lastRunId, position: "after" };
-  const firstRunId = source.runIds[0];
-  return firstRunId ? { runId: firstRunId, position: "before" } : undefined;
 }
 
 export function sessionPreviewFromTranscriptLine(firstLine: string): string {
@@ -770,34 +685,25 @@ function stripGoalDecorations(content: string): string {
 }
 
 function collectSessionTraceFact(
-  facts: HostSessionRunFacts,
+  facts: SessionTraceFacts,
   event: SparkwrightEvent,
 ): void {
-  if (event.type === "run.completed" || event.type === "run.failed") {
-    if (isPlainRecord(event.payload)) {
-      facts.factLedger = factLedgerSnapshotFromUnknown(
-        event.payload.factLedger,
-      );
-    }
-    return;
-  }
-  const traceFacts = facts.traceFacts;
   if (event.type === "approval.requested") {
-    traceFacts.approvals = {
-      ...(traceFacts.approvals ?? {}),
-      requested: (traceFacts.approvals?.requested ?? 0) + 1,
+    facts.approvals = {
+      ...(facts.approvals ?? {}),
+      requested: (facts.approvals?.requested ?? 0) + 1,
     };
     return;
   }
   if (event.type === "approval.resolved") {
     const decision = recordString(event.payload, "decision");
-    traceFacts.approvals = {
-      ...(traceFacts.approvals ?? {}),
+    facts.approvals = {
+      ...(facts.approvals ?? {}),
       ...(decision === "approved"
-        ? { approved: (traceFacts.approvals?.approved ?? 0) + 1 }
+        ? { approved: (facts.approvals?.approved ?? 0) + 1 }
         : {}),
       ...(decision === "denied"
-        ? { denied: (traceFacts.approvals?.denied ?? 0) + 1 }
+        ? { denied: (facts.approvals?.denied ?? 0) + 1 }
         : {}),
     };
     return;
@@ -815,10 +721,10 @@ function collectSessionTraceFact(
           ? "denied"
           : "skipped";
     const path = recordString(event.payload, "path") ?? "(unknown)";
-    const writes = traceFacts.workspaceWrites ?? {};
+    const writes = facts.workspaceWrites ?? {};
     const next = new Set(writes[key] ?? []);
     next.add(path);
-    traceFacts.workspaceWrites = { ...writes, [key]: [...next] };
+    facts.workspaceWrites = { ...writes, [key]: [...next] };
     return;
   }
 
@@ -827,7 +733,7 @@ function collectSessionTraceFact(
       recordString(event.payload, "childRunId") ??
       recordString(event.metadata, "childRunId");
     if (!childRunId) return;
-    addSessionSubagentFact(traceFacts, {
+    addSessionSubagentFact(facts, {
       childRunId,
       status: recordString(event.payload, "status"),
       summary: recordString(event.payload, "summary"),
@@ -837,85 +743,6 @@ function collectSessionTraceFact(
     });
     return;
   }
-}
-
-function sessionTurnEvidenceContextItem(
-  sessionId: string,
-  turn: CompletedHostSessionTurn,
-): ContextItem | undefined {
-  const ledger = turn.factLedger;
-  if (!ledger) return undefined;
-
-  const changed = new Map<string, string>();
-  for (const changeSet of ledger.changeSets) {
-    for (const entry of changeSet.entries) {
-      changed.set(entry.path, entry.operation);
-    }
-  }
-  if (changed.size === 0) {
-    for (const write of ledger.writes) {
-      if (write.path) changed.set(write.path, "write");
-    }
-  }
-  const commands = ledger.commands
-    .filter((command) => !command.stale && command.verificationRelevant)
-    .slice(-8);
-  const receipts = ledger.verificationReceipts
-    .filter((receipt) => receipt.status !== "stale")
-    .slice(-8);
-  if (changed.size === 0 && commands.length === 0 && receipts.length === 0) {
-    return undefined;
-  }
-
-  const lines = [
-    `Authoritative runtime evidence from previous run ${turn.runId}:`,
-  ];
-  if (changed.size > 0) {
-    lines.push("Changed paths:");
-    for (const [path, operation] of [...changed].slice(0, 16)) {
-      lines.push(`- ${operation}: ${path}`);
-    }
-  }
-  if (commands.length > 0) {
-    lines.push("Observed verification commands:");
-    for (const command of commands) {
-      lines.push(
-        `- command=${boundedJsonString(command.command ?? "(unknown)", 500)} exitCode=${command.exitCode ?? "unknown"} timedOut=${command.timedOut}`,
-      );
-    }
-  }
-  if (receipts.length > 0) {
-    lines.push("Verification receipts:");
-    for (const receipt of receipts) {
-      lines.push(
-        `- level=${receipt.level} status=${receipt.status} exitCode=${receipt.exitCode ?? "unknown"}${receipt.command ? ` command=${boundedJsonString(receipt.command, 500)}` : ""}`,
-      );
-    }
-  }
-  lines.push(
-    "Evidence scope: these facts establish changed paths and observed command/verifier outcomes only. They do not establish exact exported APIs, signatures, option shapes, parameter names, or parameter order. If the current request asks for any of those details, inspect the current source before answering.",
-  );
-
-  return {
-    id: createContextItemId(),
-    type: "summary",
-    source: { kind: "session_turn_evidence", uri: String(turn.runId) },
-    content: lines.join("\n"),
-    metadata: {
-      layer: "working",
-      stability: "session",
-      sessionId,
-      runId: turn.runId,
-      authoritativeRuntimeEvidence: true,
-      exactImplementationClaimsRequireSource: true,
-    },
-  };
-}
-
-function boundedJsonString(value: string, maxChars: number): string {
-  const bounded =
-    value.length > maxChars ? `${value.slice(0, maxChars)}...` : value;
-  return JSON.stringify(bounded);
 }
 
 function addSessionSubagentFact(

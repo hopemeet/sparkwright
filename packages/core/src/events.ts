@@ -41,7 +41,6 @@ export type EventType =
   | "run.cancel_requested"
   | "run.command.enqueued"
   | "run.command.applied"
-  | "run.command.rejected"
   // Out-of-band notifications injected into the next turn by a
   // NotificationSource (e.g. task-completion queue, inbound chat). Owned by
   // the core/shared notification contract. See drainNotificationSources().

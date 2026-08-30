@@ -3,8 +3,6 @@ import { dirname } from "node:path";
 import {
   configResolutionOrder,
   loadHostConfig,
-  isProjectScopeTrusted,
-  ProjectTrustManager,
   type ProviderConfig,
 } from "@sparkwright/host";
 import { mergeBindings, type Bindings } from "./keybindings.js";
@@ -77,15 +75,7 @@ function resolutionOrder(cwd: string): { path: string; label: string }[] {
  * Load + merge TUI config files. CLI args are applied by the caller (index.ts).
  */
 export async function loadTuiConfig(cwd: string): Promise<LoadedTuiConfig> {
-  const trust = await new ProjectTrustManager()
-    .inspect(cwd)
-    .catch(() => undefined);
-  const shared = await loadHostConfig(cwd, process.env, {
-    projectMode:
-      trust && isProjectScopeTrusted(trust, "config")
-        ? "trusted"
-        : "restricted",
-  });
+  const shared = await loadHostConfig(cwd, process.env);
   const merged: TuiConfigFile = {
     tuiPermissionMode: shared.config.accessMode as
       | TuiPermissionMode

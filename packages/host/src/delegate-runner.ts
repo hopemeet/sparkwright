@@ -34,7 +34,6 @@ import {
   type DelegateFailureCode,
   type DelegateToolCollision,
 } from "./delegate-capability.js";
-import { isProjectScopeTrusted, ProjectTrustManager } from "./project-trust.js";
 
 export interface RunConfiguredDelegateInput {
   workspaceRoot: string;
@@ -65,8 +64,6 @@ export type RunConfiguredDelegateResult =
       ok: false;
       code:
         | "config_error"
-        | "project_trust_required"
-        | "project_trust_changed"
         | "delegate_not_found"
         | "unsupported_delegate_kind"
         | "approval_denied"
@@ -81,15 +78,7 @@ export type RunConfiguredDelegateResult =
 export async function runConfiguredDelegate(
   input: RunConfiguredDelegateInput,
 ): Promise<RunConfiguredDelegateResult> {
-  const trust = await new ProjectTrustManager({ env: input.env }).inspect(
-    input.workspaceRoot,
-  );
-  const configTrusted = isProjectScopeTrusted(trust, "config");
-  const agentsTrusted = isProjectScopeTrusted(trust, "agents");
-  const skillsTrusted = isProjectScopeTrusted(trust, "skills");
-  const loaded = await loadHostConfig(input.workspaceRoot, input.env, {
-    projectMode: configTrusted ? "trusted" : "restricted",
-  });
+  const loaded = await loadHostConfig(input.workspaceRoot, input.env);
   if (loaded.errors.length > 0) {
     return {
       ok: false,
@@ -104,8 +93,6 @@ export async function runConfiguredDelegate(
   const profiles = await resolveAgentProfiles(
     input.workspaceRoot,
     loaded.config.capabilities?.agents?.profiles,
-    undefined,
-    { includeProject: agentsTrusted },
   );
   const delegateToolCollisions: DelegateToolCollision[] = [];
   const delegationTargets = resolveAgentDelegateTools(
@@ -152,21 +139,6 @@ export async function runConfiguredDelegate(
       runnableToolNames.has(input.toolName),
   );
   if (!delegate) {
-    const blockedScopes = trust.scopes.filter(
-      (scope) =>
-        (scope.scope === "config" || scope.scope === "agents") &&
-        scope.status !== "trusted" &&
-        scope.status !== "not_present",
-    );
-    if (blockedScopes.length > 0) {
-      return {
-        ok: false,
-        code: blockedScopes.some((scope) => scope.status === "changed")
-          ? "project_trust_changed"
-          : "project_trust_required",
-        message: `delegate discovery is restricted until project trust is granted for: ${blockedScopes.map((scope) => scope.scope).join(", ")}`,
-      };
-    }
     return {
       ok: false,
       code: "delegate_not_found",
@@ -188,8 +160,6 @@ export async function runConfiguredDelegate(
   const skillRoots = resolveSkillRootsForRuntime(
     input.workspaceRoot,
     loaded.config.capabilities?.skills?.roots,
-    input.env ?? process.env,
-    { includeProject: skillsTrusted },
   );
   const protocol = acpConfig
     ? "acp"

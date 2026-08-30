@@ -9,11 +9,6 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const schemasDir = path.join(root, "schemas");
 
 const protocolDocPath = path.join(root, "docs/reference/PROTOCOL.md");
-const hostProtocolDocPath = path.join(root, "docs/reference/HOST_PROTOCOL.md");
-const hostProtocolSourcePath = path.join(
-  root,
-  "packages/protocol/src/index.ts",
-);
 
 // Tokens that PROTOCOL.md legitimately mentions but that are NOT event types.
 // These are policy action names, tool-call shapes, or otherwise non-event
@@ -53,10 +48,6 @@ ajv.addKeyword({
   keyword: "x-sparkwrightProtocolVersion",
   metaSchema: { type: "string" },
 });
-ajv.addKeyword({
-  keyword: "x-sparkwrightHostProtocolVersion",
-  metaSchema: { type: "string" },
-});
 
 for (const { file, schema } of schemas) {
   ajv.addSchema(schema, file);
@@ -64,7 +55,7 @@ for (const { file, schema } of schemas) {
 
 let failed = false;
 
-const EXPECTED_SCHEMA_PROTOCOL_VERSION = "0.2";
+const EXPECTED_PROTOCOL_VERSION = "0.2";
 const ID_PATTERN =
   /^https:\/\/sparkwright\.dev\/schemas\/v0\/[a-z0-9-]+\.schema\.json$/;
 
@@ -95,12 +86,10 @@ for (const { file, schema } of schemas) {
     );
   }
 
-  if (
-    schema["x-sparkwrightProtocolVersion"] !== EXPECTED_SCHEMA_PROTOCOL_VERSION
-  ) {
+  if (schema["x-sparkwrightProtocolVersion"] !== EXPECTED_PROTOCOL_VERSION) {
     failed = true;
     console.error(
-      `Protocol versioning: ${file} is missing or has wrong x-sparkwrightProtocolVersion (expected "${EXPECTED_SCHEMA_PROTOCOL_VERSION}", got ${JSON.stringify(schema["x-sparkwrightProtocolVersion"])})`,
+      `Protocol versioning: ${file} is missing or has wrong x-sparkwrightProtocolVersion (expected "${EXPECTED_PROTOCOL_VERSION}", got ${JSON.stringify(schema["x-sparkwrightProtocolVersion"])})`,
     );
   }
 }
@@ -144,41 +133,6 @@ const instanceChecks = [
   },
   {
     schema: "host-message.schema.json",
-    instance: "schemas/fixtures/host-message.request.provider-auth-begin.json",
-  },
-  {
-    schema: "host-message.schema.json",
-    instance: "schemas/fixtures/host-message.request.provider-auth-status.json",
-  },
-  {
-    schema: "host-message.schema.json",
-    instance:
-      "schemas/fixtures/host-message.request.provider-catalog-refresh.json",
-  },
-  {
-    schema: "host-message.schema.json",
-    instance:
-      "schemas/fixtures/host-message.request.provider-auth-complete.json",
-  },
-  {
-    schema: "host-message.schema.json",
-    instance: "schemas/fixtures/host-message.request.provider-auth-cancel.json",
-  },
-  {
-    schema: "host-message.schema.json",
-    instance:
-      "schemas/fixtures/host-message.request.project-trust-inspect.json",
-  },
-  {
-    schema: "host-message.schema.json",
-    instance: "schemas/fixtures/host-message.request.project-trust-grant.json",
-  },
-  {
-    schema: "host-message.schema.json",
-    instance: "schemas/fixtures/host-message.request.project-trust-revoke.json",
-  },
-  {
-    schema: "host-message.schema.json",
     instance: "schemas/fixtures/host-message.response.ok.json",
   },
   {
@@ -188,10 +142,6 @@ const instanceChecks = [
   {
     schema: "host-message.schema.json#/$defs/CapabilitySnapshot",
     instance: "schemas/fixtures/host-message.capability-snapshot.json",
-  },
-  {
-    schema: "host-message.schema.json#/$defs/ProjectTrustSnapshot",
-    instance: "schemas/fixtures/host-message.project-trust-snapshot.json",
   },
   {
     schema: "host-message.schema.json",
@@ -285,109 +235,6 @@ if (!eventLiterals || !eventSchemaEnum) {
     failed = true;
     console.error(
       "Protocol consistency: EventType vs event.schema.json mismatch",
-    );
-    if (onlyLeft.length > 0)
-      console.error(`  in code but not in schema: ${onlyLeft.join(", ")}`);
-    if (onlyRight.length > 0)
-      console.error(`  in schema but not in code: ${onlyRight.join(", ")}`);
-  }
-}
-
-const hostProtocolTs = await readFile(hostProtocolSourcePath, "utf8");
-const hostProtocolDoc = await readFile(hostProtocolDocPath, "utf8");
-const hostProtocolSchema = schemas.find(
-  (entry) => entry.file === "host-message.schema.json",
-)?.schema;
-const sourceVersion =
-  /export const PROTOCOL_VERSION\s*=\s*"([0-9]+\.[0-9]+)"/.exec(
-    hostProtocolTs,
-  )?.[1];
-const documentedVersion = /\*\*Version:\*\*\s*([0-9]+\.[0-9]+)/.exec(
-  hostProtocolDoc,
-)?.[1];
-const schemaHostVersion =
-  hostProtocolSchema?.["x-sparkwrightHostProtocolVersion"];
-if (
-  !sourceVersion ||
-  sourceVersion !== documentedVersion ||
-  sourceVersion !== schemaHostVersion
-) {
-  failed = true;
-  console.error(
-    `Host protocol version mismatch: source=${JSON.stringify(sourceVersion)}, docs=${JSON.stringify(documentedVersion)}, schema=${JSON.stringify(schemaHostVersion)}`,
-  );
-}
-
-const requestKindLiterals = extractUnionLiterals(hostProtocolTs, "RequestKind");
-const requestSchemaEnum = getSchemaEnum(
-  "host-message.schema.json",
-  "$defs/Request/properties/kind/enum",
-);
-if (!requestKindLiterals || !requestSchemaEnum) {
-  failed = true;
-  console.error(
-    "Host protocol consistency: could not extract RequestKind or request schema enum.",
-  );
-} else {
-  const { onlyLeft, onlyRight } = diffSets(
-    requestKindLiterals,
-    requestSchemaEnum,
-  );
-  if (onlyLeft.length > 0 || onlyRight.length > 0) {
-    failed = true;
-    console.error("Host protocol consistency: RequestKind vs schema mismatch");
-    if (onlyLeft.length > 0)
-      console.error(`  in code but not in schema: ${onlyLeft.join(", ")}`);
-    if (onlyRight.length > 0)
-      console.error(`  in schema but not in code: ${onlyRight.join(", ")}`);
-  }
-}
-
-const conditionalRequestKinds = new Set();
-for (const rule of hostProtocolSchema?.$defs?.Request?.allOf ?? []) {
-  const kind = rule?.if?.properties?.kind;
-  if (typeof kind?.const === "string") conditionalRequestKinds.add(kind.const);
-  for (const value of kind?.enum ?? []) conditionalRequestKinds.add(value);
-}
-if (requestSchemaEnum) {
-  const { onlyLeft, onlyRight } = diffSets(
-    requestSchemaEnum,
-    conditionalRequestKinds,
-  );
-  if (onlyLeft.length > 0 || onlyRight.length > 0) {
-    failed = true;
-    console.error(
-      "Host protocol consistency: every request kind must have exactly one schema payload mapping.",
-    );
-    if (onlyLeft.length > 0)
-      console.error(`  missing payload mapping: ${onlyLeft.join(", ")}`);
-    if (onlyRight.length > 0)
-      console.error(`  mapped but not declared: ${onlyRight.join(", ")}`);
-  }
-}
-
-const protocolErrorLiterals = extractUnionLiterals(
-  hostProtocolTs,
-  "ProtocolErrorCode",
-);
-const protocolErrorSchemaEnum = getSchemaEnum(
-  "host-message.schema.json",
-  "$defs/ProtocolError/properties/code/enum",
-);
-if (!protocolErrorLiterals || !protocolErrorSchemaEnum) {
-  failed = true;
-  console.error(
-    "Host protocol consistency: could not extract ProtocolErrorCode or schema enum.",
-  );
-} else {
-  const { onlyLeft, onlyRight } = diffSets(
-    protocolErrorLiterals,
-    protocolErrorSchemaEnum,
-  );
-  if (onlyLeft.length > 0 || onlyRight.length > 0) {
-    failed = true;
-    console.error(
-      "Host protocol consistency: ProtocolErrorCode vs schema mismatch",
     );
     if (onlyLeft.length > 0)
       console.error(`  in code but not in schema: ${onlyLeft.join(", ")}`);

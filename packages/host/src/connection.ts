@@ -21,13 +21,6 @@ export interface Connection {
 }
 
 export type HostConnectionPrincipalKind = "host_client" | "gateway";
-export type HostConnectionAuthority =
-  | "provider_catalog.read"
-  | "provider_connection.manage"
-  | "provider_secret.submit"
-  | "provider_auth.manage"
-  | "project_trust.manage";
-export type HostConnectionTransport = "local" | "remote" | "embedded";
 
 export type HostConnectionAuthContext =
   | {
@@ -35,44 +28,29 @@ export type HostConnectionAuthContext =
       principalId: string;
       principalKind: HostConnectionPrincipalKind;
       authenticatedBy: string;
-      transport: HostConnectionTransport;
-      authorities: readonly HostConnectionAuthority[];
     }
   | {
       state: "unauthenticated";
       authenticatedBy: string;
-      transport: HostConnectionTransport;
-      authorities: readonly HostConnectionAuthority[];
     };
 
 export function authenticatedConnection(
   principalId: string,
   authenticatedBy: string,
   principalKind: HostConnectionPrincipalKind = "host_client",
-  authorities: readonly HostConnectionAuthority[] = [],
-  transport: HostConnectionTransport = "embedded",
 ): HostConnectionAuthContext {
   return {
     state: "authenticated",
     principalId,
     principalKind,
     authenticatedBy,
-    transport,
-    authorities: [...authorities],
   };
 }
 
 export function unauthenticatedConnection(
   authenticatedBy: string,
-  authorities: readonly HostConnectionAuthority[] = [],
-  transport: HostConnectionTransport = "embedded",
 ): HostConnectionAuthContext {
-  return {
-    state: "unauthenticated",
-    authenticatedBy,
-    transport,
-    authorities: [...authorities],
-  };
+  return { state: "unauthenticated", authenticatedBy };
 }
 
 let counter = 0;

@@ -8,8 +8,8 @@ selection, tool loading, Skills, MCP, or project agent defaults.
 
 ```txt
 Personal config: ~/.config/sparkwright/config.yaml
-  Use for identity.model, custom provider endpoints/options, and personal TUI
-  preferences. Prefer `provider connect` or TUI `/connect` for API keys.
+  Use for private provider settings: identity.model, identity.providers, API keys, and personal
+  TUI preferences. Existing config.json/config.yaml/config.yml files are loaded.
 
 Project config: <workspace>/.sparkwright/config.yaml
   Use for team-safe runtime defaults: run.accessMode, tools, workflow hooks,
@@ -20,8 +20,8 @@ Temporary overrides: SPARKWRIGHT_CONFIG, environment variables, CLI flags
   Use for one-off runs, CI jobs, or local experiments.
 ```
 
-Never recommend putting provider API keys in project config. Prefer the Host
-credential store; environment and user-config keys are legacy-compatible.
+Never recommend putting provider API keys in project config. Keep credentials
+in the user file or environment variables.
 
 ## Files And Precedence
 
@@ -51,9 +51,9 @@ npm exec sparkwright -- init
 npm exec sparkwright -- init --project
 ```
 
-Package installation does not write config files. TUI can start without config
-and use `/connect`. The first interactive CLI model run may scaffold user
-config and direct the user to `provider connect`.
+Package installation does not write config files. The first interactive CLI or
+TUI run scaffolds the user config if no config exists yet, then asks the user
+to set a provider key or environment variable before rerunning.
 
 `init` scaffolds the same personal config template. `init --project` scaffolds a
 committable project config plus `.sparkwright/skills`, `.sparkwright/agents`,
@@ -93,7 +93,12 @@ The reserved `deterministic` provider is built in and does not need an
     "model": "openai/gpt-5.4-mini",
     "providers": {
       "openai": {
-        "baseURL": "https://api.openai.com/v1"
+        "baseURL": "https://api.openai.com/v1",
+        "apiKey": "replace-me",
+        "models": {
+          "gpt-5.4-mini": {},
+          "gpt-5.4": {}
+        }
       }
     }
   }
@@ -105,18 +110,7 @@ provider `baseURL`. Proxy variables `HTTPS_PROXY`, `https_proxy`,
 `HTTP_PROXY`, and `http_proxy` are passed to the OpenAI-compatible provider
 path by the CLI.
 
-For a bundled provider on its official package and endpoint, omit `models` to
-use the bundled model catalog. `identity.model` or `--model` still chooses the
-runtime model deterministically. A non-empty `models` map remains an allowlist
-and metadata map. Custom packages or endpoints do not inherit official catalog
-metadata; without an allowlist, an explicitly typed `provider/model` remains
-valid.
-
-Prefer `sparkwright provider connect openai` or TUI `/connect`; neither writes
-the key to config. API keys are rejected in argv. Automation may pipe one line
-through `--api-key-stdin`. On macOS the default backend is the OS credential
-store; `SPARKWRIGHT_CREDENTIAL_STORE=file` is an explicit lower-assurance 0600
-fallback for headless environments. Legacy config keys remain plaintext.
+Store files containing provider keys privately. Keys are plaintext in config.
 
 ### Provider Request Options
 

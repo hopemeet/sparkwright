@@ -11,14 +11,9 @@
 
 import {
   appendFile,
-  copyFile,
-  cp,
   mkdir,
-  mkdtemp,
   readFile,
   readdir,
-  rename,
-  rm,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -63,22 +58,8 @@ export interface SessionRecord extends Session {
   eventCount: number;
 }
 
-/** Stable semantic location used when branching a session. */
-export interface SessionForkPoint {
-  runId: RunId;
-  position: "before" | "after";
-}
-
-/** Provenance recorded on a forked session. */
-export interface SessionLineage {
-  /** @reserved Durable parent identity consumed by session-tree readers. */
-  parentSessionId: SessionId;
-  forkPoint: SessionForkPoint | null;
-}
-
 export type SessionEventType =
   | "session.created"
-  | "session.forked"
   | "session.run_appended"
   | "session.event_appended"
   | "session.run.event_replayed"
@@ -167,30 +148,6 @@ export interface AppendOnlySessionStore extends SessionStore {
   loadEvents(id: string): AsyncIterable<SessionEvent>;
 }
 
-export interface ForkSessionOptions {
-  /** Source session to fork from. */
-  sourceSessionId: string;
-  /** Omit to clone the complete source session. */
-  forkPoint?: SessionForkPoint;
-  /** Additional metadata attached to the new session. */
-  metadata?: Record<string, unknown>;
-}
-
-export interface ForkSessionResult {
-  forked: SessionRecord;
-  copiedRunCount: number;
-  forkPoint: SessionForkPoint | null;
-}
-
-/** Store capability required to create a complete, resumable session fork. */
-export interface ForkableSessionStore extends AppendOnlySessionStore {
-  forkSession(input: ForkSessionOptions): Promise<ForkSessionResult>;
-}
-
-export interface ForkSessionInput extends ForkSessionOptions {
-  store: ForkableSessionStore;
-}
-
 export interface FileSessionStoreOptions {
   rootDir?: string;
 }
@@ -202,7 +159,7 @@ export interface FileSessionStoreOptions {
  * @public
  * @stability experimental v0.1
  */
-export class InMemorySessionStore implements ForkableSessionStore {
+export class InMemorySessionStore implements AppendOnlySessionStore {
   private readonly sessions = new Map<string, SessionRecord>();
   private readonly events = new Map<string, SessionEvent[]>();
 
@@ -285,10 +242,6 @@ export class InMemorySessionStore implements ForkableSessionStore {
     return this.cloneEvent(event);
   }
 
-  async forkSession(input: ForkSessionOptions): Promise<ForkSessionResult> {
-    return forkLogicalSession(this, input);
-  }
-
   async *loadEvents(id: string): AsyncIterable<SessionEvent> {
     const events = this.events.get(id);
     if (!events) throw new Error(`Session not found: ${id}`);
@@ -328,7 +281,7 @@ export class InMemorySessionStore implements ForkableSessionStore {
  * @public
  * @stability experimental v0.1
  */
-export class FileSessionStore implements ForkableSessionStore {
+export class FileSessionStore implements AppendOnlySessionStore {
   readonly rootDir: string;
   private readonly mutationQueues = new Map<string, Promise<void>>();
 
@@ -452,10 +405,6 @@ export class FileSessionStore implements ForkableSessionStore {
       const session = await this.mustGet(id);
       return this.appendSessionEvent(session, input);
     });
-  }
-
-  async forkSession(input: ForkSessionOptions): Promise<ForkSessionResult> {
-    return forkFileSession(this, input);
   }
 
   private async appendSessionEvent<TPayload>(
@@ -953,502 +902,114 @@ export async function projectSessionReplayToTranscript({
   };
 }
 
+// ---------------------------------------------------------------------------
+// Session forking. Inspired by the "rewind" pattern seen in agent-CLI prior art, pared down
+// to a minimal AI-debugging primitive: take a source session, replay its
+// events up to (and including) a chosen `forkAtSequence`, and write the
+// resulting trimmed history into a brand-new session. The new session's
+// `runIds` are the subset of runs whose first event lies on or before the
+// fork point. Subsequent `createRun({ sessionStore, sessionId: forked.id })`
+// calls extend the fork instead of the original.
+//
+// We keep this off the SessionStore interface so existing stores don't have
+// to opt in; the helper relies only on `loadEvents` + `create` + `append`.
+// ---------------------------------------------------------------------------
+
+export interface ForkSessionInput {
+  /** Source session to fork from. */
+  sourceSessionId: string;
+  /**
+   * Last sequence number (inclusive) to retain in the fork. If omitted the
+   * fork takes the full source history (a simple clone).
+   */
+  forkAtSequence?: number;
+  store: AppendOnlySessionStore;
+  /** Optional metadata to attach to the fork. Merged with provenance. */
+  metadata?: Record<string, unknown>;
+}
+
+export interface ForkSessionResult {
+  /** @reserved Public field consumed by session-fork UIs and debugging tools. */
+  forked: SessionRecord;
+  /** @reserved Public field consumed by session-fork UIs and debugging tools. */
+  copiedEventCount: number;
+  /** @reserved Public field consumed by session-fork UIs and debugging tools. */
+  truncatedAtSequence: number | null;
+}
+
 /**
- * Create a complete session fork using the storage implementation's native
- * snapshot semantics. Fork points are anchored to run identity rather than a
- * run-local event counter, so they remain stable across replay and providers.
+ * Fork a session at a specific event sequence. The new session is created
+ * via `store.create`, then events up to `forkAtSequence` (inclusive) are
+ * appended verbatim (preserving their `type`, `payload`, and `metadata` — but
+ * with new `id`, `sessionId`, and re-numbered `sequence`). For
+ * `session.run_appended` events the corresponding `runId` is also threaded
+ * into the forked session's `runIds`.
  *
  * @public
  * @stability experimental v0.1
  */
-export async function forkSession(
+export async function forkSessionFromEvent(
   input: ForkSessionInput,
 ): Promise<ForkSessionResult> {
-  return input.store.forkSession({
-    sourceSessionId: input.sourceSessionId,
-    ...(input.forkPoint ? { forkPoint: input.forkPoint } : {}),
-    ...(input.metadata ? { metadata: input.metadata } : {}),
-  });
-}
-
-async function forkLogicalSession(
-  store: AppendOnlySessionStore,
-  input: ForkSessionOptions,
-): Promise<ForkSessionResult> {
-  const source = await store.get(input.sourceSessionId);
+  const source = await input.store.get(input.sourceSessionId);
   if (!source) {
     throw new Error(
       `Source session not found for fork: ${input.sourceSessionId}`,
     );
   }
-  const retainedRunIds = retainedForkRunIds(source, input.forkPoint);
-  return materializeLogicalFork(store, source, retainedRunIds, input);
-}
 
-async function materializeLogicalFork(
-  store: AppendOnlySessionStore,
-  source: SessionRecord,
-  retainedRunIds: readonly RunId[],
-  input: ForkSessionOptions,
-): Promise<ForkSessionResult> {
-  const forkPoint = input.forkPoint ? { ...input.forkPoint } : null;
-  const lineage: SessionLineage = {
-    parentSessionId: source.id,
-    forkPoint,
-  };
-  const forked = await store.create({
+  const forked = await input.store.create({
     metadata: {
+      forkedFrom: source.id,
+      forkedAtSequence: input.forkAtSequence ?? null,
       ...(input.metadata ?? {}),
-      lineage,
     },
   });
-  await store.appendEvent(forked.id, {
-    type: "session.forked",
-    payload: {
-      lineage,
-      copiedRunCount: retainedRunIds.length,
-    },
-  });
-  for (const runId of retainedRunIds) {
-    await store.append(forked.id, runId);
+
+  let copied = 0;
+  let lastSequence: number | null = null;
+  for await (const event of input.store.loadEvents(source.id)) {
+    if (
+      input.forkAtSequence !== undefined &&
+      event.sequence > input.forkAtSequence
+    ) {
+      break;
+    }
+    if (event.type === "session.created") {
+      // Skip — the new session already emitted its own `session.created`
+      // during `store.create`.
+      continue;
+    }
+    if (event.type === "session.run_appended") {
+      const runId = isRecord(event.payload)
+        ? (event.payload as { runId?: RunId }).runId
+        : undefined;
+      if (runId) {
+        await input.store.append(forked.id, runId);
+        copied += 1;
+        lastSequence = event.sequence;
+        continue;
+      }
+    }
+    await input.store.appendEvent(forked.id, {
+      type: event.type,
+      timestamp: event.timestamp,
+      payload: event.payload,
+      metadata: {
+        ...(event.metadata ?? {}),
+        forkedFromSequence: event.sequence,
+      },
+    });
+    copied += 1;
+    lastSequence = event.sequence;
   }
-  const refreshed = await store.get(forked.id);
+
+  const refreshed = await input.store.get(forked.id);
   return {
     forked: refreshed ?? forked,
-    copiedRunCount: retainedRunIds.length,
-    forkPoint,
+    copiedEventCount: copied,
+    truncatedAtSequence: lastSequence,
   };
-}
-
-function retainedForkRunIds(
-  source: SessionRecord,
-  forkPoint?: SessionForkPoint,
-): RunId[] {
-  if (!forkPoint) return [...source.runIds];
-  const index = source.runIds.indexOf(forkPoint.runId);
-  if (index < 0) {
-    throw new Error(
-      `Fork point run ${forkPoint.runId} is not part of session ${source.id}`,
-    );
-  }
-  const end = forkPoint.position === "after" ? index + 1 : index;
-  return source.runIds.slice(0, end);
-}
-
-async function forkFileSession(
-  store: FileSessionStore,
-  input: ForkSessionOptions,
-): Promise<ForkSessionResult> {
-  const source = await store.get(input.sourceSessionId);
-  if (!source) {
-    throw new Error(
-      `Source session not found for fork: ${input.sourceSessionId}`,
-    );
-  }
-  const sourceDir = join(store.rootDir, source.id);
-  const retainedRunIds = await retainedFileForkRunIds(
-    source,
-    sourceDir,
-    input.forkPoint,
-  );
-  await mkdir(store.rootDir, { recursive: true });
-  const stagingRoot = await mkdtemp(join(store.rootDir, ".fork-"));
-  try {
-    const stagingStore = new FileSessionStore({ rootDir: stagingRoot });
-    const logical = await materializeLogicalFork(
-      stagingStore,
-      source,
-      retainedRunIds,
-      input,
-    );
-    await materializeForkSnapshot({
-      sourceDir,
-      targetDir: join(stagingRoot, logical.forked.id),
-      targetSessionId: logical.forked.id,
-      retainedRunIds,
-    });
-    await rename(
-      join(stagingRoot, logical.forked.id),
-      join(store.rootDir, logical.forked.id),
-    );
-    const forked = await store.get(logical.forked.id);
-    if (!forked) {
-      throw new Error(`Forked session disappeared: ${logical.forked.id}`);
-    }
-    return { ...logical, forked };
-  } finally {
-    await rm(stagingRoot, { recursive: true, force: true });
-  }
-}
-
-async function retainedFileForkRunIds(
-  source: SessionRecord,
-  sourceDir: string,
-  forkPoint?: SessionForkPoint,
-): Promise<RunId[]> {
-  const retained = retainedForkRunIds(source, forkPoint);
-  if (!forkPoint || forkPoint.position !== "after") return retained;
-  const runAgents = await loadSessionRunAgents(sourceDir);
-  if (runAgents.get(forkPoint.runId) !== "main") return retained;
-  const selectedIndex = source.runIds.indexOf(forkPoint.runId);
-  let end = selectedIndex + 1;
-  while (
-    end < source.runIds.length &&
-    runAgents.get(source.runIds[end]) !== "main"
-  ) {
-    end += 1;
-  }
-  return source.runIds.slice(0, end);
-}
-
-async function loadSessionRunAgents(
-  sessionDir: string,
-): Promise<Map<string, string>> {
-  const agents = new Map<string, string>();
-  let agentEntries;
-  try {
-    agentEntries = await readdir(join(sessionDir, "agents"), {
-      withFileTypes: true,
-    });
-  } catch (error) {
-    if (isNodeError(error) && error.code === "ENOENT") return agents;
-    throw error;
-  }
-  for (const agentEntry of agentEntries) {
-    if (!agentEntry.isDirectory()) continue;
-    let runEntries;
-    try {
-      runEntries = await readdir(
-        join(sessionDir, "agents", agentEntry.name, "runs"),
-        { withFileTypes: true },
-      );
-    } catch (error) {
-      if (isNodeError(error) && error.code === "ENOENT") continue;
-      throw error;
-    }
-    for (const runEntry of runEntries) {
-      if (runEntry.isDirectory()) agents.set(runEntry.name, agentEntry.name);
-    }
-  }
-  return agents;
-}
-
-interface MaterializeForkSnapshotInput {
-  sourceDir: string;
-  targetDir: string;
-  targetSessionId: SessionId;
-  retainedRunIds: readonly RunId[];
-}
-
-async function materializeForkSnapshot(
-  input: MaterializeForkSnapshotInput,
-): Promise<void> {
-  const retained = new Set<string>(input.retainedRunIds);
-  const traceEvents = (
-    await readJsonLinesIfPresent(join(input.sourceDir, "trace.jsonl"))
-  )
-    .filter((event) => retained.has(stringField(event, "runId") ?? ""))
-    .map((event) => withForkSessionIdentity(event, input.targetSessionId));
-  await writeJsonLines(join(input.targetDir, "trace.jsonl"), traceEvents);
-
-  const transcripts = (
-    await readJsonLinesIfPresent(join(input.sourceDir, "transcript.jsonl"))
-  )
-    .filter((entry) => retained.has(stringField(entry, "runId") ?? ""))
-    .map((entry) => ({ ...entry, sessionId: input.targetSessionId }));
-  await writeJsonLines(join(input.targetDir, "transcript.jsonl"), transcripts);
-
-  const agents = await copyForkRunDirectories(input, retained);
-  const traceByAgent = groupByAgent(traceEvents);
-  const transcriptByAgent = groupByAgent(transcripts);
-  for (const agentId of agents) {
-    const agentDir = join(input.targetDir, "agents", agentId);
-    await mkdir(agentDir, { recursive: true });
-    await writeJsonLines(
-      join(agentDir, "trace.jsonl"),
-      traceByAgent.get(agentId) ?? [],
-    );
-    await writeJsonLines(
-      join(agentDir, "transcript.jsonl"),
-      transcriptByAgent.get(agentId) ?? [],
-    );
-  }
-  await mkdir(join(input.targetDir, "agents"), { recursive: true });
-  await updateForkSessionAgents(input.targetDir, agents);
-  await copyReferencedTranscriptBlobs(input, transcripts);
-  await copyReferencedArtifacts(input, traceEvents);
-}
-
-async function copyForkRunDirectories(
-  input: MaterializeForkSnapshotInput,
-  retained: ReadonlySet<string>,
-): Promise<Set<string>> {
-  const agents = new Set<string>();
-  const sourceAgentsDir = join(input.sourceDir, "agents");
-  let entries;
-  try {
-    entries = await readdir(sourceAgentsDir, { withFileTypes: true });
-  } catch (error) {
-    if (isNodeError(error) && error.code === "ENOENT") return agents;
-    throw error;
-  }
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const sourceAgentDir = join(sourceAgentsDir, entry.name);
-    const sourceRunsDir = join(sourceAgentDir, "runs");
-    let runEntries;
-    try {
-      runEntries = await readdir(sourceRunsDir, { withFileTypes: true });
-    } catch (error) {
-      if (isNodeError(error) && error.code === "ENOENT") continue;
-      throw error;
-    }
-    const runIds = runEntries
-      .filter(
-        (runEntry) => runEntry.isDirectory() && retained.has(runEntry.name),
-      )
-      .map((runEntry) => runEntry.name);
-    if (runIds.length === 0) continue;
-    agents.add(entry.name);
-    const targetAgentDir = join(input.targetDir, "agents", entry.name);
-    await mkdir(join(targetAgentDir, "runs"), { recursive: true });
-    for (const runId of runIds) {
-      const targetRunDir = join(targetAgentDir, "runs", runId);
-      await cp(join(sourceRunsDir, runId), targetRunDir, { recursive: true });
-      await rewriteForkRunIdentity(targetRunDir, input.targetSessionId);
-    }
-    await writeForkAgentRecord({
-      sourcePath: join(sourceAgentDir, "agent.json"),
-      targetPath: join(targetAgentDir, "agent.json"),
-      agentId: entry.name,
-      sessionId: input.targetSessionId,
-      runIds,
-    });
-  }
-  return agents;
-}
-
-async function rewriteForkRunIdentity(
-  runDir: string,
-  sessionId: SessionId,
-): Promise<void> {
-  await rewriteJsonFileIfPresent(join(runDir, "run.json"), (record) => ({
-    ...record,
-    metadata: {
-      ...(isRecord(record.metadata) ? record.metadata : {}),
-      sessionId,
-    },
-  }));
-  await rewriteJsonFileIfPresent(join(runDir, "checkpoint.json"), (record) => ({
-    ...record,
-    ...(isRecord(record.run)
-      ? {
-          run: {
-            ...record.run,
-            metadata: {
-              ...(isRecord(record.run.metadata) ? record.run.metadata : {}),
-              sessionId,
-            },
-          },
-        }
-      : {}),
-  }));
-  await rewriteJsonFileIfPresent(
-    join(runDir, "trace-pointer.json"),
-    (record) => ({ ...record, sessionId }),
-  );
-}
-
-async function writeForkAgentRecord(input: {
-  sourcePath: string;
-  targetPath: string;
-  agentId: string;
-  sessionId: SessionId;
-  runIds: string[];
-}): Promise<void> {
-  const source = await readJsonIfPresent(input.sourcePath);
-  const now = new Date().toISOString();
-  await writeFile(
-    input.targetPath,
-    `${JSON.stringify(
-      {
-        ...(source ?? {}),
-        id: input.agentId,
-        sessionId: input.sessionId,
-        createdAt: stringField(source, "createdAt") ?? now,
-        updatedAt: now,
-        runIds: input.runIds,
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-}
-
-async function updateForkSessionAgents(
-  targetDir: string,
-  agents: ReadonlySet<string>,
-): Promise<void> {
-  const path = join(targetDir, "session.json");
-  const session = await readJsonIfPresent(path);
-  if (!session) throw new Error(`Fork session record missing: ${path}`);
-  await writeFile(
-    path,
-    `${JSON.stringify({ ...session, agents: [...agents] }, null, 2)}\n`,
-    "utf8",
-  );
-}
-
-async function copyReferencedTranscriptBlobs(
-  input: MaterializeForkSnapshotInput,
-  transcripts: readonly Record<string, unknown>[],
-): Promise<void> {
-  const refs = new Set(
-    transcripts
-      .map((entry) => stringField(entry, "systemRef"))
-      .filter((ref): ref is string => Boolean(ref)),
-  );
-  if (refs.size === 0) return;
-  const sourceDir = join(input.sourceDir, "blobs");
-  const targetDir = join(input.targetDir, "blobs");
-  await mkdir(targetDir, { recursive: true });
-  for (const ref of refs) {
-    try {
-      await copyFile(
-        join(sourceDir, `${ref}.json`),
-        join(targetDir, `${ref}.json`),
-      );
-    } catch (error) {
-      if (!isNodeError(error) || error.code !== "ENOENT") throw error;
-    }
-  }
-}
-
-async function copyReferencedArtifacts(
-  input: MaterializeForkSnapshotInput,
-  traceEvents: readonly Record<string, unknown>[],
-): Promise<void> {
-  const artifactIds = new Set<string>();
-  for (const event of traceEvents) {
-    if (stringField(event, "type") !== "artifact.created") continue;
-    if (!isRecord(event.payload)) continue;
-    const id = stringField(event.payload, "id");
-    if (id) artifactIds.add(id);
-  }
-  const targetDir = join(input.targetDir, "artifacts");
-  await mkdir(targetDir, { recursive: true });
-  if (artifactIds.size === 0) return;
-  const sourceDir = join(input.sourceDir, "artifacts");
-  let entries: string[];
-  try {
-    entries = await readdir(sourceDir);
-  } catch (error) {
-    if (isNodeError(error) && error.code === "ENOENT") return;
-    throw error;
-  }
-  for (const entry of entries) {
-    if (![...artifactIds].some((id) => entry.startsWith(`${id}.`))) continue;
-    await copyFile(join(sourceDir, entry), join(targetDir, entry));
-  }
-}
-
-function groupByAgent(
-  records: readonly Record<string, unknown>[],
-): Map<string, Record<string, unknown>[]> {
-  const grouped = new Map<string, Record<string, unknown>[]>();
-  for (const record of records) {
-    const metadata = isRecord(record.metadata) ? record.metadata : undefined;
-    const agentId =
-      stringField(record, "agentId") ??
-      stringField(metadata, "agentId") ??
-      "main";
-    const items = grouped.get(agentId) ?? [];
-    items.push(record);
-    grouped.set(agentId, items);
-  }
-  return grouped;
-}
-
-function withForkSessionIdentity(
-  event: Record<string, unknown>,
-  sessionId: SessionId,
-): Record<string, unknown> {
-  return {
-    ...event,
-    metadata: {
-      ...(isRecord(event.metadata) ? event.metadata : {}),
-      sessionId,
-    },
-  };
-}
-
-async function readJsonLinesIfPresent(
-  path: string,
-): Promise<Record<string, unknown>[]> {
-  let raw: string;
-  try {
-    raw = await readFile(path, "utf8");
-  } catch (error) {
-    if (isNodeError(error) && error.code === "ENOENT") return [];
-    throw error;
-  }
-  const records: Record<string, unknown>[] = [];
-  for (const [index, line] of raw.split(/\r?\n/).entries()) {
-    if (!line.trim()) continue;
-    try {
-      const parsed: unknown = JSON.parse(line);
-      if (!isRecord(parsed)) throw new Error("JSON value is not an object");
-      records.push(parsed);
-    } catch (cause) {
-      throw new Error(`Invalid JSONL in ${path} at line ${index + 1}`, {
-        cause,
-      });
-    }
-  }
-  return records;
-}
-
-async function writeJsonLines(
-  path: string,
-  records: readonly Record<string, unknown>[],
-): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  const content = records.map((record) => JSON.stringify(record)).join("\n");
-  await writeFile(path, content ? `${content}\n` : "", "utf8");
-}
-
-async function readJsonIfPresent(
-  path: string,
-): Promise<Record<string, unknown> | null> {
-  try {
-    const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
-    return isRecord(parsed) ? parsed : null;
-  } catch (error) {
-    if (isNodeError(error) && error.code === "ENOENT") return null;
-    throw error;
-  }
-}
-
-async function rewriteJsonFileIfPresent(
-  path: string,
-  transform: (record: Record<string, unknown>) => Record<string, unknown>,
-): Promise<void> {
-  const record = await readJsonIfPresent(path);
-  if (!record) return;
-  await writeFile(
-    path,
-    `${JSON.stringify(transform(record), null, 2)}\n`,
-    "utf8",
-  );
-}
-
-function stringField(
-  record: Record<string, unknown> | null | undefined,
-  field: string,
-): string | undefined {
-  const value = record?.[field];
-  return typeof value === "string" ? value : undefined;
 }
 
 function formatReplayContextLine(

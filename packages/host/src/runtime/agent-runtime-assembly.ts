@@ -376,7 +376,6 @@ function createLazyModelAdapterResolver(input: {
   workspaceRoot: string;
   targetPath?: string;
   label: string;
-  includeProjectConfig?: boolean;
 }): () => Promise<ModelAdapter> {
   if (!input.modelRef || input.modelRef === input.parentModelRef) {
     return async () => input.parentModel;
@@ -388,7 +387,6 @@ function createLazyModelAdapterResolver(input: {
       modelRef,
       goal: input.goal,
       workspaceRoot: input.workspaceRoot,
-      includeProjectConfig: input.includeProjectConfig,
       ...(input.targetPath ? { targetPath: input.targetPath } : {}),
     }).then((built) => {
       if (!built.ok) {
@@ -416,7 +414,6 @@ export function createInProcessDelegateModelResolver(input: {
   goal: string;
   workspaceRoot: string;
   targetPath?: string;
-  includeProjectConfig?: boolean;
 }): (profileId: string) => Promise<ModelAdapter | undefined> {
   const { byProfile, inProcessProfileIds } =
     inProcessDelegateProfileIndex(input);
@@ -433,7 +430,6 @@ export function createInProcessDelegateModelResolver(input: {
         modelRef,
         goal: input.goal,
         workspaceRoot: input.workspaceRoot,
-        includeProjectConfig: input.includeProjectConfig,
         ...(input.targetPath ? { targetPath: input.targetPath } : {}),
       }).then((built) => {
         if (!built.ok) {
@@ -2143,7 +2139,6 @@ export interface PrepareAgentRuntimeInput {
   >[0]["sessionStore"];
   traceLevel: TraceLevel;
   baseToolConfig?: CapabilityToolsConfig;
-  extensionTools?: readonly ToolDefinition[];
   agentConfig?: CapabilityAgentsConfig;
   runBudget?: RunBudget;
   maxSteps?: number;
@@ -2159,8 +2154,6 @@ export interface PrepareAgentRuntimeInput {
   interactionChannel: InteractionChannel;
   allowReadWriteWorkspaceAccess: boolean;
   backgroundTasks: BackgroundTaskPolicy;
-  includeProjectAgents?: boolean;
-  includeProjectConfig?: boolean;
 }
 
 export interface PreparedAgentRuntime {
@@ -2198,7 +2191,6 @@ export class AgentRuntimeAssembly {
       input.workspaceRoot,
       input.agentConfig?.profiles,
       (collision) => profileCollisions.push(collision),
-      { includeProject: input.includeProjectAgents },
     );
     emitAgentProfileCollisionWarnings(input.pendingEvents, profileCollisions);
     const delegateToolCollisions: DelegateToolCollision[] = [];
@@ -2232,7 +2224,6 @@ export class AgentRuntimeAssembly {
     const dynamicChildToolCatalog = createDynamicChildToolCatalog({
       workspaceRoot: input.workspaceRoot,
       toolConfig,
-      extensionTools: input.extensionTools,
       shell: input.shell,
       skillRoots: input.skillRoots,
       configPaths: input.configPaths,
@@ -2243,7 +2234,6 @@ export class AgentRuntimeAssembly {
       // Stable configured profiles are governed by the run ceiling and their
       // own selectors, not accidentally narrowed by the main agent profile.
       toolConfig: input.baseToolConfig,
-      extensionTools: input.extensionTools,
       shell: input.shell,
       skillRoots: input.skillRoots,
       configPaths: input.configPaths,
@@ -2277,7 +2267,6 @@ export class AgentRuntimeAssembly {
       workspaceRoot: input.workspaceRoot,
       ...(input.targetPath ? { targetPath: input.targetPath } : {}),
       label: "spawn_agent model",
-      includeProjectConfig: input.includeProjectConfig,
     });
     const delegateModelForProfile = createInProcessDelegateModelResolver({
       delegates: delegateRouting.delegates,
@@ -2288,7 +2277,6 @@ export class AgentRuntimeAssembly {
       goal: input.goal,
       workspaceRoot: input.workspaceRoot,
       ...(input.targetPath ? { targetPath: input.targetPath } : {}),
-      includeProjectConfig: input.includeProjectConfig,
     });
     const delegateWorkflowHooksForProfile =
       createInProcessDelegateHooksResolver({

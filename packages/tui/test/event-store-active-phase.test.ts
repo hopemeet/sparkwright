@@ -240,31 +240,6 @@ describe("EventStore active phase projection", () => {
     expect(store.getSnapshot().activePhase?.message).toBe("thinking");
   });
 
-  it("surfaces provider auth waits and refreshed retries", () => {
-    const store = new EventStore();
-
-    store.appendEvent(
-      ev("model.requested", 1, {}, { runId: "r1", spanId: "m1" }),
-    );
-    store.appendEvent(
-      ev("run.waiting_credentials", 2, { category: "auth" }, { runId: "r1" }),
-    );
-    expect(store.getSnapshot().activePhase).toMatchObject({
-      kind: "model",
-      message: "waiting for provider login",
-    });
-
-    store.appendEvent(ev("run.credentials_refreshed", 3, {}, { runId: "r1" }));
-    expect(store.getSnapshot().activePhase?.message).toBe(
-      "retrying with refreshed credentials",
-    );
-
-    store.appendEvent(
-      ev("model.completed", 4, {}, { runId: "r1", spanId: "m2" }),
-    );
-    expect(store.getSnapshot().activePhase).toBeNull();
-  });
-
   it("clears active phases on terminal run events, clear, and reset", () => {
     const store = new EventStore();
 

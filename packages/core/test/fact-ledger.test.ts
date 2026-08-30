@@ -98,30 +98,6 @@ describe("FactLedger", () => {
     ]);
   });
 
-  it("classifies node --test as verification-relevant runtime evidence", () => {
-    const log = new EventLog(createRunId());
-    const ledger = new FactLedger();
-    log.subscribe((event) => ledger.observeEvent(event));
-
-    log.emit("tool.requested", {
-      id: "call_node_test",
-      toolName: "bash",
-      arguments: { command: "node --test slugify.test.ts" },
-    });
-    log.emit("tool.completed", {
-      toolCallId: "call_node_test",
-      toolName: "bash",
-      output: { exitCode: 0, timedOut: false },
-    });
-
-    expect(ledger.snapshot().commands[0]).toMatchObject({
-      command: "node --test slugify.test.ts",
-      exitCode: 0,
-      verificationRelevant: true,
-      stale: false,
-    });
-  });
-
   it("treats untracked write-capable boundaries as epoch bumps", () => {
     const log = new EventLog(createRunId());
     const ledger = new FactLedger();

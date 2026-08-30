@@ -2,78 +2,10 @@
 
 ## Purpose
 
-Capability maps explain how optional power enters a run: extensions, skills,
-MCP, agents, cron, shell/task tools, and capability inspection.
+Capability maps explain how optional power enters a run: skills, MCP, agents,
+cron, shell/task tools, and capability inspection.
 
 ## Last Verified
-
-- Status: Read-only
-- Date: 2026-08-18
-- Scope: the ChatGPT adapter projects the already admitted SparkWright tool
-  descriptors as dynamic functions. Requests return to Core; App Server-owned
-  tools fail closed, so no parallel capability or approval authority is added.
-- Read: App Server adapter and capability admission owners.
-- Tests: focused dynamic-tool projection and real tool-call smoke passed.
-
-- Status: Read-only
-- Date: 2026-08-17
-- Scope: removing the unfinished ChatGPT adapter removes its parallel dynamic
-  tool bridge. Generic provider connection state remains pre-run control state
-  and does not enlarge Core's capability catalog.
-- Read: Host provider/model boundary and capability admission owners.
-- Tests: capability-specific tests not run; focused Host route passed.
-
-- Status: Read-only
-- Date: 2026-08-12
-- Scope: OAuth account binding remains local pre-run provider state. It adds no
-  capability loader, tool/model authority, declared inventory, or inspection
-  shape.
-- Read: Host provider connection owner and capability preparation/admission
-  boundaries.
-- Tests: focused routed provider checks and schema validation passed;
-  capability contracts are unchanged.
-
-- Status: Read-only
-- Date: 2026-08-09
-- Scope: P7.0 connection inventory, selection, and non-destructive disconnect
-  remain local pre-run provider controls. Stored-but-disconnected inventory is
-  available only when Host has already granted the non-remote client
-  `provider_connection.manage`; this adds no capability loader, model tool
-  authority, or inspection shape.
-- Read: CLI/TUI connection management, Host transport authority/provider owner,
-  and capability preparation maps.
-- Tests: focused local/remote protocol and CLI/TUI checks plus the full release
-  gate passed.
-
-- Status: Read-only
-- Date: 2026-08-09
-- Scope: P6.4 catalog refresh, model policy, credential migration, and picker
-  preferences were reviewed against capability admission. They do not add a
-  capability loader, tool authority, or inspection shape.
-- Read: Host provider/config control path and capability preparation maps.
-- Tests: affected Host/TUI/SDK checks and the full release gate passed.
-
-- Status: Verified
-- Date: 2026-08-08
-- Scope: executable project capability sources now cross one Host-owned trust
-  gate before discovery or preparation. Config, commands, Skills, Agents, and
-  Workflows have independent content pins so an unrelated scope change does
-  not silently activate or invalidate another capability.
-- Read: Project Trust manifests, capability/run preparation, source resolvers,
-  protocol snapshot, and CLI/TUI admission controls.
-- Tests: Host 578/578, SDK Core 13/13, TUI 552/552, the real
-  untrusted/grant/change regression, and full release gates passed.
-
-- Status: Verified
-- Date: 2026-08-08
-- Scope: governed in-process Extension registrations now enter the Host through
-  runtime options, compile to ordinary context/tools, and expose separate
-  declared inventory and effective catalog diagnostics. No config-owned code
-  loader or parallel runtime was added.
-- Read: Core Extension preparation, Host run/inspection/catalog assembly,
-  Protocol snapshot, public reference, and integration tests.
-- Tests: Core Extension 8/8, Host Extension 4/4, Protocol 6/6, schema check,
-  and full `npm run release:check` passed.
 
 - Status: Verified
 - Date: 2026-08-02
@@ -333,7 +265,6 @@ MCP, agents, cron, shell/task tools, and capability inspection.
 - `packages/host/src/runtime/run-preparation-operations.ts`
 - `packages/host/src/runtime/capability-runtime-operations.ts`
 - `packages/host/src/runtime/capability-assembly.ts`
-- `packages/core/src/extensions.ts`
 - `packages/host/src/active-rules.ts`
 - `packages/host/src/tool-catalog.ts`
 - `packages/host/src/tools.ts`
@@ -347,8 +278,7 @@ MCP, agents, cron, shell/task tools, and capability inspection.
 ## Data Flow
 
 ```txt
-trusted runtime registrations + config + workspace capability roots
-  -> Core Extension validation/governance preparation
+config + workspace capability roots
   -> CapabilityRuntimeOperations configured inspection
   -> RunPreparationOperations generic live-run preparation
   -> host tool catalog
@@ -360,9 +290,6 @@ trusted runtime registrations + config + workspace capability roots
 ## Contracts
 
 - Capabilities affect model input, tool availability, policy, or side effects and must be trace-visible.
-- Extension inventory reports declared registration surfaces; the effective
-  tool list remains the filtered Host catalog. Inspection never loads
-  Extension run context.
 - Capability inspection is diagnostic; it does not replace run trace.
 - `CapabilityRuntimeOperations` is the sole Host owner of the last-run
   capability snapshot and configured/live merge. `capability-assembly.ts`

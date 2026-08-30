@@ -15,7 +15,7 @@ export const CONFIG_SCHEMA_ID =
 export const CONFIG_SCHEMA_PROTOCOL_VERSION = "0.2";
 export const CONFIG_SCHEMA_TITLE = "Sparkwright Config";
 export const CONFIG_SCHEMA_DESCRIPTION =
-  "User-editable settings shared by the CLI and the interactive TUI. Loaded (in order, later overriding earlier) from ~/.config/sparkwright/config.{json,yaml,yml}, <workspace>/.sparkwright/config.{json,yaml,yml}, and $SPARKWRIGHT_CONFIG. Within a user/project layer, config.json wins over config.yaml, which wins over config.yml; multiple files in one layer are reported as a conflict. CLI args and env vars override files. Model/provider settings live under identity, security boundaries under policy, run defaults under run, and TUI preferences under ui; workspace, shell foreground timing, tools, tasks, and capabilities remain top-level. The providers map is merged by key; a trusted project modelPolicy may only narrow user policy. tools.use and tools.allowed intersect, tools.disabled unions, tools.defer is replaced by later layers, capabilities merges by sub-capability, and policy.sandbox, run.accessMode, policy.confidentialPaths, and policy.write merge conservatively so later layers cannot weaken an earlier layer's policy (project clamps user); project config may tighten capabilities.web.security to hardened but may not select system; policy.confidentialDefaults is an explicit later-layer override for the built-in confidential path set; other shared fields are wholesale-overridden.";
+  "User-editable settings shared by the CLI and the interactive TUI. Loaded (in order, later overriding earlier) from ~/.config/sparkwright/config.{json,yaml,yml}, <workspace>/.sparkwright/config.{json,yaml,yml}, and $SPARKWRIGHT_CONFIG. Within a user/project layer, config.json wins over config.yaml, which wins over config.yml; multiple files in one layer are reported as a conflict. CLI args and env vars override files. Model/provider settings live under identity, security boundaries under policy, run defaults under run, and TUI preferences under ui; workspace, shell foreground timing, tools, tasks, and capabilities remain top-level. The providers map is merged by key, tools.use and tools.allowed intersect, tools.disabled unions, tools.defer is replaced by later layers, capabilities merges by sub-capability, and policy.sandbox, run.accessMode, policy.confidentialPaths, and policy.write merge conservatively so later layers cannot weaken an earlier layer's policy (project clamps user); project config may tighten capabilities.web.security to hardened but may not select system; policy.confidentialDefaults is an explicit later-layer override for the built-in confidential path set; other shared fields are wholesale-overridden.";
 
 export const stringSchema = z.string();
 export const nonEmptyString = stringSchema.min(1);
@@ -60,12 +60,6 @@ const toolUseSelectorSchema = z.union([
     .string()
     .regex(/^mcp:.+$/)
     .describe("Select tools from one configured MCP server, e.g. mcp:demo."),
-  z
-    .string()
-    .regex(/^extension:[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/)
-    .describe(
-      "Select tools from one registered in-process extension, e.g. extension:acme.docs.",
-    ),
 ]);
 
 export const modelCostSchema = z
@@ -87,18 +81,6 @@ export const providerModelConfigSchema = z
   .strict();
 export const PROVIDER_MODEL_CONFIG_KEYS =
   providerModelConfigSchema.keyof().options;
-
-export const modelPolicySchema = z
-  .object({
-    allow: nonEmptyStringArray
-      .describe("Optional model-id allowlist for this provider.")
-      .optional(),
-    deny: nonEmptyStringArray
-      .describe("Model ids removed after allowlist evaluation.")
-      .optional(),
-  })
-  .strict();
-export const MODEL_POLICY_CONFIG_KEYS = modelPolicySchema.keyof().options;
 
 export const providerConfigSchema = z
   .object({
@@ -124,17 +106,6 @@ export const providerConfigSchema = z
       .record(z.string(), providerModelConfigSchema)
       .describe(
         "Optional per-model metadata. When any models are listed, model overrides must use one of those ids.",
-      )
-      .optional(),
-    modelPolicy: modelPolicySchema
-      .describe(
-        "Model inventory policy. allow restricts selectable ids and deny removes ids after allow evaluation.",
-      )
-      .optional(),
-    modelOverrides: z
-      .record(z.string(), providerModelConfigSchema)
-      .describe(
-        "Per-model cost and providerOptions metadata that never widens modelPolicy.allow.",
       )
       .optional(),
   })

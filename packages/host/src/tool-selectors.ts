@@ -11,7 +11,6 @@ type SelectorCatalogSource =
   | "todo"
   | "mcp"
   | "delegate"
-  | "extension"
   | "core";
 
 export interface ToolSelectorCatalogEntry {
@@ -30,7 +29,6 @@ export const TOOL_USE_SELECTORS = [
   "tasks",
   "cron",
   "mcp",
-  "extensions",
 ] as const;
 
 /**
@@ -64,25 +62,17 @@ const WORKSPACE_READ_TOOL_SET = new Set<string>(WORKSPACE_READ_TOOL_NAMES);
 const WORKSPACE_WRITE_TOOL_SET = new Set<string>(WORKSPACE_WRITE_TOOL_NAMES);
 
 export function isToolUseSelector(selector: string): boolean {
-  return (
-    BUILTIN_SELECTOR_SET.has(selector) ||
-    isMcpServerSelector(selector) ||
-    isExtensionSelector(selector)
-  );
+  return BUILTIN_SELECTOR_SET.has(selector) || isMcpServerSelector(selector);
 }
 
 export function formatToolUseSelectorList(): string {
-  return `${TOOL_USE_SELECTORS.join(", ")}, mcp:<server>, extension:<id>`;
+  return `${TOOL_USE_SELECTORS.join(", ")}, mcp:<server>`;
 }
 
 export function isMcpServerSelector(selector: string): boolean {
   return (
     selector.startsWith("mcp:") && selector.slice("mcp:".length).length > 0
   );
-}
-
-export function isExtensionSelector(selector: string): boolean {
-  return /^extension:[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/.test(selector);
 }
 
 export function intersectToolUseSelectors(
@@ -156,8 +146,6 @@ function intersectOneSelector(left: string, right: string): string[] {
   if (left === right) return [left];
   if (left === "mcp" && isMcpServerSelector(right)) return [right];
   if (right === "mcp" && isMcpServerSelector(left)) return [left];
-  if (left === "extensions" && isExtensionSelector(right)) return [right];
-  if (right === "extensions" && isExtensionSelector(left)) return [left];
   return [];
 }
 
@@ -190,10 +178,7 @@ function entryMatchesSelector(
     case "mcp":
       return entry.source === "mcp";
     default:
-      return (
-        matchesMcpServerSelector(entry, selector) ||
-        matchesExtensionSelector(entry, selector)
-      );
+      return matchesMcpServerSelector(entry, selector);
   }
 }
 
@@ -205,19 +190,6 @@ function matchesMcpServerSelector(
   const serverName = selector.slice("mcp:".length);
   const origin = entry.definition.governance?.origin;
   return origin?.kind === "mcp" && origin.name === serverName;
-}
-
-function matchesExtensionSelector(
-  entry: ToolSelectorCatalogEntry,
-  selector: string,
-): boolean {
-  if (!isExtensionSelector(selector) || entry.source !== "extension") {
-    return false;
-  }
-  const extensionId = selector.slice("extension:".length);
-  return (
-    entry.definition.governance?.origin?.metadata?.extensionId === extensionId
-  );
 }
 
 function codingToolSelector(toolName: string): "read" | "write" | undefined {

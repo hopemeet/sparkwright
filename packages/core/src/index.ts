@@ -619,12 +619,8 @@ export type {
   SessionEventType,
   SessionEvent,
   SessionEventInput,
-  SessionForkPoint,
-  SessionLineage,
   SessionStore,
   AppendOnlySessionStore,
-  ForkableSessionStore,
-  ForkSessionOptions,
   FileSessionStoreOptions,
   RunStoreReplayPayload,
   ReplaySessionEventsInput,
@@ -647,7 +643,7 @@ export {
   projectSessionReplayToContextItems,
   projectSessionReplayToTranscript,
   replaySessionEventsFromRunStore,
-  forkSession,
+  forkSessionFromEvent,
   sessionCompactArtifactToContextItem,
   writeSessionCompactArtifact,
   SESSION_COMPACT_FILENAME,
@@ -659,17 +655,6 @@ export type {
   ContextExtensionLoadInput,
   ContextExtension,
   ToolExtension,
-  ExtensionLimits,
-  ExtensionRegistration,
-  ExtensionSummary,
-  InspectedExtensions,
-  PreparedExtensions,
-  ExtensionPreparationErrorCode,
-} from "./extensions.js";
-export {
-  ExtensionPreparationError,
-  inspectExtensions,
-  prepareExtensions,
 } from "./extensions.js";
 
 // Lifecycle hooks (middleware over model/tool/event boundaries).

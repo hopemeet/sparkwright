@@ -27,7 +27,6 @@ import {
 import type { HistoryEntry } from "../lib/history.js";
 import { FileIndex, type IndexedFile } from "../lib/files.js";
 import { loadFrecency, type Frecency } from "../lib/frecency.js";
-import { windowAroundCursor } from "../lib/list-window.js";
 import { clearDraftOnSubmit, type StashFile } from "../lib/stash.js";
 import { resolveDialogColumns } from "./dialog-frame.js";
 import { useInputBuffer } from "./use-input-buffer.js";
@@ -960,7 +959,7 @@ function SlashDropdown(props: {
   cursor: number;
 }): React.ReactElement {
   const windowSize = 6;
-  const { start, visible } = windowAroundCursor(
+  const { start, visible } = suggestionWindow(
     props.suggestions,
     props.cursor,
     windowSize,
@@ -990,6 +989,23 @@ function SlashDropdown(props: {
       <Text dimColor>↑/↓ select · tab/→ complete · enter run</Text>
     </Box>
   );
+}
+
+export function suggestionWindow<T>(
+  items: readonly T[],
+  cursor: number,
+  windowSize: number,
+): { start: number; visible: readonly T[] } {
+  const size = Math.max(1, windowSize);
+  const safeCursor = Math.max(
+    0,
+    Math.min(cursor, Math.max(0, items.length - 1)),
+  );
+  const start = Math.max(
+    0,
+    Math.min(items.length - size, safeCursor - Math.floor(size / 2)),
+  );
+  return { start, visible: items.slice(start, start + size) };
 }
 
 function ReverseSearchOverlay(props: {

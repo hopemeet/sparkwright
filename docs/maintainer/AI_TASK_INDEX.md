@@ -33,15 +33,6 @@ Read the linked entry file first, then the linked docs, then make the change. Do
 - **Wire in via**: `registry.getAdapter("provider:model")`, then pass the resolved `ModelAdapter` to `createRun` or `createStreamingRun`
 - **Notes**: The registry should not call provider APIs directly unless a provider definition chooses to. Keep auth/config and SDK construction at the edge.
 
-### Task: Extend provider login, catalog, or credential refresh
-
-- **Entry point**: `packages/host/src/provider-auth.ts`
-- **Interface to consume**: `ProviderAuthManager`; public request/result types live in `packages/protocol/src/index.ts`
-- **Must read**: `docs/reference/PROVIDER_EDGE.md`, `docs/reference/HOST_PROTOCOL.md`, `docs/guides/CONFIGURATION.md`
-- **Must update on change**: `schemas/host-message.schema.json`, Host protocol changelog, SDK methods/exports, CLI/TUI surfaces, and the provider-auth package route in `docs/_internal/test-map/routes/package-routes.md`
-- **Wire in via**: process-scoped `HostService` composition and `createModel({ providerAuth })`; interactive clients must explicitly advertise `provider.auth.interactive`
-- **Notes**: Keep credential material in existing private config/environment sources. Persist and expose only opaque profile identity, activation status, generation, and timestamps. Provider packages and Core remain credential-store agnostic; Core receives only a cancelable credential resolver.
-
 ### Task: Use after-turn streaming
 
 - **Entry point**: `packages/streaming-runtime/src/index.ts`
@@ -143,12 +134,12 @@ Read the linked entry file first, then the linked docs, then make the change. Do
 
 ### Task: Make commands / agent profiles / config follow a project (file-authored)
 
-- **Entry point**: edge package `packages/project-commands/` for parsing; `packages/host/src/project-command-resolution.ts` and `runtime/run-preparation-operations.ts` for governed resolution; `packages/tui/src/lib/project-commands.ts` for presentation-only discovery
+- **Entry point**: new edge package `packages/project-commands/` (alongside `packages/project-context/`); assembly hooks in `packages/host/src/runtime.ts`; scaffold + gitignore in `packages/cli/src/cli.ts` and `.gitignore`
 - **Interface to implement**: discover `.sparkwright/command/*.md` and `.sparkwright/agents/*.md`, parse frontmatter into front-end-agnostic command descriptors and `agent-profile` records; per-front-end adapters bind descriptors into the embedder's command registry
 - **Must read**: `docs/guides/CONFIGURATION.md`, `docs/guides/AGENTS.md`, `docs/reference/EXTENSION_INTERFACES.md` (Commands, Multi-Agent Extensions), `schemas/agent-profile.schema.json`
 - **Must update on change**: `docs/reference/EXTENSION_INTERFACES.md` Commands section if the `start_run` intent metadata shape changes; `.gitignore` runtime-subpath allowlist
-- **Wire in via**: commands cross `run.start` only as `{ name, rest? }`; Host rediscovers the descriptor, resolves the effective goal, and flushes governed interpolation events into the run. Agent profiles still resolve between config load and profile finalization.
-- **Notes**: Never send a command body from TUI/client to Host. The `` !`shell` `` interpolation is the only execution-touching path and must pass shell safety plus the Host traced no-write sandbox. Core is not modified.
+- **Wire in via**: `resolveAgentProfiles(workspaceRoot, agentConfig)` between config load and profile finalization in `runtime.ts` (used by both assembly paths); commands via descriptor + adapter, never core `CommandRegistry` directly
+- **Notes**: Explicit `config.json` wins over convention md files. The `` !`shell` `` interpolation is the only execution-touching path and must run through the shell-tool gate. Core is not modified.
 
 ### Task: Add an MCP server integration
 
@@ -240,17 +231,13 @@ Read the linked entry file first, then the linked docs, then make the change. Do
 - **Wire in via**: pass the wrapped builder as `createRun({ promptBuilder })`
 - **Notes**: Emits `context.cache_break.detected` (dev/debug trace) when a previously-stable prefix message changes between turns. Provider adapters that need cache-control blocks should consume `compilePromptCacheBlocks(prompt)` from `packages/core/src/context.ts` rather than re-deriving stable/session/turn boundaries. Zero behavioral impact.
 
-### Task: Fork a session from a conversation turn
+### Task: Fork a session from a specific event
 
-- **Entry point**: `packages/core/src/session.ts` (`forkSession` and
-  `ForkableSessionStore`)
-- **Interface to consume**: `forkSession({ sourceSessionId, forkPoint: { runId,
-position: "before" | "after" }, store })`; omit `forkPoint` for a full clone
+- **Entry point**: `packages/core/src/session.ts` (`forkSessionFromEvent`)
+- **Interface to consume**: `forkSessionFromEvent({ sourceSessionId, forkAtSequence, store })`
 - **Must read**: ADR / `docs/reference/PROTOCOL.md` (session events)
 - **Wire in via**: call after deciding to branch; pass the returned `forked.id` to subsequent `createRun({ ... })` calls
-- **Notes**: `FileSessionStore` materializes retained trace, transcript, blob,
-  artifact, agent, and run files into a self-contained snapshot and rewrites
-  session identity. The branch records structured parent/fork-point lineage.
+- **Notes**: Source events are replayed verbatim with new ids and re-numbered sequences. Useful for AI-debugging "what if I'd stopped here" investigations.
 
 ### Task: Run user-configurable hooks (settings.json-style)
 

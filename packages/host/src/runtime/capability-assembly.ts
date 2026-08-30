@@ -1,8 +1,4 @@
-import type {
-  EventEmitter,
-  ExtensionSummary,
-  ToolOrigin,
-} from "@sparkwright/core";
+import type { EventEmitter, ToolOrigin } from "@sparkwright/core";
 import { FileTaskStore, type AgentProfile } from "@sparkwright/agent-runtime";
 import { CronStore } from "@sparkwright/cron";
 import type { McpStatus, McpToolNameMapping } from "@sparkwright/mcp-adapter";
@@ -14,7 +10,6 @@ import type {
 } from "@sparkwright/skills";
 import type {
   CapabilityAutomationSummary,
-  CapabilityExtensionSummary,
   CapabilityEventRuleSummary,
   CapabilityModelSummary,
   CapabilitySkillInlineShellSummary,
@@ -22,7 +17,6 @@ import type {
   CapabilityWorkflowAssetErrorSummary,
   CapabilityWorkflowAssetSummary,
   CapabilityWorkflowRuleSummary,
-  ProjectTrustSnapshot,
 } from "@sparkwright/protocol";
 import type {
   ResolvedShellSandboxConfig,
@@ -51,7 +45,6 @@ export interface CapabilitySnapshotBuildInput {
   model?: CapabilityModelSummary;
   access?: ResolvedRunAccess;
   toolCatalog: HostToolCatalogEntry[];
-  extensions?: CapabilityExtensionSummary[];
   indexedSkills: SkillIndexEntry[];
   loadedSkills: LoadedSkill[];
   skillInlineShell?: CapabilitySkillInlineShellSummary;
@@ -69,7 +62,6 @@ export interface CapabilitySnapshotBuildInput {
     errors?: CapabilityWorkflowAssetErrorSummary[];
   };
   automation?: CapabilityAutomationSummary;
-  projectTrust?: ProjectTrustSnapshot;
 }
 
 export function buildCapabilitySnapshot(
@@ -104,7 +96,6 @@ export function buildCapabilitySnapshot(
         ? { requiresTool: entry.definition.requiresTool }
         : {}),
     })),
-    ...(input.extensions?.length ? { extensions: input.extensions } : {}),
     skills: {
       indexed: input.indexedSkills.map((skill) => ({
         name: skill.name,
@@ -184,7 +175,6 @@ export function buildCapabilitySnapshot(
       : {}),
     ...(input.workflows ? { workflows: input.workflows } : {}),
     automation: input.automation,
-    ...(input.projectTrust ? { projectTrust: input.projectTrust } : {}),
   };
 }
 
@@ -366,16 +356,7 @@ export function mergeCapabilitySnapshots(
   return {
     access: configured.access ?? last.access,
     model: configured.model ?? last.model,
-    projectTrust: configured.projectTrust ?? last.projectTrust,
     tools: mergeByName(configured.tools, last.tools),
-    ...(configured.extensions?.length || last.extensions?.length
-      ? {
-          extensions: mergeById(
-            configured.extensions ?? [],
-            last.extensions ?? [],
-          ),
-        }
-      : {}),
     skills: {
       indexed: mergeByName(configured.skills.indexed, last.skills.indexed),
       loaded: last.skills.loaded,
@@ -419,23 +400,6 @@ export function capabilitySnapshotAgentProfiles(
   return [...byId.values()];
 }
 
-export function capabilityExtensionSummaries(
-  extensions: readonly ExtensionSummary[],
-): CapabilityExtensionSummary[] {
-  return extensions.map((extension) => ({
-    id: extension.id,
-    ...(extension.version ? { version: extension.version } : {}),
-    ...(extension.description ? { description: extension.description } : {}),
-    context: extension.context.map((descriptor) => ({
-      name: descriptor.name,
-      ...(descriptor.description
-        ? { description: descriptor.description }
-        : {}),
-    })),
-    tools: [...extension.tools],
-  }));
-}
-
 export function summarizeCapabilitySnapshot(
   snapshot: CapabilitySnapshot | null,
 ): Record<string, unknown> {
@@ -461,14 +425,6 @@ export function summarizeCapabilitySnapshot(
       : {}),
     tools: snapshot.tools.length,
     toolNames: snapshot.tools.map((tool) => tool.name),
-    ...(snapshot.extensions?.length
-      ? {
-          extensions: {
-            count: snapshot.extensions.length,
-            ids: snapshot.extensions.map((extension) => extension.id),
-          },
-        }
-      : {}),
     skills: {
       indexed: snapshot.skills.indexed.length,
       loaded: snapshot.skills.loaded.length,

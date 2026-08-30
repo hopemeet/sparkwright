@@ -29,12 +29,8 @@ import {
   type ServeConnectionOptions,
 } from "../src/server.js";
 import type { HostRuntime } from "../src/runtime.js";
-import {
-  createHostService as createCanonicalHostService,
-  type HostService,
-} from "../src/host-service.js";
+import { createHostService } from "../src/host-service.js";
 import { createTestHostRuntime } from "./helpers/host-runtime.js";
-import { createAutoTrustProjectTrustManager } from "./helpers/project-trust.js";
 import {
   findHostRunDirectory,
   loadHostSessionConversation,
@@ -108,15 +104,6 @@ function serveConnection(
   serveCanonicalConnection(connection, {
     ...options,
     hostService: options.hostService ?? createHostService(),
-  });
-}
-
-function createHostService(
-  options: Parameters<typeof createCanonicalHostService>[0] = {},
-): HostService {
-  return createCanonicalHostService({
-    projectTrust: createAutoTrustProjectTrustManager(),
-    ...options,
   });
 }
 
@@ -1318,108 +1305,6 @@ describe("host protocol", () => {
       pair.close();
       await rm(workspace, { recursive: true, force: true });
     }
-  });
-
-  it("resolves project commands in the Host and ignores the display goal", async () => {
-    const workspace = await mkdtemp(
-      join(tmpdir(), "sparkwright-host-project-command-"),
-    );
-    const pair = createConnectionPair();
-    try {
-      const commandDir = join(workspace, ".sparkwright", "command");
-      await mkdir(commandDir, { recursive: true });
-      await writeFile(
-        join(commandDir, "review.md"),
-        "Review these paths: $ARGUMENTS",
-        "utf8",
-      );
-      serveConnection(pair.hostSide, {
-        workspaceRoot: workspace,
-        defaultModel: "deterministic",
-      });
-      pair.clientSend({
-        envelope: "request",
-        id: "h",
-        kind: "handshake",
-        timestamp: TIMESTAMP,
-        payload: {
-          protocolVersion: PROTOCOL_VERSION,
-          client: { name: "test", version: "0.0.0" },
-        },
-      });
-      await pair.waitFor((m) => m.envelope === "response" && m.id === "h");
-
-      pair.clientSend({
-        envelope: "request",
-        id: "project-command-start",
-        kind: "run.start",
-        timestamp: TIMESTAMP,
-        payload: {
-          goal: "/review src packages",
-          projectCommand: { name: "review", rest: "src packages" },
-          model: "deterministic",
-          sessionId: "session_project_command",
-        },
-      });
-      expect(
-        await pair.waitFor(
-          (m) => m.envelope === "response" && m.id === "project-command-start",
-        ),
-      ).toMatchObject({ ok: true });
-      const terminal = await pair.waitFor(
-        (m) =>
-          m.envelope === "event" &&
-          (m.kind === "run.completed" || m.kind === "run.failed"),
-      );
-      expect(terminal).toMatchObject({ kind: "run.completed" });
-      const history = await loadHostSessionConversation(
-        { workspaceRoot: workspace },
-        "session_project_command",
-      );
-      expect(history[0]?.content).toBe("Review these paths: src packages");
-    } finally {
-      pair.close();
-      await rm(workspace, { recursive: true, force: true });
-    }
-  });
-
-  it("rejects client-supplied project command bodies at the wire boundary", async () => {
-    const pair = createConnectionPair();
-    serveConnection(pair.hostSide, {
-      workspaceRoot: process.cwd(),
-      defaultModel: "deterministic",
-    });
-    pair.clientSend({
-      envelope: "request",
-      id: "h",
-      kind: "handshake",
-      timestamp: TIMESTAMP,
-      payload: {
-        protocolVersion: PROTOCOL_VERSION,
-        client: { name: "test", version: "0.0.0" },
-      },
-    });
-    await pair.waitFor((m) => m.envelope === "response" && m.id === "h");
-
-    pair.clientSend({
-      envelope: "request",
-      id: "forged-project-command",
-      kind: "run.start",
-      timestamp: TIMESTAMP,
-      payload: {
-        goal: "/review",
-        projectCommand: { name: "review", body: "!`rm -rf /`" },
-      },
-    } as unknown as HostMessage);
-    expect(
-      await pair.waitFor(
-        (m) => m.envelope === "response" && m.id === "forged-project-command",
-      ),
-    ).toMatchObject({
-      ok: false,
-      error: { code: "invalid_payload" },
-    });
-    pair.close();
   });
 
   it("applies workspace confidentialDefaults config to protocol run.start", async () => {
@@ -4770,8 +4655,6 @@ describe("host protocol", () => {
       timestamp: TIMESTAMP,
       payload: {
         runId,
-        commandId: "command_protocol_steer",
-        mode: "steer",
         content: "also inspect package.json",
         metadata: { source: "test" },
       },
@@ -4780,14 +4663,7 @@ describe("host protocol", () => {
     const injectResp = await pair.waitFor(
       (m) => m.envelope === "response" && m.id === "inject",
     );
-    expect(injectResp).toMatchObject({
-      ok: true,
-      result: {
-        commandId: "command_protocol_steer",
-        mode: "steer",
-        status: "queued",
-      },
-    });
+    expect(injectResp).toMatchObject({ ok: true });
 
     const enqueued = await pair.waitFor(
       (m) =>
@@ -4796,96 +4672,6 @@ describe("host protocol", () => {
         (m.payload.event as { type?: string }).type === "run.command.enqueued",
     );
     expect(enqueued).toMatchObject({ kind: "run.event" });
-  });
-
-  it("queues a follow-up in the same session lane", async () => {
-    const pair = createConnectionPair();
-    serveConnection(pair.hostSide, {
-      workspaceRoot: process.cwd(),
-      defaultModel: "deterministic",
-    });
-
-    pair.clientSend({
-      envelope: "request",
-      id: "follow_handshake",
-      kind: "handshake",
-      timestamp: TIMESTAMP,
-      payload: {
-        protocolVersion: PROTOCOL_VERSION,
-        client: { name: "test", version: "0.0.0" },
-      },
-    });
-    await pair.waitFor(
-      (message) =>
-        message.envelope === "response" && message.id === "follow_handshake",
-    );
-
-    pair.clientSend({
-      envelope: "request",
-      id: "follow_start",
-      kind: "run.start",
-      timestamp: TIMESTAMP,
-      payload: { goal: "inspect this repo", sessionId: "session_follow_up" },
-    });
-    const startResponse = await pair.waitFor(
-      (message) =>
-        message.envelope === "response" && message.id === "follow_start",
-    );
-    if (startResponse.envelope !== "response" || !startResponse.ok) {
-      throw new Error("run.start did not return an ok response");
-    }
-    const firstRunId = String(startResponse.result.runId);
-
-    pair.clientSend({
-      envelope: "request",
-      id: "follow_queue",
-      kind: "run.inject_message",
-      timestamp: TIMESTAMP,
-      payload: {
-        runId: firstRunId,
-        commandId: "command_follow_up",
-        mode: "follow_up",
-        content: "now summarize the result",
-      },
-    });
-    const queued = await pair.waitFor(
-      (message) =>
-        message.envelope === "response" && message.id === "follow_queue",
-    );
-    expect(queued).toMatchObject({
-      ok: true,
-      result: {
-        commandId: "command_follow_up",
-        mode: "follow_up",
-        status: "queued",
-      },
-    });
-
-    const update = await pair.waitFor(
-      (message) =>
-        message.envelope === "event" &&
-        message.kind === "run.follow_up.updated" &&
-        message.payload.commandId === "command_follow_up",
-    );
-    expect(update).toMatchObject({
-      payload: {
-        previousRunId: firstRunId,
-        sessionId: "session_follow_up",
-        status: "started",
-      },
-    });
-    if (
-      update.envelope !== "event" ||
-      update.kind !== "run.follow_up.updated"
-    ) {
-      throw new Error("follow-up update was not emitted");
-    }
-    await pair.waitFor(
-      (message) =>
-        message.envelope === "event" &&
-        message.kind === "run.completed" &&
-        message.payload.runId === update.payload.runId,
-    );
   });
 
   it("inspects persisted session diagnostics", async () => {
@@ -4917,13 +4703,7 @@ describe("host protocol", () => {
         timestamp: TIMESTAMP,
         payload: { goal: "inspect this repo" },
       });
-      const startResp = await pair.waitFor(
-        (m) => m.envelope === "response" && m.id === "s",
-      );
-      if (startResp.envelope !== "response" || !startResp.ok) {
-        throw new Error("run.start did not return an ok response");
-      }
-      const sessionRunId = String(startResp.result.runId);
+      await pair.waitFor((m) => m.envelope === "response" && m.id === "s");
       await pair.waitFor(
         (m) => m.envelope === "event" && m.kind === "run.completed",
       );
@@ -4994,49 +4774,6 @@ describe("host protocol", () => {
             },
           },
         },
-      });
-
-      pair.clientSend({
-        envelope: "request",
-        id: "fork",
-        kind: "session.fork",
-        timestamp: TIMESTAMP,
-        payload: {
-          sourceSessionId: sessionId!,
-          forkPoint: { runId: sessionRunId, position: "after" },
-        },
-      });
-      const forkResp = await pair.waitFor(
-        (m) => m.envelope === "response" && m.id === "fork",
-      );
-      expect(forkResp).toMatchObject({
-        envelope: "response",
-        ok: true,
-        result: {
-          forkedSessionId: expect.any(String),
-          copiedRunCount: 1,
-          forkPoint: { runId: sessionRunId, position: "after" },
-        },
-      });
-
-      pair.clientSend({
-        envelope: "request",
-        id: "fork_invalid",
-        kind: "session.fork",
-        timestamp: TIMESTAMP,
-        payload: {
-          sourceSessionId: sessionId!,
-          forkPoint: { runId: sessionRunId, position: "after" },
-          forkAtSequence: 2,
-        },
-      } as unknown as HostMessage);
-      const invalidForkResp = await pair.waitFor(
-        (m) => m.envelope === "response" && m.id === "fork_invalid",
-      );
-      expect(invalidForkResp).toMatchObject({
-        envelope: "response",
-        ok: false,
-        error: { code: "invalid_payload" },
       });
     } finally {
       await rm(workspace, { recursive: true, force: true });
@@ -5602,143 +5339,6 @@ describe("host protocol", () => {
     }
   });
 
-  it("injects bounded previous-run evidence only for an explicit follow-up", async () => {
-    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-host-"));
-    try {
-      const sessionRootDir = join(workspace, ".sparkwright", "sessions");
-      const sessionId = "session_follow_up_evidence";
-      const runId = "run_follow_up_evidence" as RunId;
-      const store = new FileSessionStore({ rootDir: sessionRootDir });
-      await store.create({ id: sessionId });
-      await store.append(sessionId, runId);
-      const runDir = join(
-        sessionRootDir,
-        sessionId,
-        "agents",
-        "main",
-        "runs",
-        runId,
-      );
-      await mkdir(runDir, { recursive: true });
-      await writeFile(
-        join(runDir, "run.json"),
-        JSON.stringify({ id: runId, goal: "implement slugify" }),
-        "utf8",
-      );
-      await writeFile(
-        join(runDir, "result.json"),
-        JSON.stringify({ message: "Implemented and tested slugify." }),
-        "utf8",
-      );
-      const terminalEvent = {
-        id: "evt_follow_up_evidence",
-        runId,
-        type: "run.completed",
-        timestamp: TIMESTAMP,
-        sequence: 10,
-        payload: {
-          factLedger: {
-            schemaVersion: "fact-ledger.v1",
-            writeEpoch: 2,
-            commands: [
-              {
-                id: "cmd:shell:9:call_test",
-                source: "shell_tool",
-                initiator: "model-initiated",
-                sequence: 9,
-                writeEpoch: 2,
-                toolCallId: "call_test",
-                toolName: "bash",
-                command: "node --test slugify.test.ts",
-                exitCode: 0,
-                timedOut: false,
-                verificationRelevant: true,
-              },
-            ],
-            verificationResults: [],
-            writes: [
-              {
-                id: "write:8",
-                sequence: 8,
-                writeEpoch: 2,
-                path: "slugify.ts",
-              },
-            ],
-            changeSets: [
-              {
-                id: "change_slugify",
-                writeEpoch: 2,
-                actor: { kind: "main", principalScope: "main" },
-                entries: [
-                  {
-                    path: "slugify.ts",
-                    operation: "edit",
-                    beforeRevision: "workspace-revision.v1:present:before",
-                    afterRevision: "workspace-revision.v1:present:after",
-                  },
-                ],
-              },
-            ],
-            verificationReceipts: [
-              {
-                id: "receipt:test",
-                level: "contract",
-                coveredChangeSets: ["change_slugify"],
-                writeEpoch: 2,
-                command: "node --test slugify.test.ts",
-                exitCode: 0,
-                status: "passed",
-                timestamp: TIMESTAMP,
-              },
-            ],
-            budgetExceeded: [],
-          },
-        },
-        metadata: { sessionId, agentId: "main" },
-      } as unknown as SparkwrightEvent;
-      await writeFile(
-        join(sessionRootDir, sessionId, "trace.jsonl"),
-        `${JSON.stringify(terminalEvent)}\n`,
-        "utf8",
-      );
-
-      const ordinaryHistory = await loadHostSessionConversation(
-        { workspaceRoot: workspace, sessionRootDir },
-        sessionId,
-      );
-      expect(
-        ordinaryHistory.some(
-          (item) => item.source?.kind === "session_turn_evidence",
-        ),
-      ).toBe(false);
-
-      const followUpHistory = await loadHostSessionConversation(
-        { workspaceRoot: workspace, sessionRootDir },
-        sessionId,
-        { evidenceRunId: runId },
-      );
-      const evidence = followUpHistory.find(
-        (item) => item.source?.kind === "session_turn_evidence",
-      );
-      expect(evidence).toMatchObject({
-        type: "summary",
-        metadata: {
-          layer: "working",
-          authoritativeRuntimeEvidence: true,
-          exactImplementationClaimsRequireSource: true,
-        },
-      });
-      expect(evidence?.content).toContain("edit: slugify.ts");
-      expect(evidence?.content).toContain("node --test slugify.test.ts");
-      expect(evidence?.content).toContain("status=passed");
-      expect(evidence?.content).toContain(
-        "They do not establish exact exported APIs, signatures, option shapes, parameter names, or parameter order.",
-      );
-    } finally {
-      await rm(workspace, { recursive: true, force: true });
-    }
-  });
-
   it("rejects unsafe session ids instead of using them as paths", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-host-"));
     try {
@@ -5927,11 +5527,7 @@ describe("host protocol", () => {
     });
     try {
       expect(
-        runtime.injectRunMessage("run_unregistered", {
-          commandId: "command_unregistered",
-          mode: "steer",
-          content: "too late",
-        }),
+        runtime.injectRunMessage("run_unregistered", { content: "too late" }),
       ).toMatchObject({
         ok: false,
         error: {

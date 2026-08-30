@@ -84,17 +84,6 @@ def changed_files(cwd: Path, base: str | None) -> set[str]:
 
 
 def changed_last_verified_date(cwd: Path, path: str, base: str | None) -> bool:
-    try:
-        run_git(["ls-files", "--error-unmatch", "--", path], cwd)
-    except subprocess.CalledProcessError:
-        candidate = cwd / path
-        if not candidate.is_file():
-            return False
-        return any(
-            line.startswith("- Date:") and line.removeprefix("- Date:").strip()
-            for line in candidate.read_text(encoding="utf-8").splitlines()
-        )
-
     ranges = [f"{base}...HEAD"] if base else []
     ranges.append("HEAD")
     for diff_range in ranges:

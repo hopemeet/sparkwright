@@ -24,19 +24,14 @@ import {
   SESSION_COMPACT_SCHEMA_VERSION,
   type RunId,
 } from "@sparkwright/core";
-import {
-  loadHostConfig,
-  ProjectTrustManager,
-  providerAuthStatePath,
-  providerCredentialFilePath,
-} from "@sparkwright/host";
+import { loadHostConfig } from "@sparkwright/host";
 import { computeAssetPackageHash } from "@sparkwright/skills";
 import {
   FileWorkflowServiceStore,
   WorkflowServiceCarrier,
 } from "@sparkwright/server-runtime";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { runCli as runCliCanonical } from "../src/cli.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { runCli } from "../src/cli.js";
 import { createConfiguredCliTools } from "../src/runners/direct-core-runner.js";
 import {
   checkpointJson,
@@ -96,7 +91,7 @@ function workflowPinFixture(
   };
 }
 
-describe.sequential("runCli", { timeout: 15_000 }, () => {
+describe.sequential("runCli", () => {
   let harness: ReturnType<typeof createCliTestHarness>;
 
   beforeEach(async () => {
@@ -105,10 +100,8 @@ describe.sequential("runCli", { timeout: 15_000 }, () => {
     // tests that rely on process.env can't pick up the developer's own config.
     // This sequential suite is the only region that mutates the real process.env.
     const xdg = await harness.tempDir("sparkwright-xdg-");
-    const stateHome = await harness.tempDir("sparkwright-state-");
     harness.installProcessEnv({
       XDG_CONFIG_HOME: xdg,
-      XDG_STATE_HOME: stateHome,
       SPARKWRIGHT_HOST_SOURCE: "1",
       SPARKWRIGHT_ENABLE_DIRECT_CORE: "1",
     });
@@ -439,8 +432,6 @@ describe.sequential("runCli", { timeout: 15_000 }, () => {
       };
       state: {
         user: string;
-        providerAuth: string;
-        projectTrust: string;
         cron: { root: string };
         imGateway: { config: string; dataDir: string };
       };
@@ -468,12 +459,6 @@ describe.sequential("runCli", { timeout: 15_000 }, () => {
     expect(report.capabilities.mcp.source).toBe("config");
     expect(report.capabilities.acp.source).toBe("entrypoint-and-config");
     expect(report.state.user).toBe(stateHome);
-    expect(report.state.providerAuth).toBe(
-      join(stateHome, "sparkwright", "provider-auth.json"),
-    );
-    expect(report.state.projectTrust).toBe(
-      join(stateHome, "sparkwright", "project-trust.json"),
-    );
     expect(report.state.cron.root).toBe(join(stateHome, "sparkwright", "cron"));
     expect(report.state.imGateway.config).toContain(
       join("sparkwright", "im-gateway.json"),
@@ -511,59 +496,6 @@ describe.sequential("runCli", { timeout: 15_000 }, () => {
     expect(result.exitCode).toBe(1);
     expect(output.stderrText()).toContain("SPARKWRIGHT_ENABLE_DIRECT_CORE=1");
     expect(output.stdoutText()).not.toContain("run.started");
-  });
-
-  it("inspects, grants, invalidates, and revokes project trust from the CLI", async () => {
-    const workspace = await harness.tempDir("sparkwright-trust-cli-");
-    const stateHome = await harness.tempDir("sparkwright-trust-state-");
-    const commandDir = join(workspace, ".sparkwright", "command");
-    const commandPath = join(commandDir, "review.md");
-    await mkdir(commandDir, { recursive: true });
-    await writeFile(commandPath, "Review version one.", "utf8");
-    const env = { ...process.env, XDG_STATE_HOME: stateHome };
-
-    const invoke = async (subcommand: "status" | "grant" | "revoke") => {
-      const output = createOutputCapture();
-      const result = await runCli(
-        ["trust", subcommand, "--workspace", workspace, "--format", "json"],
-        {
-          env,
-          io: {
-            stdout: output.stdout,
-            stderr: output.stderr,
-            stdinIsTTY: false,
-          },
-        },
-      );
-      return {
-        result,
-        snapshot: JSON.parse(output.stdoutText()) as {
-          status: string;
-          scopes: Array<{ scope: string; status: string }>;
-        },
-        stderr: output.stderrText(),
-      };
-    };
-
-    const initial = await invoke("status");
-    expect(initial.result.exitCode).toBe(0);
-    expect(initial.snapshot.status).toBe("untrusted");
-
-    const granted = await invoke("grant");
-    expect(granted.result.exitCode).toBe(0);
-    expect(granted.snapshot.status).toBe("trusted");
-    expect(granted.stderr).toBe("");
-
-    await writeFile(commandPath, "Review version two.", "utf8");
-    const changed = await invoke("status");
-    expect(changed.snapshot.status).toBe("changed");
-    expect(changed.snapshot.scopes).toContainEqual(
-      expect.objectContaining({ scope: "commands", status: "changed" }),
-    );
-
-    const revoked = await invoke("revoke");
-    expect(revoked.result.exitCode).toBe(0);
-    expect(revoked.snapshot.status).toBe("untrusted");
   });
 
   it("prints cron status for a stored job", async () => {
@@ -1749,7 +1681,7 @@ describe.sequential("runCli", { timeout: 15_000 }, () => {
     await expect(
       stat(join(workspace, ".sparkwright", "sessions")),
     ).rejects.toThrow();
-  });
+  }, 15_000);
 
   it("denies non-interactive writes and leaves the workspace unchanged", async () => {
     const workspace = await createWorkspace("# Demo\n");
@@ -1942,456 +1874,6 @@ describe.sequential("runCli", { timeout: 15_000 }, () => {
     expect(output.stdoutText()).toBe("");
   });
 
-  it("lists providers and persists non-secret login state", async () => {
-    const workspace = await createWorkspace("# Provider auth\n");
-    const stateHome = await harness.tempDir("sparkwright-provider-state-");
-    const env = { ...process.env, XDG_STATE_HOME: stateHome };
-    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
-    await writeFile(
-      join(workspace, ".sparkwright", "config.json"),
-      JSON.stringify({
-        identity: {
-          model: "openai/gpt-test",
-          providers: {
-            openai: {
-              apiKey: "sk-cli-provider-secret",
-              models: { "gpt-test": {} },
-            },
-          },
-        },
-      }),
-      "utf8",
-    );
-
-    const listedOutput = createOutputCapture();
-    const listed = await runCli(
-      ["provider", "list", "--workspace", workspace, "--format", "json"],
-      {
-        env,
-        io: {
-          stdout: listedOutput.stdout,
-          stderr: listedOutput.stderr,
-          stdinIsTTY: false,
-        },
-      },
-    );
-    expect(listed.exitCode).toBe(0);
-    const catalog = JSON.parse(listedOutput.stdoutText()) as {
-      providers: Array<{
-        id: string;
-        credential: { id: string; status: string };
-      }>;
-    };
-    expect(catalog.providers).toMatchObject([
-      { id: "openai", credential: { status: "unverified" } },
-    ]);
-    expect(listedOutput.stdoutText()).not.toContain("sk-cli-provider-secret");
-
-    const logout = await runCli(
-      ["provider", "logout", "openai", "--workspace", workspace],
-      { env, io: { stdinIsTTY: false } },
-    );
-    expect(logout.exitCode).toBe(0);
-    const state = await readFile(providerAuthStatePath(env), "utf8");
-    expect(state).toContain('"state": "logged_out"');
-    expect(state).not.toContain("sk-cli-provider-secret");
-
-    const login = await runCli(
-      ["provider", "login", "openai", "--workspace", workspace],
-      { env, io: { stdinIsTTY: false } },
-    );
-    expect(login.exitCode).toBe(0);
-  });
-
-  it("connects, inventories, switches, and disconnects stored connections without secret output", async () => {
-    const workspace = await createWorkspace("# Provider connect\n");
-    const configHome = await harness.tempDir("sparkwright-connect-config-");
-    const stateHome = await harness.tempDir("sparkwright-connect-state-");
-    const secret = "sk-cli-connect-sentinel";
-    const env = {
-      ...process.env,
-      XDG_CONFIG_HOME: configHome,
-      XDG_STATE_HOME: stateHome,
-      SPARKWRIGHT_CREDENTIAL_STORE: "file",
-    };
-    const output = createOutputCapture();
-
-    const connected = await runCli(
-      [
-        "provider",
-        "connect",
-        "openai",
-        "--api-key-stdin",
-        "--workspace",
-        workspace,
-        "--format",
-        "json",
-      ],
-      {
-        env,
-        io: {
-          stdout: output.stdout,
-          stderr: output.stderr,
-          stdinIsTTY: false,
-          readSecret: async () => secret,
-        },
-      },
-    );
-
-    expect(connected.exitCode, output.stderrText()).toBe(0);
-    const firstReceipt = JSON.parse(output.stdoutText()) as {
-      connection: { id: string };
-    };
-    expect(output.stdoutText()).toContain('"source": "stored"');
-    expect(output.stdoutText()).not.toContain(secret);
-    expect(output.stderrText()).not.toContain(secret);
-    await expect(
-      readFile(providerAuthStatePath(env), "utf8"),
-    ).resolves.not.toContain(secret);
-    const credentialPath = providerCredentialFilePath(env);
-    await expect(readFile(credentialPath, "utf8")).resolves.toContain(secret);
-    expect((await stat(credentialPath)).mode & 0o777).toBe(0o600);
-    await expect(
-      access(join(workspace, ".sparkwright", "config.json")),
-    ).rejects.toMatchObject({ code: "ENOENT" });
-
-    const secondSecret = "sk-cli-connect-second-sentinel";
-    const secondOutput = createOutputCapture();
-    const second = await runCli(
-      [
-        "provider",
-        "connect",
-        "openai",
-        "--api-key-stdin",
-        "--workspace",
-        workspace,
-        "--format",
-        "json",
-      ],
-      {
-        env,
-        io: {
-          stdout: secondOutput.stdout,
-          stderr: secondOutput.stderr,
-          stdinIsTTY: false,
-          readSecret: async () => secondSecret,
-        },
-      },
-    );
-    expect(second.exitCode, secondOutput.stderrText()).toBe(0);
-    expect(secondOutput.stdoutText()).not.toContain(secondSecret);
-
-    const listedOutput = createOutputCapture();
-    const listed = await runCli(
-      ["provider", "list", "--workspace", workspace, "--format", "json"],
-      {
-        env,
-        io: {
-          stdout: listedOutput.stdout,
-          stderr: listedOutput.stderr,
-          stdinIsTTY: false,
-        },
-      },
-    );
-    expect(listed.exitCode).toBe(0);
-    const catalog = JSON.parse(listedOutput.stdoutText()) as {
-      providers: Array<{
-        id: string;
-        connected?: boolean;
-        connections?: Array<{ id: string; selected: boolean }>;
-      }>;
-    };
-    expect(catalog.providers).toMatchObject([
-      { id: "openai", connected: true },
-    ]);
-    expect(catalog.providers[0]?.connections).toHaveLength(2);
-    expect(listedOutput.stdoutText()).not.toContain(secret);
-    expect(listedOutput.stdoutText()).not.toContain(secondSecret);
-
-    const selected = await runCli(
-      [
-        "provider",
-        "select",
-        firstReceipt.connection.id,
-        "--workspace",
-        workspace,
-      ],
-      { env, io: { stdinIsTTY: false } },
-    );
-    expect(selected.exitCode).toBe(0);
-
-    const selectedOutput = createOutputCapture();
-    await runCli(
-      ["provider", "list", "--workspace", workspace, "--format", "json"],
-      {
-        env,
-        io: {
-          stdout: selectedOutput.stdout,
-          stderr: selectedOutput.stderr,
-          stdinIsTTY: false,
-        },
-      },
-    );
-    const selectedCatalog = JSON.parse(selectedOutput.stdoutText()) as {
-      providers: Array<{
-        connections?: Array<{ id: string; selected: boolean }>;
-      }>;
-    };
-    expect(
-      selectedCatalog.providers[0]?.connections?.find(
-        (connection) => connection.id === firstReceipt.connection.id,
-      )?.selected,
-    ).toBe(true);
-
-    const disconnected = await runCli(
-      [
-        "provider",
-        "disconnect",
-        firstReceipt.connection.id,
-        "--workspace",
-        workspace,
-      ],
-      { env, io: { stdinIsTTY: false } },
-    );
-    expect(disconnected.exitCode).toBe(0);
-    const credentialContents = await readFile(credentialPath, "utf8");
-    expect(credentialContents).toContain(secret);
-    expect(credentialContents).toContain(secondSecret);
-
-    const disconnectedOutput = createOutputCapture();
-    const disconnectedList = await runCli(
-      ["provider", "list", "--workspace", workspace, "--format", "json"],
-      {
-        env,
-        io: {
-          stdout: disconnectedOutput.stdout,
-          stderr: disconnectedOutput.stderr,
-          stdinIsTTY: false,
-        },
-      },
-    );
-    expect(disconnectedList.exitCode).toBe(0);
-    const disconnectedCatalog = JSON.parse(disconnectedOutput.stdoutText()) as {
-      providers: Array<{
-        connections?: Array<{
-          id: string;
-          selected: boolean;
-          grantScope?: string;
-        }>;
-      }>;
-    };
-    expect(disconnectedCatalog.providers[0]?.connections).toHaveLength(2);
-    expect(
-      disconnectedCatalog.providers[0]?.connections?.find(
-        (connection) => connection.id === firstReceipt.connection.id,
-      ),
-    ).toEqual(
-      expect.objectContaining({
-        id: firstReceipt.connection.id,
-        selected: false,
-      }),
-    );
-    expect(
-      disconnectedCatalog.providers[0]?.connections?.find(
-        (connection) => connection.id === firstReceipt.connection.id,
-      ),
-    ).not.toHaveProperty("grantScope");
-
-    const reselected = await runCli(
-      [
-        "provider",
-        "select",
-        firstReceipt.connection.id,
-        "--workspace",
-        workspace,
-      ],
-      { env, io: { stdinIsTTY: false } },
-    );
-    expect(reselected.exitCode).toBe(0);
-    await runCli(
-      [
-        "provider",
-        "disconnect",
-        firstReceipt.connection.id,
-        "--workspace",
-        workspace,
-      ],
-      { env, io: { stdinIsTTY: false } },
-    );
-    const removed = await runCli(
-      [
-        "provider",
-        "remove",
-        firstReceipt.connection.id,
-        "--workspace",
-        workspace,
-      ],
-      { env, io: { stdinIsTTY: false } },
-    );
-    expect(removed.exitCode).toBe(0);
-    const removedCredentialContents = await readFile(credentialPath, "utf8");
-    expect(removedCredentialContents).not.toContain(secret);
-    expect(removedCredentialContents).toContain(secondSecret);
-  });
-
-  it("migrates a legacy config credential and removes only its apiKey", async () => {
-    const workspace = await createWorkspace("# Provider migration\n");
-    const configHome = await harness.tempDir("sparkwright-migrate-config-");
-    const stateHome = await harness.tempDir("sparkwright-migrate-state-");
-    const configDir = join(configHome, "sparkwright");
-    const configPath = join(configDir, "config.yaml");
-    const secret = "sk-cli-migrate-sentinel";
-    await mkdir(configDir, { recursive: true });
-    await writeFile(
-      configPath,
-      [
-        "# preserved provider comment",
-        "identity:",
-        "  providers:",
-        "    openai:",
-        '      npm: "@ai-sdk/openai"',
-        `      apiKey: "${secret}"`,
-        "      baseURL: https://api.openai.com/v1",
-        "ui:",
-        "  theme: dark",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
-    const env = {
-      ...process.env,
-      XDG_CONFIG_HOME: configHome,
-      XDG_STATE_HOME: stateHome,
-      SPARKWRIGHT_CREDENTIAL_STORE: "file",
-    };
-    const firstOutput = createOutputCapture();
-    const staged = await runCli(
-      [
-        "provider",
-        "migrate",
-        "openai",
-        "--workspace",
-        workspace,
-        "--format",
-        "json",
-      ],
-      {
-        env,
-        io: {
-          stdout: firstOutput.stdout,
-          stderr: firstOutput.stderr,
-          stdinIsTTY: false,
-        },
-      },
-    );
-    expect(staged.exitCode, firstOutput.stderrText()).toBe(0);
-    expect(firstOutput.stdoutText()).toContain('"configRemoved": false');
-    expect(await readFile(configPath, "utf8")).toContain(secret);
-
-    const output = createOutputCapture();
-
-    const migrated = await runCli(
-      [
-        "provider",
-        "migrate",
-        "openai",
-        "--remove-config",
-        "--workspace",
-        workspace,
-        "--format",
-        "json",
-      ],
-      {
-        env,
-        io: {
-          stdout: output.stdout,
-          stderr: output.stderr,
-          stdinIsTTY: false,
-        },
-      },
-    );
-
-    expect(migrated.exitCode, output.stderrText()).toBe(0);
-    expect(output.stdoutText()).toContain('"configRemoved": true');
-    expect(output.stdoutText()).not.toContain(secret);
-    expect(output.stderrText()).not.toContain(secret);
-    const rewritten = await readFile(configPath, "utf8");
-    expect(rewritten).toContain("# preserved provider comment");
-    expect(rewritten).toContain("baseURL: https://api.openai.com/v1");
-    expect(rewritten).toContain("theme: dark");
-    expect(rewritten).not.toContain("apiKey");
-    expect(rewritten).not.toContain(secret);
-    await expect(
-      readFile(providerCredentialFilePath(env), "utf8"),
-    ).resolves.toContain(secret);
-    await expect(
-      readFile(providerAuthStatePath(env), "utf8"),
-    ).resolves.not.toContain(secret);
-    const metadata = JSON.parse(
-      await readFile(providerAuthStatePath(env), "utf8"),
-    ) as { connections: Record<string, unknown> };
-    expect(Object.keys(metadata.connections)).toHaveLength(1);
-  });
-
-  it("rejects API keys in argv before reading a credential", async () => {
-    const workspace = await createWorkspace("# Provider argv safety\n");
-    const output = createOutputCapture();
-    const readSecret = vi.fn(async () => "unused");
-
-    const result = await runCli(
-      [
-        "provider",
-        "connect",
-        "openai",
-        "--api-key",
-        "sk-argv-sentinel",
-        "--workspace",
-        workspace,
-      ],
-      {
-        io: {
-          stdout: output.stdout,
-          stderr: output.stderr,
-          stdinIsTTY: true,
-          readSecret,
-        },
-      },
-    );
-
-    expect(result.exitCode).toBe(1);
-    expect(readSecret).not.toHaveBeenCalled();
-    expect(output.stderrText()).toContain("API keys are not accepted in argv");
-    expect(output.stderrText()).not.toContain("sk-argv-sentinel");
-  });
-
-  it("requires an interactive terminal for OAuth provider connect", async () => {
-    const workspace = await createWorkspace("# Provider OAuth\n");
-    const output = createOutputCapture();
-    const result = await runCli(
-      [
-        "provider",
-        "connect",
-        "openrouter",
-        "--auth-method",
-        "oauth_pkce",
-        "--workspace",
-        workspace,
-      ],
-      {
-        io: {
-          stdout: output.stdout,
-          stderr: output.stderr,
-          stdinIsTTY: false,
-        },
-      },
-    );
-
-    expect(result.exitCode).toBe(1);
-    expect(output.stderrText()).toContain(
-      "OAuth provider connect requires an interactive terminal",
-    );
-  });
-
   it("rejects a model ref that is not in provider/model form", async () => {
     const output = createOutputCapture();
     const workspace = await createWorkspace("# Demo\n");
@@ -2448,17 +1930,15 @@ describe.sequential("runCli", { timeout: 15_000 }, () => {
     expect(configText).toContain("#       maxSourceChars: 60000");
     expect(configText).toContain("#     # spawnModel: openai/gpt-5.4-mini");
     expect(configText).toContain("#     # delegateModel: openai/gpt-5.4-mini");
-    expect(configText).toContain(
-      "# Optional: a non-empty models map restricts the bundled catalog.",
-    );
 
     const cwd = await harness.tempDir("sw-");
     const loaded = await loadHostConfig(cwd, {
       XDG_CONFIG_HOME: xdg,
     });
     expect(loaded.config.model).toBe("openai/gpt-5.4-mini");
-    expect(loaded.config.providers?.openai?.apiKey).toBeUndefined();
-    expect(loaded.config.providers?.openai?.models).toBeUndefined();
+    expect(loaded.config.providers?.openai?.apiKey).toBe(
+      "REPLACE_WITH_YOUR_API_KEY",
+    );
     expect(loaded.config.accessMode).toBe("ask");
     expect(loaded.config.traceLevel).toBe("standard");
     expect(loaded.config.runBudget?.maxModelCalls).toBe(80);
@@ -2714,16 +2194,13 @@ describe.sequential("runCli", { timeout: 15_000 }, () => {
     expect(output.stderrText()).toContain("No Sparkwright config found yet");
     expect(output.stderrText()).toContain(`Created user config: ${configPath}`);
     expect(output.stderrText()).toContain(
-      "sparkwright provider connect openai",
+      'set "identity.providers.openai.apiKey" or export OPENAI_API_KEY',
     );
     await expect(readFile(configPath, "utf8")).resolves.toContain(
       "# yaml-language-server: $schema=file://",
     );
     await expect(readFile(configPath, "utf8")).resolves.toContain(
       "  traceLevel: standard",
-    );
-    await expect(readFile(configPath, "utf8")).resolves.not.toContain(
-      "REPLACE_WITH_YOUR_API_KEY",
     );
   });
 
@@ -7881,7 +7358,7 @@ describe.sequential("runCli", { timeout: 15_000 }, () => {
         true,
       );
     }
-  }, 30_000);
+  }, 15_000);
 
   it("prints configured verification profile results in host runs", async () => {
     const workspace = await createWorkspace("# Demo\n");
@@ -9608,48 +9085,3 @@ describe.sequential("runCli", { timeout: 15_000 }, () => {
     _tools: string[],
   ): Promise<void> {}
 });
-
-const runCli: typeof runCliCanonical = async (argv, options = {}) => {
-  const forwardedOptions =
-    options.env &&
-    options.env.XDG_STATE_HOME === undefined &&
-    process.env.XDG_STATE_HOME
-      ? {
-          ...options,
-          env: {
-            ...options.env,
-            XDG_STATE_HOME: process.env.XDG_STATE_HOME,
-          },
-        }
-      : options;
-  if (argv[0] !== "trust") {
-    const workspaceRoot = workspaceArgument(argv);
-    if (workspaceRoot) {
-      const manager = new ProjectTrustManager({
-        env: forwardedOptions.env ?? process.env,
-      });
-      const snapshot = await manager.inspect(workspaceRoot).catch(() => null);
-      const scopes = snapshot?.scopes
-        .filter(
-          (scope) => scope.status === "untrusted" || scope.status === "changed",
-        )
-        .map((scope) => scope.scope);
-      if (snapshot && scopes && scopes.length > 0) {
-        await manager.grant({
-          workspaceRoot,
-          expectedManifestHash: snapshot.manifestHash,
-          scopes,
-        });
-      }
-    }
-  }
-  return runCliCanonical(argv, forwardedOptions);
-};
-
-function workspaceArgument(argv: readonly string[]): string | undefined {
-  const index = argv.indexOf("--workspace");
-  if (index >= 0) return argv[index + 1];
-  return argv
-    .find((value) => value.startsWith("--workspace="))
-    ?.slice("--workspace=".length);
-}

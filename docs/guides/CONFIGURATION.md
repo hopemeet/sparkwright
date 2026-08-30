@@ -13,9 +13,8 @@ field before running SparkWright.
 
 ```txt
 Personal config: ~/.config/sparkwright/config.yaml
-  Put model defaults, custom provider endpoints/options, and personal TUI
-  preferences here. Legacy API-key fields remain supported, but the preferred
-  path is `provider connect` or TUI `/connect`.
+  Put private provider settings here: model, providers, API keys, personal TUI
+  preferences. This file is created by `sparkwright init` and is chmod 600.
   Existing config.json/config.yaml/config.yml files are also loaded.
 
 Project config: <workspace>/.sparkwright/config.yaml
@@ -27,37 +26,20 @@ Temporary overrides: SPARKWRIGHT_CONFIG, environment variables, CLI flags
   Use these for one-off runs, CI jobs, or local experiments.
 ```
 
-Do not put provider API keys in project config. Prefer the Host credential
-store; user-config and environment keys remain compatibility sources.
-
-Project capability sources have an additional admission boundary. A project
-config that can select runtime/model/process/network behavior and project
-`.sparkwright/command`, `skills`, `agents`, or `workflows` files are inactive
-until their exact content manifest is trusted. Safety-tightening fields such as
-lower access/background ceilings, confidential paths, write limits, sandbox
-enforcement/deny rules, restrictive tool selectors, hardened web transport,
-and local UI preferences remain effective before trust.
-
-Use `sparkwright trust status --workspace .` to inspect the five independent
-scopes, `trust grant` after reviewing them, and `trust revoke` to remove the
-pin. A content change invalidates only the affected scope. State is stored at
-`$XDG_STATE_HOME/sparkwright/project-trust.json` (normally
-`~/.local/state/sparkwright/project-trust.json`) with mode `0600`; it contains
-canonical workspace identity, hashes, and timestamps, not capability bodies or
-provider secrets. Trust admits source into existing governance and does not
-weaken access, approval, sandbox, confidentiality, tool, or write policy.
+Do not put provider API keys in project config. Keep credentials in the user
+file or environment variables.
 
 ## Where Files Live
 
 SparkWright keeps installation, configuration, state, and project artifacts in
 separate locations:
 
-| What                                       | Default path                 | Notes                                                                                                                                                                                              |
-| ------------------------------------------ | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Program install                            | `~/.sparkwright`             | Used by source installs for `versions/`, `current`, and `bin/sparkwright`.                                                                                                                         |
-| User config and user-authored capabilities | `~/.config/sparkwright`      | Personal `config.{json,yaml,yml}`, user Skills, agents, and commands.                                                                                                                              |
-| User runtime state                         | `~/.local/state/sparkwright` | Project trust pins, non-secret provider connection/catalog metadata, TUI model favorites/recent usage, cron jobs/output, IM gateway routing state, host crash logs, and other machine-local state. |
-| Project data                               | `<workspace>/.sparkwright`   | Project config, project Skills/agents/commands, sessions, tasks, and exports.                                                                                                                      |
+| What                                       | Default path                 | Notes                                                                                       |
+| ------------------------------------------ | ---------------------------- | ------------------------------------------------------------------------------------------- |
+| Program install                            | `~/.sparkwright`             | Used by source installs for `versions/`, `current`, and `bin/sparkwright`.                  |
+| User config and user-authored capabilities | `~/.config/sparkwright`      | Personal `config.{json,yaml,yml}`, user Skills, agents, and commands.                       |
+| User runtime state                         | `~/.local/state/sparkwright` | Cron jobs/output, IM gateway routing state, host crash logs, and other machine-local state. |
+| Project data                               | `<workspace>/.sparkwright`   | Project config, project Skills/agents/commands, sessions, tasks, and exports.               |
 
 `~/.sparkwright` is not a config or state directory. Treat it as replaceable
 program files owned by source install and uninstall scripts.
@@ -99,11 +81,10 @@ files remain the precise-control layer.
 
 ## Scaffold
 
-Installing SparkWright does not write config files. The TUI can start with no
-config and use `/connect`. A first interactive CLI model run scaffolds the user
-config if none exists, then points to `provider connect`; provider-management
-commands themselves do not require scaffolding. You can also create files
-explicitly:
+Installing SparkWright does not write config files. The first interactive CLI
+or TUI run scaffolds the user config if no config exists yet, then stops and
+asks you to set a provider key or environment variable before rerunning. You
+can also create files explicitly:
 
 Scaffold the two common layers separately:
 
@@ -113,8 +94,8 @@ sparkwright init --project   # <workspace>/.sparkwright/config.yaml
 ```
 
 `sparkwright init` creates the same personal config template used by first-run
-scaffolding. Connect through `sparkwright provider connect <provider>`, use TUI
-`/connect`, or keep using environment/legacy config keys. YAML templates point
+scaffolding. Set the `apiKey` for the provider you want, or leave keys out of
+the file and use environment variables. YAML templates point
 `yaml-language-server` at the local `config.schema.json` shipped with the
 installed CLI, so editor validation works without a schema server.
 
@@ -168,7 +149,12 @@ Put this in your user config file, for example
     "model": "openai/gpt-5.4-mini",
     "providers": {
       "openai": {
-        "baseURL": "https://api.openai.com/v1"
+        "baseURL": "https://api.openai.com/v1",
+        "apiKey": "replace-me",
+        "models": {
+          "gpt-5.4-mini": {},
+          "gpt-5.4": {}
+        }
       }
     }
   }
@@ -178,128 +164,8 @@ Put this in your user config file, for example
 `OPENAI_API_KEY` overrides provider `apiKey` when set. `OPENAI_BASE_URL`
 overrides provider `baseURL` when set.
 
-For a bundled provider on its official package and endpoint, `models` may be
-omitted: SparkWright lists the bundled catalog and still uses `identity.model`
-or `--model` as the deterministic runtime selection. A non-empty `models` map
-keeps its legacy meaning as an allowlist and metadata map, so catalog additions
-outside that map remain unavailable. A custom package or endpoint does not
-inherit official catalog metadata; when it has no allowlist, an explicitly
-typed `provider/model` remains valid.
-
-For new configuration, separate selection policy from metadata:
-
-```yaml
-identity:
-  providers:
-    openai:
-      modelPolicy:
-        allow: [gpt-5.4-mini, gpt-5.4-nano]
-        deny: [gpt-5.4-nano]
-      modelOverrides:
-        gpt-5.4-mini:
-          cost:
-            input: 1.25
-```
-
-`modelPolicy.allow` is an allowlist when present; `deny` is applied afterward.
-`modelOverrides` changes cost/provider options but never admits a model. A
-provider cannot mix legacy `models` with either new field. Trusted project
-policy may narrow a user policy but cannot widen it.
-
-Connect without adding a key to config:
-
-```bash
-sparkwright provider connect openai --workspace .
-printf '%s\n' "$OPENAI_API_KEY" | \
-  sparkwright provider connect openai --api-key-stdin --workspace .
-
-# Browser OAuth with no provider YAML entry
-sparkwright provider connect openrouter --workspace .
-```
-
-On macOS, stored provider credentials use the operating-system credential
-store. Its password prompts run on an isolated system-command terminal, not the
-SparkWright CLI/TUI terminal; users should not answer separate `password data`
-or `retype password` prompts during `/connect`. If the system helper is
-unavailable or returns an unexpected prompt, connection fails without storing
-the key. Headless/non-macOS deployments must configure an available backend;
-the explicit lower-assurance fallback is
-`SPARKWRIGHT_CREDENTIAL_STORE=file`, which uses a 0600 state file. Connection
-metadata is separate and never contains the key. Config `apiKey` remains a
-legacy plaintext source.
-
-Use `sparkwright provider list --workspace .` to inspect provider models,
-non-secret status, and the opaque ids of all stored/ambient connections. Use
-`provider select <connection-id>` to switch the workspace to one exact
-connection. `provider connect|select|disconnect|remove|refresh` manages stored
-connections. Disconnect removes the current workspace grant but keeps the
-non-secret entry visible to the trusted local manager as `disconnected`, so it
-can be selected again or removed later; remove deletes the stored credential.
-`provider login|logout` remains for ambient legacy sources. Metadata is written to
-`$XDG_STATE_HOME/sparkwright/provider-auth.json` (normally
-`~/.local/state/sparkwright/provider-auth.json`) with exact driver, endpoint,
-method, grant, selection, suppression, and revision state but no credential.
-TUI `/connect` defaults new API-key connections to the official endpoint,
-offers a differing configured endpoint as an explicit labelled choice, and
-validates an editable custom endpoint before showing which hostname will
-receive the key. A selected stored connection's endpoint is immutable runtime
-authority: changing config `baseURL` affects ambient config/environment
-bindings, but cannot redirect that stored key. Use a new connection for a new
-endpoint; SparkWright never reuses the old secret automatically.
-After a connection is selected, the model step accepts either a catalog entry
-or an exact provider-local model id. For example, an OpenRouter connection can
-accept `anthropic/<model-name>` and route it as
-`openrouter/anthropic/<model-name>`. This manual path is available even when
-catalog refresh or discovery is unavailable; configured `models` allowlists and
-`modelPolicy.allow|deny` still apply in Host.
-OAuth attempts are Host-memory state bound to the initiating local connection;
-codes, PKCE verifiers, state, and tokens are not written to that metadata file.
-Completed OAuth credentials use the same OS/headless credential-store boundary
-as stored API keys. Refresh is serialized per connection and a refresh failure
-does not fall back to an environment key.
-
-Refresh code-owned model metadata with
-`sparkwright provider catalog refresh [provider] --workspace .`. The Host
-always ships an offline catalog snapshot and keeps a versioned, signed
-last-known-good base at
-`$XDG_STATE_HOME/sparkwright/provider-catalog.json`. Authenticated discovery is
-available only where a built-in official driver declares it; its model list is
-stored separately under `provider-catalog.discovery/`, scoped by workspace and
-exact connection identity. Invalid, empty, stale, failed, downgraded, or
-superseded refreshes cannot overwrite newer valid data. A stale valid cache is
-still usable and is reported as stale; if no cache is usable, the bundled
-snapshot remains active. User-defined `identity.providers`, legacy `models`,
-`modelPolicy`, and `modelOverrides` do not depend on catalog network access.
-
-Deployments may opt into full signed-catalog refresh by setting an HTTPS
-`SPARKWRIGHT_PROVIDER_CATALOG_URL` together with
-`SPARKWRIGHT_PROVIDER_CATALOG_TRUSTED_KEYS`, a JSON object mapping key ids to
-trusted PEM public keys. These are process/deployment settings, not project
-configuration. When both are present, Host checks the signed base at startup
-and every six hours, fetches only when the cache is older than one day or within
-six hours of expiry, and uses ETag revalidation. Concurrent Hosts share a
-recoverable refresh lease. This background path never reads provider
-credentials or runs account discovery. Set `SPARKWRIGHT_OFFLINE=1` to disable
-both signed-catalog and authenticated model-discovery refresh requests, or
-`SPARKWRIGHT_PROVIDER_CATALOG_AUTO_REFRESH=off` to disable only the background
-signed-catalog check. Without a URL and trusted keyring,
-startup remains network-free and the bundled snapshot is used.
-
-If an older personal config still contains `apiKey`, migrate it explicitly:
-
-```bash
-sparkwright provider migrate openai --workspace .
-# After verifying the stored connection:
-sparkwright provider migrate openai --remove-config --workspace .
-```
-
-The removal form checks the exact source value under a cross-process lock,
-writes and verifies the credential first, preserves unrelated YAML comments,
-and rolls back the new connection if config publication fails.
-
-TUI `/model` groups models by provider. Favorites (`Ctrl+F`) and recent usage
-only change picker ordering; they do not change `identity.model`, CLI defaults,
-or non-interactive selection.
+Store config files containing API keys privately. Provider keys are plaintext
+in config.
 
 ### Provider Request Options
 
@@ -309,9 +175,8 @@ model under that provider; model-level options shallow-override the matching
 provider namespace.
 
 Keep these options in the same personal provider entry as the provider's
-`baseURL`. Across config layers, a later `providers.openai` entry replaces the
-earlier provider entry rather than inheriting its secrets; project
-`modelPolicy` is the exception and is conservatively narrowed with user policy.
+`apiKey`/`baseURL`. Across config layers, a later `providers.openai` entry
+replaces the earlier provider entry rather than inheriting its secrets.
 
 For OpenAI reasoning summaries:
 
@@ -322,22 +187,15 @@ For OpenAI reasoning summaries:
     "providers": {
       "openai": {
         "baseURL": "https://api.openai.com/v1",
+        "apiKey": "replace-me",
         "providerOptions": {
           "openai": {
+            "reasoningEffort": "low",
             "reasoningSummary": "auto"
           }
         },
-        "modelPolicy": {
-          "allow": ["gpt-5.4-mini"]
-        },
-        "modelOverrides": {
-          "gpt-5.4-mini": {
-            "providerOptions": {
-              "openai": {
-                "reasoningEffort": "low"
-              }
-            }
-          }
+        "models": {
+          "gpt-5.4-mini": {}
         }
       }
     }
@@ -1037,11 +895,10 @@ Top-level `tools` is the preferred tool configuration surface.
   initial provider tool schema until discovered through `tool_search`.
 
 Selectors are: `workspace.read`, `workspace.write`, `bash`, `web`, `planning`,
-`skills`, `agents`, `tasks`, `cron`, `mcp`, `mcp:<server>`, `extensions`, and
-`extension:<id>`. Multiple selectors in one file are a union; multiple config
-layers intersect, so a project can narrow a user setting. For example, user
-`use: ["extensions"]` plus project `use: ["extension:workspace.notes"]` yields
-only that registered extension's tools.
+`skills`, `agents`, `tasks`, `cron`, `mcp`, and `mcp:<server>`. Multiple
+selectors in one file are a union; multiple config layers intersect, so a
+project can narrow a user setting. For example, user `use: ["mcp"]` plus project
+`use: ["mcp:demo"]` yields only the `demo` MCP server tools.
 Model-backed implementation delegates should usually select both
 `workspace.read` and `workspace.write`; write-only delegates often cannot find
 safe patch anchors. Delegates that select `bash` still require a write-enabled

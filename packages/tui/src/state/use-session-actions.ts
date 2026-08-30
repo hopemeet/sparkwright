@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
-import type { SessionForkPoint } from "@sparkwright/protocol";
 import type { InputBoxHandle } from "../components/input-box.js";
 import {
   loadSessionLabels,
@@ -32,7 +31,7 @@ export interface SessionActions {
   renameCurrentSession: () => void;
   commitRename: (id: string, label: string) => void;
   forkSession: (
-    forkPoint: SessionForkPoint | undefined,
+    forkAtSequence: number | undefined,
     label: string,
     edit?: boolean,
   ) => void;
@@ -123,13 +122,13 @@ export function useSessionActions(deps: {
   }
 
   function forkSession(
-    forkPoint: SessionForkPoint | undefined,
+    forkAtSequence: number | undefined,
     label: string,
     edit?: boolean,
   ): void {
     const src = sessionId;
     if (!src) return;
-    void controller.forkSession(src, forkPoint).then((res) => {
+    void controller.forkSession(src, forkAtSequence).then((res) => {
       if (!res) return;
       layers.pop("fork");
       // Switch to the fork AND load its (copied) history so the branched
@@ -140,7 +139,7 @@ export function useSessionActions(deps: {
         toasts.push({
           variant: "success",
           title: edit ? "forked — edit & resend" : "forked",
-          message: `${res.forkedSessionId} (${res.copiedRunCount} runs copied)`,
+          message: `${res.forkedSessionId} (${res.copiedEventCount} events copied)`,
         });
       });
     });

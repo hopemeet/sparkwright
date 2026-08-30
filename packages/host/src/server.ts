@@ -9,7 +9,6 @@ import {
   ACCESS_MODES,
   BACKGROUND_TASK_POLICIES,
   IM_SESSION_PERMISSIONS,
-  PROJECT_TRUST_SCOPES,
   PROTOCOL_VERSION,
   TASK_STATUSES,
   TRACE_LEVELS,
@@ -22,7 +21,6 @@ import {
   nowIso,
   unauthenticatedConnection,
   type HostConnectionAuthContext,
-  type HostConnectionAuthority,
 } from "./connection.js";
 import { HostRuntime } from "./runtime/host-runtime.js";
 import type { RuntimeOptions } from "./runtime/contracts.js";
@@ -40,8 +38,6 @@ export interface ServeConnectionOptions {
   defaultBackgroundTasks?: RuntimeOptions["defaultBackgroundTasks"];
   backgroundTasksCeiling?: RuntimeOptions["backgroundTasksCeiling"];
   defaultTraceLevel?: RuntimeOptions["defaultTraceLevel"];
-  /** In-process extensions supplied by a trusted embedder. */
-  extensions?: RuntimeOptions["extensions"];
   hostName?: string;
   hostVersion?: string;
   /** Stable transport/auth-derived principal id for this connection. */
@@ -67,19 +63,7 @@ export function serveConnection(
   const authContext =
     opts.authContext ??
     (opts.principalId
-      ? authenticatedConnection(
-          opts.principalId,
-          "trusted-embedder",
-          "host_client",
-          [
-            "provider_catalog.read",
-            "provider_connection.manage",
-            "provider_secret.submit",
-            "provider_auth.manage",
-            "project_trust.manage",
-          ],
-          "embedded",
-        )
+      ? authenticatedConnection(opts.principalId, "trusted-embedder")
       : unauthenticatedConnection("unspecified-transport"));
   const principal: HostImPrincipal = {
     id:
@@ -103,7 +87,6 @@ export function serveConnection(
     defaultBackgroundTasks: opts.defaultBackgroundTasks,
     backgroundTasksCeiling: opts.backgroundTasksCeiling,
     defaultTraceLevel: opts.defaultTraceLevel,
-    extensions: opts.extensions,
     approvalTimeoutMs: opts.approvalTimeoutMs,
     emit: (event: HostEvent) => {
       try {
@@ -115,10 +98,6 @@ export function serveConnection(
   });
 
   conn.onClose(() => {
-    void runtime.cancelProviderOAuthAttempts({
-      principalId: principal.id,
-      clientConnectionId: conn.id,
-    });
     hostService.releaseRuntime(runtime);
   });
 
@@ -147,16 +126,7 @@ export function serveConnection(
       return;
     }
 
-    handleRequest(
-      conn,
-      runtime,
-      hostService,
-      principal,
-      authContext.authorities,
-      authContext.transport,
-      message,
-      opts,
-    )
+    handleRequest(conn, runtime, hostService, principal, message, opts)
       .then((didHandshake) => {
         if (didHandshake) handshakeState = "complete";
         else if (message.kind === "handshake") handshakeState = "pending";
@@ -176,8 +146,6 @@ async function handleRequest(
   runtime: HostRuntime,
   hostService: HostService,
   principal: HostImPrincipal,
-  authorities: readonly HostConnectionAuthority[],
-  transport: HostConnectionAuthContext["transport"],
   req: HostRequest,
   opts: ServeConnectionOptions,
 ): Promise<boolean> {
@@ -203,13 +171,6 @@ async function handleRequest(
         return false;
       }
       principal.clientName = req.payload.client.name;
-      if (
-        (hasAuthority(authorities, "provider_auth.manage") ||
-          hasAuthority(authorities, "provider_connection.manage")) &&
-        req.payload.capabilities?.includes("provider.auth.interactive")
-      ) {
-        runtime.enableInteractiveProviderAuth();
-      }
       Object.freeze(principal);
       respondOk(conn, req.id, {});
       conn.send({
@@ -240,38 +201,6 @@ async function handleRequest(
             "workflow.resume",
             "workflow.control",
             "workflow.control.process",
-            "provider.list",
-            "provider.auth.methods",
-            ...(hasAuthority(authorities, "provider_connection.manage")
-              ? [
-                  "provider.auth.begin",
-                  "provider.auth.status",
-                  "provider.auth.complete",
-                  "provider.auth.cancel",
-                  "provider.connection.select",
-                  "provider.connection.disconnect",
-                  "provider.connection.logout",
-                  "provider.connection.remove",
-                  "provider.connection.refresh",
-                  "provider.catalog.refresh",
-                ]
-              : []),
-            ...(hasAuthority(authorities, "provider_secret.submit") &&
-            transport !== "remote"
-              ? ["provider.auth.submit_secret"]
-              : []),
-            ...(hasAuthority(authorities, "provider_auth.manage") ||
-            hasAuthority(authorities, "provider_connection.manage")
-              ? [
-                  "provider.auth.login",
-                  "provider.auth.logout",
-                  "provider.auth.refresh",
-                ]
-              : []),
-            "project.trust.inspect",
-            ...(hasAuthority(authorities, "project_trust.manage")
-              ? ["project.trust.grant", "project.trust.revoke"]
-              : []),
             "capability.inspect",
             "run.resume",
             "run.inject_message",
@@ -306,11 +235,7 @@ async function handleRequest(
       return false;
     }
     case "run.inject_message": {
-      const commandId = req.payload.commandId ?? nextMessageId("command");
-      const mode = req.payload.mode ?? "steer";
       const r = runtime.injectRunMessage(req.payload.runId, {
-        commandId,
-        mode,
         content: req.payload.content,
         parts: req.payload.input?.parts,
         metadata: {
@@ -318,13 +243,8 @@ async function handleRequest(
           ...(req.payload.metadata ?? {}),
         },
       });
-      if (r.ok) {
-        respondOk(conn, req.id, {
-          commandId: r.commandId,
-          mode: r.mode,
-          status: r.status,
-        });
-      } else respondError(conn, req.id, r.error);
+      if (r.ok) respondOk(conn, req.id, {});
+      else respondError(conn, req.id, r.error);
       return false;
     }
     case "run.cancel": {
@@ -437,12 +357,13 @@ async function handleRequest(
       return false;
     }
     case "session.fork": {
-      const r = await runtime.forkSession(req.payload);
+      const r = await runtime.forkSession(
+        req.payload.sourceSessionId,
+        req.payload.forkAtSequence,
+      );
       if (r.ok) {
         respondOk(conn, req.id, {
           forkedSessionId: r.forkedSessionId,
-          copiedRunCount: r.copiedRunCount,
-          forkPoint: r.forkPoint,
           copiedEventCount: r.copiedEventCount,
           truncatedAtSequence: r.truncatedAtSequence,
         });
@@ -605,216 +526,6 @@ async function handleRequest(
       }
       return false;
     }
-    case "provider.list": {
-      const r = await runtime.listProviders(req.payload, {
-        connectionVisibility:
-          transport !== "remote" &&
-          hasAuthority(authorities, "provider_connection.manage")
-            ? "managed"
-            : "granted",
-      });
-      if (r.ok) {
-        respondOk(
-          conn,
-          req.id,
-          r.catalog as unknown as Record<string, unknown>,
-        );
-      } else {
-        respondError(conn, req.id, r.error);
-      }
-      return false;
-    }
-    case "provider.catalog.refresh": {
-      if (
-        transport === "remote" ||
-        !hasAuthority(authorities, "provider_connection.manage")
-      ) {
-        respondError(conn, req.id, {
-          code: "unauthorized",
-          message: "provider catalog refresh requires a trusted local client",
-        });
-        return false;
-      }
-      const result = await runtime.refreshProviderCatalog(
-        req.payload.providerId,
-      );
-      if (result.ok) {
-        respondOk(
-          conn,
-          req.id,
-          result.result as unknown as Record<string, unknown>,
-        );
-      } else respondError(conn, req.id, result.error);
-      return false;
-    }
-    case "provider.auth.methods": {
-      const result = await runtime.listProviderAuthMethods(
-        req.payload.providerId,
-        req.payload.endpoint,
-      );
-      if (result.ok) {
-        respondOk(
-          conn,
-          req.id,
-          result.methods as unknown as Record<string, unknown>,
-        );
-      } else respondError(conn, req.id, result.error);
-      return false;
-    }
-    case "provider.auth.begin":
-    case "provider.auth.status":
-    case "provider.auth.complete":
-    case "provider.auth.cancel": {
-      if (
-        transport === "remote" ||
-        !hasAuthority(authorities, "provider_connection.manage")
-      ) {
-        respondError(conn, req.id, {
-          code: "unauthorized",
-          message: "OAuth login requires a trusted local client",
-        });
-        return false;
-      }
-      const owner = {
-        principalId: principal.id,
-        clientConnectionId: conn.id,
-      };
-      const result =
-        req.kind === "provider.auth.begin"
-          ? await runtime.beginProviderOAuth({ ...req.payload, ...owner })
-          : req.kind === "provider.auth.status"
-            ? await runtime.inspectProviderOAuth({ ...req.payload, ...owner })
-            : req.kind === "provider.auth.complete"
-              ? await runtime.completeProviderOAuth({
-                  ...req.payload,
-                  ...owner,
-                })
-              : await runtime.cancelProviderOAuth({
-                  ...req.payload,
-                  ...owner,
-                });
-      if (result.ok) respondOk(conn, req.id, { attempt: result.attempt });
-      else respondError(conn, req.id, result.error);
-      return false;
-    }
-    case "provider.auth.submit_secret": {
-      if (
-        transport === "remote" ||
-        !hasAuthority(authorities, "provider_secret.submit")
-      ) {
-        respondError(conn, req.id, {
-          code: "unauthorized",
-          message:
-            "provider secrets may be submitted only by a trusted local client",
-        });
-        return false;
-      }
-      const result = await runtime.submitProviderSecret(req.payload);
-      if (result.ok) {
-        respondOk(conn, req.id, {
-          connection: result.connection,
-          revision: result.revision,
-        });
-      } else respondError(conn, req.id, result.error);
-      return false;
-    }
-    case "provider.auth.login":
-    case "provider.auth.logout":
-    case "provider.auth.refresh": {
-      if (
-        !hasAuthority(authorities, "provider_auth.manage") &&
-        !hasAuthority(authorities, "provider_connection.manage")
-      ) {
-        respondError(conn, req.id, {
-          code: "unauthorized",
-          message: "provider auth changes require a local trusted client",
-        });
-        return false;
-      }
-      const action = req.kind.slice("provider.auth.".length) as
-        | "login"
-        | "logout"
-        | "refresh";
-      const r = await runtime.updateProviderAuth(action, req.payload.profileId);
-      if (r.ok) {
-        respondOk(conn, req.id, {
-          profile: r.profile,
-        });
-      } else {
-        respondError(conn, req.id, r.error);
-      }
-      return false;
-    }
-    case "provider.connection.select":
-    case "provider.connection.disconnect":
-    case "provider.connection.logout":
-    case "provider.connection.remove":
-    case "provider.connection.refresh": {
-      if (!hasAuthority(authorities, "provider_connection.manage")) {
-        respondError(conn, req.id, {
-          code: "unauthorized",
-          message: "provider connection changes require a local trusted client",
-        });
-        return false;
-      }
-      const action = req.kind.slice("provider.connection.".length) as
-        | "select"
-        | "disconnect"
-        | "logout"
-        | "remove"
-        | "refresh";
-      const result = await runtime.manageProviderConnection({
-        action,
-        connectionId: req.payload.connectionId,
-        ...(req.kind === "provider.connection.select" && req.payload.grantScope
-          ? { grantScope: req.payload.grantScope }
-          : {}),
-      });
-      if (result.ok) {
-        respondOk(conn, req.id, {
-          ...(result.connection ? { connection: result.connection } : {}),
-          connectionId: result.connectionId,
-          revision: result.revision,
-        });
-      } else respondError(conn, req.id, result.error);
-      return false;
-    }
-    case "project.trust.inspect": {
-      const result = await runtime.inspectProjectTrust();
-      if (result.ok) {
-        respondOk(
-          conn,
-          req.id,
-          result.snapshot as unknown as Record<string, unknown>,
-        );
-      } else respondError(conn, req.id, result.error);
-      return false;
-    }
-    case "project.trust.grant":
-    case "project.trust.revoke": {
-      if (!hasAuthority(authorities, "project_trust.manage")) {
-        respondError(conn, req.id, {
-          code: "unauthorized",
-          message: "project trust changes require a local trusted client",
-        });
-        return false;
-      }
-      const result = await runtime.updateProjectTrust({
-        action: req.kind === "project.trust.grant" ? "grant" : "revoke",
-        ...(req.kind === "project.trust.grant"
-          ? { expectedManifestHash: req.payload.expectedManifestHash }
-          : {}),
-        ...(req.payload.scopes ? { scopes: req.payload.scopes } : {}),
-      });
-      if (result.ok) {
-        respondOk(
-          conn,
-          req.id,
-          result.snapshot as unknown as Record<string, unknown>,
-        );
-      } else respondError(conn, req.id, result.error);
-      return false;
-    }
     case "capability.inspect": {
       const r = await runtime.inspectCapabilities(req.payload);
       if (r.ok)
@@ -859,7 +570,6 @@ function validateRequestPayload(req: HostRequest): string | undefined {
       return (
         requireOnly(req.payload, [
           "goal",
-          "projectCommand",
           "sessionId",
           "controlSessionId",
           "targetPath",
@@ -873,7 +583,6 @@ function validateRequestPayload(req: HostRequest): string | undefined {
           "metadata",
         ]) ??
         requireString(req.payload, "goal") ??
-        validateProjectCommandReference(req.payload) ??
         optionalString(req.payload, "sessionId") ??
         optionalString(req.payload, "controlSessionId") ??
         optionalString(req.payload, "targetPath") ??
@@ -921,19 +630,9 @@ function validateRequestPayload(req: HostRequest): string | undefined {
       );
     case "run.inject_message":
       return (
-        requireOnly(req.payload, [
-          "runId",
-          "commandId",
-          "mode",
-          "content",
-          "input",
-          "metadata",
-        ]) ??
+        requireOnly(req.payload, ["runId", "content", "metadata"]) ??
         requireString(req.payload, "runId") ??
-        optionalString(req.payload, "commandId") ??
-        optionalEnum(req.payload, "mode", ["steer", "follow_up"]) ??
         requireString(req.payload, "content") ??
-        optionalRecord(req.payload, "input") ??
         optionalIdentitySafeMetadata(req.payload, "metadata")
       );
     case "run.cancel":
@@ -1047,13 +746,8 @@ function validateRequestPayload(req: HostRequest): string | undefined {
       );
     case "session.fork":
       return (
-        requireOnly(req.payload, [
-          "sourceSessionId",
-          "forkPoint",
-          "forkAtSequence",
-        ]) ??
+        requireOnly(req.payload, ["sourceSessionId", "forkAtSequence"]) ??
         requireString(req.payload, "sourceSessionId") ??
-        validateSessionForkPoint(req.payload) ??
         optionalPositiveInteger(
           req.payload,
           "forkAtSequence",
@@ -1162,105 +856,6 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         optionalString(req.payload, "sessionId") ??
         requireString(req.payload, "commandId")
       );
-    case "provider.list":
-      return (
-        requireOnly(req.payload, ["model", "projection"]) ??
-        optionalString(req.payload, "model") ??
-        optionalEnum(req.payload, "projection", [
-          "all",
-          "connected",
-          "available",
-        ])
-      );
-    case "provider.catalog.refresh":
-      return (
-        requireOnly(req.payload, ["providerId"]) ??
-        optionalString(req.payload, "providerId")
-      );
-    case "provider.auth.methods":
-      return (
-        requireOnly(req.payload, ["providerId", "endpoint"]) ??
-        requireString(req.payload, "providerId") ??
-        optionalString(req.payload, "endpoint")
-      );
-    case "provider.auth.begin":
-      return (
-        requireOnly(req.payload, [
-          "providerId",
-          "methodId",
-          "promptValues",
-          "grantScope",
-        ]) ??
-        requireString(req.payload, "providerId") ??
-        requireString(req.payload, "methodId") ??
-        optionalStringRecord(req.payload, "promptValues") ??
-        optionalEnum(req.payload, "grantScope", ["workspace", "user"])
-      );
-    case "provider.auth.status":
-    case "provider.auth.cancel":
-      return (
-        requireOnly(req.payload, ["attemptId"]) ??
-        requireString(req.payload, "attemptId")
-      );
-    case "provider.auth.complete":
-      return (
-        requireOnly(req.payload, ["attemptId", "code", "state", "nonce"]) ??
-        requireString(req.payload, "attemptId") ??
-        requireString(req.payload, "code") ??
-        optionalString(req.payload, "state") ??
-        optionalString(req.payload, "nonce")
-      );
-    case "provider.auth.submit_secret":
-      return (
-        requireOnly(req.payload, [
-          "providerId",
-          "methodId",
-          "endpoint",
-          "secret",
-          "grantScope",
-        ]) ??
-        requireString(req.payload, "providerId") ??
-        requireString(req.payload, "methodId") ??
-        optionalString(req.payload, "endpoint") ??
-        requireString(req.payload, "secret") ??
-        optionalEnum(req.payload, "grantScope", ["workspace", "user"])
-      );
-    case "provider.auth.login":
-    case "provider.auth.logout":
-    case "provider.auth.refresh":
-      return (
-        requireOnly(req.payload, ["profileId"]) ??
-        requireString(req.payload, "profileId")
-      );
-    case "provider.connection.select":
-      return (
-        requireOnly(req.payload, ["connectionId", "grantScope"]) ??
-        requireString(req.payload, "connectionId") ??
-        optionalEnum(req.payload, "grantScope", ["workspace", "user"])
-      );
-    case "provider.connection.disconnect":
-    case "provider.connection.logout":
-    case "provider.connection.remove":
-    case "provider.connection.refresh":
-      return (
-        requireOnly(req.payload, ["connectionId"]) ??
-        requireString(req.payload, "connectionId")
-      );
-    case "project.trust.inspect":
-      return requireOnly(req.payload, []);
-    case "project.trust.grant":
-      return (
-        requireOnly(req.payload, ["expectedManifestHash", "scopes"]) ??
-        requireString(req.payload, "expectedManifestHash") ??
-        optionalStringArray(req.payload, "scopes") ??
-        optionalEnumArray(req.payload, "scopes", [...PROJECT_TRUST_SCOPES])
-      );
-    case "project.trust.revoke":
-      return (
-        requireOnly(req.payload, ["scopes"]) ??
-        optionalStringArray(req.payload, "scopes") ??
-        optionalEnumArray(req.payload, "scopes", [...PROJECT_TRUST_SCOPES])
-      );
     case "capability.inspect":
       return (
         requireOnly(req.payload, [
@@ -1277,29 +872,6 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         ])
       );
   }
-}
-
-function hasAuthority(
-  authorities: readonly HostConnectionAuthority[],
-  authority: HostConnectionAuthority,
-): boolean {
-  return authorities.includes(authority);
-}
-
-function optionalEnumArray(
-  record: Record<string, unknown>,
-  key: string,
-  allowed: readonly string[],
-): string | undefined {
-  const value = record[key];
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value)) return `${key} must be an array`;
-  const invalid = value.filter(
-    (entry) => typeof entry !== "string" || !allowed.includes(entry),
-  );
-  return invalid.length > 0
-    ? `${key} contains invalid value(s): ${invalid.join(", ")}`
-    : undefined;
 }
 
 function validateWorkflowControlCommand(value: unknown): string | undefined {
@@ -1378,21 +950,6 @@ function optionalRecord(
   const value = record[key];
   if (value === undefined) return undefined;
   return isRecord(value) ? undefined : `${key} must be an object`;
-}
-
-function optionalStringRecord(
-  record: Record<string, unknown>,
-  key: string,
-): string | undefined {
-  const recordError = optionalRecord(record, key);
-  if (recordError) return recordError;
-  const value = record[key];
-  if (value === undefined) return undefined;
-  return Object.values(value as Record<string, unknown>).every(
-    (entry) => typeof entry === "string",
-  )
-    ? undefined
-    : `${key} values must be strings`;
 }
 
 const RESERVED_IDENTITY_FIELDS = new Set([
@@ -1500,43 +1057,6 @@ function validateImSubject(value: unknown): string | undefined {
     optionalString(subject, "threadId") ??
     requireString(subject, "userId")
   );
-}
-
-function validateSessionForkPoint(
-  payload: Record<string, unknown>,
-): string | undefined {
-  if (payload.forkPoint !== undefined && payload.forkAtSequence !== undefined) {
-    return "forkPoint and forkAtSequence are mutually exclusive";
-  }
-  if (payload.forkPoint === undefined) return undefined;
-  if (!isRecord(payload.forkPoint)) return "forkPoint must be an object";
-  return (
-    requireOnly(payload.forkPoint, ["runId", "position"]) ??
-    requireString(payload.forkPoint, "runId") ??
-    (payload.forkPoint.position === "before" ||
-    payload.forkPoint.position === "after"
-      ? undefined
-      : 'forkPoint.position must be "before" or "after"')
-  );
-}
-
-function validateProjectCommandReference(
-  payload: Record<string, unknown>,
-): string | undefined {
-  if (payload.projectCommand === undefined) return undefined;
-  if (!isRecord(payload.projectCommand)) {
-    return "projectCommand must be an object";
-  }
-  const command = payload.projectCommand;
-  const shapeError =
-    requireOnly(command, ["name", "rest"]) ?? requireString(command, "name");
-  if (shapeError) return shapeError;
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(String(command.name))) {
-    return "projectCommand.name must contain only letters, digits, dot, underscore, or hyphen";
-  }
-  return command.rest === undefined || typeof command.rest === "string"
-    ? undefined
-    : "projectCommand.rest must be a string";
 }
 
 function optionalPositiveInteger(

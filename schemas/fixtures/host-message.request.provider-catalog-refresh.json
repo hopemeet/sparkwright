@@ -1,9 +1,0 @@
-{
-  "envelope": "request",
-  "id": "req_provider_catalog_refresh_1",
-  "kind": "provider.catalog.refresh",
-  "timestamp": "2026-08-09T00:00:00.000Z",
-  "payload": {
-    "providerId": "openrouter"
-  }
-}

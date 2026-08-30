@@ -9,13 +9,11 @@ export interface LayerPayloads {
   sessions: undefined;
   activity: { tab: ActivityTab };
   model: undefined;
-  connect: undefined;
   fork: undefined;
   help: undefined;
   workflow: { workflowId: string };
   config: undefined;
   notifications: undefined;
-  trust: undefined;
   capabilities: { view: CapabilityView };
   create: { kind?: CreateCapabilityKind };
   "session-rename": undefined;
@@ -44,7 +42,7 @@ type PayloadArgs<K extends LayerName> = LayerPayloads[K] extends undefined
 const ROUTE_ORDER: readonly (readonly LayerName[])[] = [
   ["help", "config", "notifications"],
   ["workflow"],
-  ["capabilities", "create", "model", "connect", "trust"],
+  ["capabilities", "create", "model"],
   ["sessions", "fork"],
   ["activity"],
   ["session-rename"],

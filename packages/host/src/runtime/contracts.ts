@@ -1,14 +1,9 @@
-import type {
-  BackgroundTaskPolicy,
-  ExtensionRegistration,
-  RunAccessMode,
-} from "@sparkwright/core";
+import type { BackgroundTaskPolicy, RunAccessMode } from "@sparkwright/core";
 import type { McpServerConfig } from "@sparkwright/mcp-adapter";
 import type {
   HostEvent,
   ProtocolError,
   RunInputPart,
-  RunMessageMode,
   RunResumeRequestPayload,
   RunStartRequestPayload,
   TraceLevel,
@@ -16,8 +11,6 @@ import type {
 import type { ExecutionHandle } from "@sparkwright/server-runtime";
 import type { WorkspaceContext } from "../workspace-context.js";
 import type { WorkspaceLeaseCoordinator } from "../workspace-lease-coordinator.js";
-import type { ProviderAuthManager } from "../provider-auth.js";
-import type { ProjectTrustManager } from "../project-trust.js";
 
 export interface RuntimeOptions {
   /** Workspace root for all runs spawned through this runtime. */
@@ -38,8 +31,6 @@ export interface RuntimeOptions {
   defaultTraceLevel?: TraceLevel;
   /** Session-scoped MCP servers supplied by an embedding protocol (for example ACP). */
   extraMcpServers?: readonly McpServerConfig[];
-  /** In-process extensions prepared into governed context and tool inputs. */
-  extensions?: readonly ExtensionRegistration[];
   /** Called to deliver host events to the client. */
   emit: (event: HostEvent) => void;
   /** @internal Finite live approval wait; defaults to five minutes. */
@@ -51,13 +42,9 @@ export interface HostRuntimeOptions extends RuntimeOptions {
   workspaceLeaseCoordinator: WorkspaceLeaseCoordinator;
   workspaceContext: WorkspaceContext;
   executionCoordinator: HostExecutionCoordinatorPort;
-  providerAuth: ProviderAuthManager;
-  projectTrust: ProjectTrustManager;
 }
 
 export interface HostExecutionMessageInput {
-  commandId: string;
-  mode: RunMessageMode;
   content: string;
   parts?: readonly RunInputPart[];
   metadata?: Record<string, unknown>;
@@ -89,15 +76,6 @@ export type HostRunControlOutcome =
   | { ok: true }
   | { ok: false; error: ProtocolError };
 
-export type HostInjectMessageOutcome =
-  | {
-      ok: true;
-      commandId: string;
-      mode: RunMessageMode;
-      status: "queued" | "applied";
-    }
-  | { ok: false; error: ProtocolError };
-
 export interface HostExecutionIdentity {
   executionId: string;
   sessionId?: string;
@@ -107,12 +85,6 @@ export interface HostExecutionIdentity {
 
 /** Narrow execution surface driven by the process-scoped lane coordinator. */
 export interface HostExecutionCoordinatorRuntime {
-  followUpDefaults(
-    runId: string,
-  ): Pick<
-    RunStartRequestPayload,
-    "model" | "accessMode" | "backgroundTasks" | "traceLevel"
-  >;
   startExecution(
     payload: RunStartRequestPayload,
     executionId?: string,
@@ -151,7 +123,7 @@ export interface HostExecutionCoordinatorPort {
     runtime: HostExecutionCoordinatorRuntime,
     runId: string,
     input: HostExecutionMessageInput,
-  ): HostInjectMessageOutcome;
+  ): HostRunControlOutcome;
   cancelRun(
     runtime: HostExecutionCoordinatorRuntime,
     runId: string,

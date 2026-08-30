@@ -32,7 +32,10 @@ import { useTaskActions } from "./state/use-task-actions.js";
 import { useWorkflowActions } from "./state/use-workflow-actions.js";
 import { buildCommandRegistry } from "./state/build-command-registry.js";
 import type { ProjectCommandDescriptor } from "@sparkwright/project-commands";
-import { loadProjectCommands } from "./lib/project-commands.js";
+import {
+  loadProjectCommands,
+  resolveProjectCommandIntent,
+} from "./lib/project-commands.js";
 import {
   DEFAULTS as DEFAULT_BINDINGS,
   isPlainEscapeChord,
@@ -42,13 +45,7 @@ import {
   InteractionRouter,
   type InteractionAction,
 } from "./lib/interaction-router.js";
-import type {
-  PermissionMode,
-  ProviderCatalogSnapshot,
-  ProjectCommandReference,
-  ProjectTrustSnapshot,
-  TraceLevel,
-} from "@sparkwright/protocol";
+import type { PermissionMode, TraceLevel } from "@sparkwright/protocol";
 import {
   loadTuiConfig,
   watchTuiConfig,
@@ -66,11 +63,6 @@ import {
 import { assembleTranscriptDocument } from "./lib/transcript-document.js";
 import { layoutTranscriptDocument } from "./lib/transcript-layout.js";
 import { inkScreenRows } from "./lib/terminal-screen-layout.js";
-import {
-  EMPTY_MODEL_PREFERENCES,
-  loadModelPreferences,
-  type ModelPreferences,
-} from "./lib/model-preferences.js";
 import {
   initialTranscriptViewportState,
   moveTranscriptViewportToEnd,
@@ -194,15 +186,7 @@ function modelCandidates(providers: Resolved["providers"]): string[] {
   if (!providers) return [];
   const refs: string[] = [];
   for (const [providerKey, provider] of Object.entries(providers)) {
-    const legacyIds = Object.keys(provider.models ?? {});
-    const modelIds =
-      legacyIds.length > 0
-        ? legacyIds
-        : (provider.modelPolicy?.allow ??
-          Object.keys(provider.modelOverrides ?? {}));
-    const denied = new Set(provider.modelPolicy?.deny ?? []);
-    for (const modelId of modelIds) {
-      if (denied.has(modelId)) continue;
+    for (const modelId of Object.keys(provider.models ?? {})) {
       refs.push(`${providerKey}/${modelId}`);
     }
   }
@@ -214,8 +198,7 @@ export function App(props: AppProps): React.ReactElement {
 
   useEffect(() => {
     let cancelled = false;
-    const configRoot = props.cliOverrides.workspaceRoot ?? props.initialCwd;
-    void loadTuiConfig(configRoot).then((loaded) => {
+    void loadTuiConfig(props.initialCwd).then((loaded) => {
       if (cancelled) return;
       const r = resolveConfig(loaded, props.cliOverrides, props.initialCwd);
       setResolved(r);
@@ -318,47 +301,6 @@ function AppReady(
     modelName?: string;
   } | null>(null);
   const effModel = modelOverride ? modelOverride.modelName : resolved.modelName;
-  const [providerCatalog, setProviderCatalog] =
-    useState<ProviderCatalogSnapshot | null>(null);
-  const modelPreferencesRef = useRef<ModelPreferences | null>(null);
-  const [modelPreferences, setModelPreferences] = useState(
-    EMPTY_MODEL_PREFERENCES,
-  );
-  useEffect(() => {
-    let active = true;
-    void loadModelPreferences().then((preferences) => {
-      if (!active) return;
-      modelPreferencesRef.current = preferences;
-      setModelPreferences(preferences.snapshot());
-    });
-    return () => {
-      active = false;
-    };
-  }, []);
-  const [loadingProviders, setLoadingProviders] = useState(false);
-  const [projectTrust, setProjectTrust] = useState<ProjectTrustSnapshot | null>(
-    null,
-  );
-  const [loadingProjectTrust, setLoadingProjectTrust] = useState(false);
-  useEffect(() => {
-    if (topLayer?.name !== "model" && topLayer?.name !== "connect") return;
-    let cancelled = false;
-    const projection = topLayer.name === "connect" ? "all" : "available";
-    const load = async () => {
-      const catalog = await controller.listProviders(effModel, projection);
-      if (cancelled) return;
-      setProviderCatalog(catalog);
-      setLoadingProviders(false);
-    };
-    setLoadingProviders(true);
-    void load();
-    const poll = setInterval(() => void load(), 1_000);
-    poll.unref?.();
-    return () => {
-      cancelled = true;
-      clearInterval(poll);
-    };
-  }, [controller, effModel, topLayer?.name]);
   const [permissionModeOverride, setPermissionModeOverride] =
     useState<TuiPermissionMode | null>(null);
   const requestedEffTuiPermissionMode =
@@ -532,8 +474,7 @@ function AppReady(
   }, [resolved.errors, toasts]);
 
   async function reloadConfig(verbose: boolean): Promise<void> {
-    const configRoot = props.cliOverrides.workspaceRoot ?? props.initialCwd;
-    const loaded = await loadTuiConfig(configRoot);
+    const loaded = await loadTuiConfig(props.initialCwd);
     const r = resolveConfig(loaded, props.cliOverrides, props.initialCwd);
     if (!modelOverride && r.modelName !== resolved.modelName) {
       controller.updateModel(r.modelName, r.modelNameSource);
@@ -614,8 +555,7 @@ function AppReady(
 
   useEffect(() => {
     if (!isRawModeSupported) return;
-    const configRoot = props.cliOverrides.workspaceRoot ?? props.initialCwd;
-    const dispose = watchTuiConfig(configRoot, () => {
+    const dispose = watchTuiConfig(props.initialCwd, () => {
       void reloadConfig(true);
     });
     return dispose;
@@ -640,79 +580,26 @@ function AppReady(
     };
   }, [resolved.workspaceRoot]);
 
-  const projectSubmitRef = useRef<
-    (goal: string, command: ProjectCommandReference) => void
-  >(() => {});
+  // Keep a live ref to handleSubmit so project commands (captured in the memo)
+  // always submit through the current render's queue/run state, not a stale one.
+  const submitRef = useRef<(value: string) => void>(() => {});
   useEffect(() => {
-    projectSubmitRef.current = submitProjectCommand;
+    submitRef.current = handleSubmit;
   });
 
   function runProjectCommand(
     descriptor: ProjectCommandDescriptor,
     rest: string,
   ): void {
-    void (async () => {
-      if (descriptor.source === "project") {
-        const snapshot =
-          projectTrust ?? (await controller.inspectProjectTrust());
-        if (snapshot) setProjectTrust(snapshot);
-        const commandsTrusted = snapshot?.scopes.some(
-          (scope) =>
-            scope.scope === "commands" &&
-            (scope.status === "trusted" || scope.status === "not_present"),
-        );
-        if (!commandsTrusted) {
-          layers.push("trust");
-          toasts.push({
-            variant: "warning",
-            title: "project trust required",
-            message: `review /${descriptor.name} capability trust, then run it again`,
-          });
-          return;
-        }
-      }
-      const trimmedRest = rest.trim();
-      const goal = `/${descriptor.name}${trimmedRest ? ` ${trimmedRest}` : ""}`;
-      projectSubmitRef.current(goal, {
-        name: descriptor.name,
-        ...(trimmedRest ? { rest: trimmedRest } : {}),
+    void resolveProjectCommandIntent(descriptor, rest, resolved.workspaceRoot)
+      .then((intent) => submitRef.current(intent.prompt))
+      .catch((error: unknown) => {
+        toasts.push({
+          variant: "error",
+          title: `/${descriptor.name} failed`,
+          message: error instanceof Error ? error.message : String(error),
+        });
       });
-    })();
-  }
-
-  function openProjectTrust(): void {
-    layers.push("trust");
-    setLoadingProjectTrust(true);
-    void controller.inspectProjectTrust().then((snapshot) => {
-      if (snapshot) setProjectTrust(snapshot);
-      setLoadingProjectTrust(false);
-    });
-  }
-
-  function grantProjectTrust(expectedManifestHash: string): void {
-    setLoadingProjectTrust(true);
-    void controller
-      .grantProjectTrust(expectedManifestHash)
-      .then(async (snapshot) => {
-        if (snapshot) {
-          setProjectTrust(snapshot);
-          store.appendNotice(`project trust -> ${snapshot.status}`);
-          await reloadConfig(false);
-        }
-        setLoadingProjectTrust(false);
-      });
-  }
-
-  function revokeProjectTrust(): void {
-    setLoadingProjectTrust(true);
-    void controller.revokeProjectTrust().then(async (snapshot) => {
-      if (snapshot) {
-        setProjectTrust(snapshot);
-        store.appendNotice(`project trust -> ${snapshot.status}`);
-        await reloadConfig(false);
-      }
-      setLoadingProjectTrust(false);
-    });
   }
 
   // Build the slash-command registry from the extracted builder. App-level
@@ -735,75 +622,30 @@ function AppReady(
         workflowActions,
         projectCommands,
         runProjectCommand,
-        submitFollowUp,
-        openProjectTrust,
       }),
     [
       layers,
       controller,
       toasts,
       state.sessionId,
-      state.status,
       resolved.bindings,
       resolved.workspaceRoot,
       projectCommands,
-      projectTrust,
       workflowActions,
     ],
   );
 
-  function startGoal(
-    value: string,
-    projectCommand?: ProjectCommandReference,
-  ): void {
+  function startGoal(value: string): void {
     quitArmedUntilRef.current = 0;
-    void controller.start(
-      value,
-      projectCommand ? { projectCommand } : undefined,
-    );
-  }
-
-  function submitFollowUp(value: string): void {
-    const goal = value.trim();
-    if (!goal) {
-      toasts.push({
-        variant: "info",
-        title: "follow-up",
-        message: "usage: /followup <goal>",
-      });
-      return;
-    }
-    if (state.status !== "running" && state.status !== "awaiting-approval") {
-      startGoal(goal);
-      return;
-    }
-    void controller.followUp(goal).then((commandId) => {
-      if (commandId) {
-        queue.enqueueSubmission({ goal, commandId });
-        return;
-      }
-      queue.enqueue(goal);
-    });
-  }
-
-  function submitProjectCommand(
-    goal: string,
-    projectCommand: ProjectCommandReference,
-  ): void {
-    if (state.status === "running" || state.status === "awaiting-approval") {
-      queue.enqueueSubmission({ goal, projectCommand });
-      return;
-    }
-    startGoal(goal, projectCommand);
+    void controller.start(value);
   }
 
   function handleSubmit(value: string): void {
-    // Plain Enter steers the active run at the next safe turn boundary. If the
-    // terminal boundary wins the race, preserve the input as a local follow-up.
+    // A run accepts one goal at a time. If one's already in flight (running or
+    // paused on an approval), queue the submission instead of dropping it — the
+    // drain effect below starts it once the current run finishes.
     if (state.status === "running" || state.status === "awaiting-approval") {
-      void controller.steer(value).then((commandId) => {
-        if (!commandId) queue.enqueue(value);
-      });
+      queue.enqueue(value);
       return;
     }
     if (state.stopReason === "manual_cancelled" && queued.length > 0) {
@@ -874,24 +716,9 @@ function AppReady(
     if (state.status !== "done" && state.status !== "idle") return;
     if (state.stopReason === "manual_cancelled") return;
     if (controller.isRunning() || queued.length === 0) return;
-    const next = queue.dequeueLocalSubmission();
-    if (next) startGoal(next.goal, next.projectCommand);
+    const next = queue.dequeue();
+    if (next) startGoal(next);
   }, [state.status, state.stopReason, queued.length, controller, queue]);
-
-  useEffect(
-    () =>
-      controller.subscribeFollowUpUpdates((event) => {
-        queue.removeByCommandId(event.payload.commandId);
-        if (event.payload.status === "rejected") {
-          toasts.push({
-            variant: "warning",
-            title: "follow-up rejected",
-            message: event.payload.message ?? "the queued run did not start",
-          });
-        }
-      }),
-    [controller, queue, toasts],
-  );
 
   function requestCancelRun(): void {
     controller.cancel();
@@ -1127,94 +954,10 @@ function AppReady(
     const changed = nextModelName !== modelLabel;
     setModelOverride({ modelName: nextModelName });
     controller.updateModel(nextModelName, "request");
-    void modelPreferencesRef.current
-      ?.recordRecent(nextModelName)
-      .then(setModelPreferences);
     // A committed switch leaves one durable transcript row; no transient toast
     // on top of it (an unchanged pick just closes the dialog silently).
     if (changed) store.appendNotice(`model -> ${nextModelName} (next run)`);
     layers.pop("model");
-    layers.pop("connect");
-  }
-
-  function toggleFavoriteModel(modelName: string): void {
-    void modelPreferencesRef.current
-      ?.toggleFavorite(modelName)
-      .then(setModelPreferences);
-  }
-
-  async function refreshProviderCatalog(
-    providerId?: string,
-  ): Promise<ProviderCatalogSnapshot | null> {
-    const refreshed = await controller.refreshProviderCatalog(providerId);
-    if (providerId && !refreshed) return null;
-    if (refreshed) {
-      store.appendNotice(
-        `provider catalog -> ${refreshed.status} (generation ${refreshed.catalogState.generation})`,
-      );
-    }
-    const catalog = await controller.listProviders(
-      effModel,
-      topLayer?.name === "connect" ? "all" : "available",
-    );
-    setProviderCatalog(catalog);
-    return catalog;
-  }
-
-  async function submitProviderSecret(
-    providerId: string,
-    methodId: string,
-    endpoint: string,
-    secret: string,
-  ) {
-    const connection = await controller.submitProviderSecret(
-      providerId,
-      methodId,
-      endpoint,
-      secret,
-    );
-    if (connection) {
-      store.appendNotice(
-        `${providerId} connection -> ${connection.status} (${connection.id})`,
-      );
-    }
-    return connection;
-  }
-
-  async function manageProviderConnection(
-    action: "select" | "disconnect",
-    connectionId: string,
-  ): Promise<ProviderCatalogSnapshot | null> {
-    const connection = await controller.manageProviderConnection(
-      action,
-      connectionId,
-    );
-    if (!connection) return null;
-    store.appendNotice(
-      `${connection.providerId} connection -> ${action} (${connection.id})`,
-    );
-    const catalog = await controller.listProviders(effModel, "all");
-    setProviderCatalog(catalog);
-    return catalog;
-  }
-
-  function updateProviderAuth(
-    action: "login" | "logout" | "refresh",
-    profileId: string,
-  ): void {
-    setLoadingProviders(true);
-    void controller
-      .updateProviderAuth(action, profileId)
-      .then(async (profile) => {
-        if (profile) {
-          store.appendNotice(
-            `${profile.providerId} auth -> ${profile.status} (generation ${profile.generation})`,
-          );
-        }
-        const catalog = await controller.listProviders(effModel);
-        setProviderCatalog(catalog);
-        setLoadingProviders(false);
-      });
   }
 
   // Only reserve the sidebar rail when the terminal is wide AND there's
@@ -1255,11 +998,6 @@ function AppReady(
     renameTarget: sessionActions.renameTarget,
     effModel,
     modelCandidates: modelCandidates(resolved.providers),
-    providerCatalog,
-    loadingProviders,
-    modelPreferences,
-    projectTrust,
-    loadingProjectTrust,
     sessionDiagnostics: sessionActions.sessionDiagnostics,
     loadingDiagnosticsFor: sessionActions.loadingDiagnosticsFor,
     capabilitySnapshot: capActions.capabilitySnapshot,
@@ -1275,26 +1013,6 @@ function AppReady(
     onRefreshWorkflows: () => void workflowActions.refreshWorkflows(),
     onSelectWorkflow: workflowActions.selectWorkflow,
     onCommitModel: commitModelSelection,
-    onToggleFavoriteModel: toggleFavoriteModel,
-    onProviderAuth: updateProviderAuth,
-    onLoadProviderAuthMethods: (providerId: string, endpoint?: string) =>
-      controller.listProviderAuthMethods(providerId, endpoint),
-    onSubmitProviderSecret: submitProviderSecret,
-    onSelectProviderConnection: (connectionId: string) =>
-      manageProviderConnection("select", connectionId),
-    onDisconnectProviderConnection: (connectionId: string) =>
-      manageProviderConnection("disconnect", connectionId),
-    onBeginProviderOAuth: (providerId: string, methodId: string) =>
-      controller.beginProviderOAuth(providerId, methodId),
-    onInspectProviderOAuth: (attemptId: string) =>
-      controller.inspectProviderOAuth(attemptId),
-    onCompleteProviderOAuth: (attemptId: string, code: string) =>
-      controller.completeProviderOAuth(attemptId, code),
-    onCancelProviderOAuth: (attemptId: string) =>
-      controller.cancelProviderOAuth(attemptId),
-    onRefreshProviderCatalog: refreshProviderCatalog,
-    onGrantProjectTrust: grantProjectTrust,
-    onRevokeProjectTrust: revokeProjectTrust,
     onFork: sessionActions.forkSession,
     onCloseTop: closeTopLayer,
     onInspectSession: (id: string) => void sessionActions.inspectSession(id),
@@ -1361,13 +1079,13 @@ function AppReady(
               />
             ) : isRawModeSupported ? (
               <InputBox
-                // Stay editable while a run is in flight: Enter steers and
-                // /followup schedules the next run.
+                // Stay editable while a run is in flight: submissions are
+                // queued rather than blocked.
                 disabled={false}
                 placeholder={
                   state.status === "running" ||
                   state.status === "awaiting-approval"
-                    ? "running — Enter steers · /followup queues next · esc cancels"
+                    ? "running — type to queue the next goal (esc cancels run)"
                     : 'type a goal, /capabilities for available capabilities, or "/" for commands'
                 }
                 workspaceRoot={resolved.workspaceRoot}

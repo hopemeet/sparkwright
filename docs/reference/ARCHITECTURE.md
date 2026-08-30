@@ -54,17 +54,8 @@ source cannot import `@sparkwright/core`, and `@sparkwright/core/internal`
 production imports are allowlisted for packages that own reference
 storage/runtime/prompt plumbing. Package tests may opt into the internal entry
 when they need a reference implementation. The Core root exports only stable
-types, factories, and extension preparation interfaces/helpers;
-implementation classes are available exclusively from
-`@sparkwright/core/internal`.
-
-The Host also owns project-source admission. It computes bounded, symlink-free
-content manifests for executable project config, commands, Skills, agents, and
-workflows; persists per-scope pins outside the workspace; and excludes
-untrusted project sources before process, network, model construction, or
-callback assembly. This gate is orthogonal to runtime governance: a trusted
-manifest still passes through tool selection, access mode, policy, approval,
-sandboxing, confidential paths, write guardrails, and mutation leases.
+types, factories, and extension interfaces; implementation classes are
+available exclusively from `@sparkwright/core/internal`.
 
 ## Runtime Kernel
 

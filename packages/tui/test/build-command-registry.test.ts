@@ -30,8 +30,6 @@ describe("built-in command surfaces", () => {
       workflowActions: {},
       projectCommands: [],
       runProjectCommand: vi.fn(),
-      openProjectTrust: vi.fn(),
-      submitFollowUp: vi.fn(),
     } as unknown as Parameters<typeof buildCommandRegistry>[0];
     const registry = buildCommandRegistry(deps);
 
@@ -45,7 +43,6 @@ describe("built-in command surfaces", () => {
       "tasks",
       "workflow",
       "notifications",
-      "trust",
     ]) {
       expect(registry.resolve(name)?.name).toBe(name);
     }

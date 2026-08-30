@@ -3,7 +3,7 @@
   "$id": "https://sparkwright.dev/schemas/v0/config.schema.json",
   "x-sparkwrightProtocolVersion": "0.2",
   "title": "Sparkwright Config",
-  "description": "User-editable settings shared by the CLI and the interactive TUI. Loaded (in order, later overriding earlier) from ~/.config/sparkwright/config.{json,yaml,yml}, <workspace>/.sparkwright/config.{json,yaml,yml}, and $SPARKWRIGHT_CONFIG. Within a user/project layer, config.json wins over config.yaml, which wins over config.yml; multiple files in one layer are reported as a conflict. CLI args and env vars override files. Model/provider settings live under identity, security boundaries under policy, run defaults under run, and TUI preferences under ui; workspace, shell foreground timing, tools, tasks, and capabilities remain top-level. The providers map is merged by key; a trusted project modelPolicy may only narrow user policy. tools.use and tools.allowed intersect, tools.disabled unions, tools.defer is replaced by later layers, capabilities merges by sub-capability, and policy.sandbox, run.accessMode, policy.confidentialPaths, and policy.write merge conservatively so later layers cannot weaken an earlier layer's policy (project clamps user); project config may tighten capabilities.web.security to hardened but may not select system; policy.confidentialDefaults is an explicit later-layer override for the built-in confidential path set; other shared fields are wholesale-overridden.",
+  "description": "User-editable settings shared by the CLI and the interactive TUI. Loaded (in order, later overriding earlier) from ~/.config/sparkwright/config.{json,yaml,yml}, <workspace>/.sparkwright/config.{json,yaml,yml}, and $SPARKWRIGHT_CONFIG. Within a user/project layer, config.json wins over config.yaml, which wins over config.yml; multiple files in one layer are reported as a conflict. CLI args and env vars override files. Model/provider settings live under identity, security boundaries under policy, run defaults under run, and TUI preferences under ui; workspace, shell foreground timing, tools, tasks, and capabilities remain top-level. The providers map is merged by key, tools.use and tools.allowed intersect, tools.disabled unions, tools.defer is replaced by later layers, capabilities merges by sub-capability, and policy.sandbox, run.accessMode, policy.confidentialPaths, and policy.write merge conservatively so later layers cannot weaken an earlier layer's policy (project clamps user); project config may tighten capabilities.web.security to hardened but may not select system; policy.confidentialDefaults is an explicit later-layer override for the built-in confidential path set; other shared fields are wholesale-overridden.",
   "type": "object",
   "properties": {
     "$schema": {
@@ -47,19 +47,13 @@
                   "agents",
                   "tasks",
                   "cron",
-                  "mcp",
-                  "extensions"
+                  "mcp"
                 ]
               },
               {
                 "type": "string",
                 "pattern": "^mcp:.+$",
                 "description": "Select tools from one configured MCP server, e.g. mcp:demo."
-              },
-              {
-                "type": "string",
-                "pattern": "^extension:[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
-                "description": "Select tools from one registered in-process extension, e.g. extension:acme.docs."
               }
             ]
           },
@@ -1132,73 +1126,6 @@
                   "additionalProperties": false
                 },
                 "description": "Optional per-model metadata. When any models are listed, model overrides must use one of those ids."
-              },
-              "modelPolicy": {
-                "type": "object",
-                "properties": {
-                  "allow": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "description": "Optional model-id allowlist for this provider."
-                  },
-                  "deny": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "description": "Model ids removed after allowlist evaluation."
-                  }
-                },
-                "additionalProperties": false,
-                "description": "Model inventory policy. allow restricts selectable ids and deny removes ids after allow evaluation."
-              },
-              "modelOverrides": {
-                "type": "object",
-                "propertyNames": {
-                  "type": "string"
-                },
-                "additionalProperties": {
-                  "type": "object",
-                  "properties": {
-                    "cost": {
-                      "type": "object",
-                      "properties": {
-                        "input": {
-                          "type": "number"
-                        },
-                        "output": {
-                          "type": "number"
-                        },
-                        "cacheRead": {
-                          "type": "number"
-                        },
-                        "cacheWrite": {
-                          "type": "number"
-                        }
-                      },
-                      "additionalProperties": false,
-                      "description": "Per-million-token pricing used to attach costUsd to usage."
-                    },
-                    "providerOptions": {
-                      "type": "object",
-                      "propertyNames": {
-                        "type": "string"
-                      },
-                      "additionalProperties": {
-                        "type": "object",
-                        "properties": {},
-                        "additionalProperties": {}
-                      },
-                      "description": "Request-level AI SDK providerOptions keyed by provider namespace."
-                    }
-                  },
-                  "additionalProperties": false
-                },
-                "description": "Per-model cost and providerOptions metadata that never widens modelPolicy.allow."
               }
             },
             "additionalProperties": false

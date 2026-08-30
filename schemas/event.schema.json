@@ -30,7 +30,6 @@
         "run.cancel_requested",
         "run.command.enqueued",
         "run.command.applied",
-        "run.command.rejected",
         "run.notification.injected",
         "run.notification.source_failed",
         "run.state_transition.rejected",

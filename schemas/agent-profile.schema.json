@@ -39,19 +39,13 @@
               "agents",
               "tasks",
               "cron",
-              "mcp",
-              "extensions"
+              "mcp"
             ]
           },
           {
             "type": "string",
             "pattern": "^mcp:.+$",
             "description": "Select tools from one configured MCP server, e.g. mcp:demo."
-          },
-          {
-            "type": "string",
-            "pattern": "^extension:[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
-            "description": "Select tools from one registered in-process extension, e.g. extension:acme.docs."
           }
         ]
       },
