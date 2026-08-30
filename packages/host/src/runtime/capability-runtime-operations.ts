@@ -5,6 +5,8 @@ import {
   createRunId,
   createSessionRunStoreFactory,
   FileSessionStore,
+  inspectExtensions,
+  type ExtensionRegistration,
   type RunId,
   type RunRecord,
   type RunResult,
@@ -58,6 +60,10 @@ import {
 import { admitToolsForAgentProfile } from "../tool-surface.js";
 import { loadLayeredWorkflowAssets } from "../workflows.js";
 import {
+  isProjectScopeTrusted,
+  type ProjectTrustManager,
+} from "../project-trust.js";
+import {
   describeActiveEventRules,
   describeActiveWorkflowRules,
 } from "../active-rules.js";
@@ -74,6 +80,7 @@ import {
 } from "./agent-runtime-assembly.js";
 import {
   buildCapabilitySnapshot,
+  capabilityExtensionSummaries,
   capabilitySnapshotAgentProfiles,
   inlineShellCapabilitySummary,
   mergeCapabilitySnapshots,
@@ -104,7 +111,9 @@ export interface CapabilityRuntimeOperationsOptions extends Pick<
   sessionRootDir: string;
   taskManager: TaskManager;
   taskRootDir: string;
+  extensions?: readonly ExtensionRegistration[];
   includeDevSkills?: () => boolean;
+  projectTrust: ProjectTrustManager;
   prepareMcp(input: {
     config?: CapabilityMcpConfig;
     shellSandbox: ResolvedShellSandboxConfig;
@@ -271,7 +280,18 @@ export class CapabilityRuntimeOperations {
     modelRef?: string;
     access: ResolvedRunAccess;
   }): Promise<CapabilitySnapshot> {
-    const loadedConfig = await loadHostConfig(this.options.workspaceRoot);
+    const projectTrust = await this.options.projectTrust.inspect(
+      this.options.workspaceRoot,
+    );
+    const configTrusted = isProjectScopeTrusted(projectTrust, "config");
+    const skillsTrusted = isProjectScopeTrusted(projectTrust, "skills");
+    const agentsTrusted = isProjectScopeTrusted(projectTrust, "agents");
+    const workflowsTrusted = isProjectScopeTrusted(projectTrust, "workflows");
+    const loadedConfig = await loadHostConfig(
+      this.options.workspaceRoot,
+      process.env,
+      { projectMode: configTrusted ? "trusted" : "restricted" },
+    );
     const baseToolConfig = loadedConfig.config.tools;
     const shellConfig = loadedConfig.config.shell;
     const skillConfig = loadedConfig.config.capabilities?.skills;
@@ -279,14 +299,19 @@ export class CapabilityRuntimeOperations {
     const automation = await this.inspectAutomationSummary();
     const workflows = await loadLayeredWorkflowAssets(
       this.options.workspaceRoot,
+      process.env,
+      { includeProject: workflowsTrusted },
     );
     const model = await inspectResolvedModelConfig({
       modelRef: input.modelRef ?? this.options.defaultModel,
       workspaceRoot: this.options.workspaceRoot,
+      includeProjectConfig: configTrusted,
     });
     const resolvedProfiles = await resolveAgentProfiles(
       this.options.workspaceRoot,
       agentConfig?.profiles,
+      undefined,
+      { includeProject: agentsTrusted },
     );
     const delegationTargets = resolveAgentDelegateTools(
       resolvedProfiles,
@@ -297,6 +322,7 @@ export class CapabilityRuntimeOperations {
       workspaceRoot: this.options.workspaceRoot,
       access: input.access,
       loadedConfig,
+      includeProjectSkills: skillsTrusted,
     });
     const skillRoots = securityPlan.skillRoots;
     const shellSandbox = securityPlan.shellSandboxStatus;
@@ -316,6 +342,9 @@ export class CapabilityRuntimeOperations {
           agentId: MAIN_AGENT_ID,
         })
       : null;
+    const inspectedExtensions = await inspectExtensions(
+      this.options.extensions ?? [],
+    );
     const mcp = await this.options.prepareMcp({
       config: loadedConfig.config.capabilities?.mcp,
       shellSandbox: securityPlan.shellSandbox,
@@ -326,11 +355,13 @@ export class CapabilityRuntimeOperations {
       const dynamicChildToolCatalog = createDynamicChildToolCatalog({
         workspaceRoot: this.options.workspaceRoot,
         toolConfig,
+        extensionTools: inspectedExtensions.tools,
       });
       const delegateChildToolCatalog = createConfiguredDelegateChildToolCatalog(
         {
           workspaceRoot: this.options.workspaceRoot,
           toolConfig,
+          extensionTools: inspectedExtensions.tools,
           shell: shellConfig,
           skillRoots: skillRoots.map((root) => root.root),
           configPaths: loadedConfig.attempted.map((entry) => entry.path),
@@ -431,6 +462,7 @@ export class CapabilityRuntimeOperations {
         ),
         preparedSkills,
         preparedMcp: mcp.prepared,
+        extensionTools: inspectedExtensions.tools,
         delegateTools,
         delegateAgentTool,
         delegateParallelTool,
@@ -451,6 +483,9 @@ export class CapabilityRuntimeOperations {
         ...(model.ok ? { model: modelCapabilitySummary(model.resolved) } : {}),
         access: input.access,
         toolCatalog,
+        extensions: capabilityExtensionSummaries(
+          inspectedExtensions.extensions,
+        ),
         indexedSkills: preparedSkills?.indexedSkills ?? [],
         loadedSkills: [],
         skillInlineShell: inlineShellCapabilitySummary(
@@ -491,6 +526,7 @@ export class CapabilityRuntimeOperations {
         }),
         workflows: workflowCapabilitySummary(workflows),
         automation,
+        projectTrust,
       });
     } finally {
       await mcp.prepared?.close();

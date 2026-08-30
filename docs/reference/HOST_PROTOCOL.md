@@ -9,12 +9,12 @@ This is a reference contract. If you are new to SparkWright, start with
 
 This document specifies the wire protocol spoken between a **SparkWright
 host** (a process that owns the agent runtime) and any **client** (the
-built-in TUI, the future browser SDK, an editor plugin, a third-party
+built-in TUI, a browser SDK, an editor plugin, a third-party
 TUI, etc).
 
 The host is the single source of truth for what an agent does. Clients
-are presentation. Multiple clients may share one host concurrently in
-future versions; v1.0 assumes a single client per connection.
+are presentation. Each protocol connection represents one client; a Host may
+serve multiple independent connections.
 
 ---
 
@@ -149,7 +149,7 @@ The host responds with `ok` (no result body required) and immediately
 emits a `host.ready` event carrying the host's own version and the list
 of optional capabilities the host supports.
 
-Version negotiation rule for v1.x: hosts and clients agree if and only
+Version negotiation rule for v2.x: hosts and clients agree if and only
 if the **major** version matches. Minor differences are tolerated; the
 side with the lower minor will simply not use features added later.
 
@@ -191,6 +191,7 @@ Begin a new agent run.
 | Field                  | Type                      | Required | Notes                                                                                                                                                                                                                     |
 | ---------------------- | ------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `goal`                 | string                    | yes      | User goal text.                                                                                                                                                                                                           |
+| `projectCommand`       | object                    | no       | Host-resolved file-command reference `{ name, rest? }`. The client supplies no command body; the resolved command prompt replaces `goal`. Ordinary main runs only.                                                        |
 | `input.parts`          | array                     | no       | Extensible content parts for the same user turn. Supported part types are `text`, `image`, `file`, and `audio`; image/file/audio parts carry `data` (base64) or `uri`, plus optional `mediaType`, `name`, and `metadata`. |
 | `sessionId`            | string                    | no       | Existing session to write into; host creates a new one if omitted.                                                                                                                                                        |
 | `controlSessionId`     | string                    | no       | Workflow-job attribution only. Must accompany `workflow` and differ from the job `sessionId`; it is not used as workflow transcript storage.                                                                              |
@@ -214,23 +215,49 @@ Begin a new agent run.
 The run starts asynchronously. The host emits `run.event` events as
 they happen and one terminal event (`run.completed` or `run.failed`).
 
+When `projectCommand` is present, `goal` is presentation/fallback text rather
+than runtime authority. The Host rediscovers the named command from the
+effective user/project command roots, interpolates arguments, and uses the
+resolved prompt as the run goal. Safe shell interpolation executes through a
+fail-closed no-write sandbox and emits `extension.process.*` trace events;
+denied or approval-required commands fail before a process starts. Command
+bodies and source paths never cross the client/Host protocol boundary.
+
 ### `run.inject_message`
 
-Inject an additional user message into an active run. This is used by
-IM gateways and other remote clients for mid-run steering/follow-up.
+Submit an additional user message relative to an active run. `steer` joins the
+current run at its next safe turn boundary; `follow_up` schedules a new run in
+the same Host session lane after the current execution finishes.
 
 **Payload**
 
-| Field         | Type   | Required | Notes                                                                                                 |
-| ------------- | ------ | -------- | ----------------------------------------------------------------------------------------------------- |
-| `runId`       | string | yes      | Active run to receive the message.                                                                    |
-| `content`     | string | yes      | User message to enqueue into the run loop.                                                            |
-| `input.parts` | array  | no       | Additional content parts for the same injected user message; shape matches `run.start` `input.parts`. |
-| `metadata`    | object | no       | Free-form source/routing metadata for the trace.                                                      |
+| Field         | Type                   | Required | Notes                                                              |
+| ------------- | ---------------------- | -------- | ------------------------------------------------------------------ |
+| `runId`       | string                 | yes      | Active run that anchors the interaction.                           |
+| `commandId`   | string                 | no       | Idempotency identity; the Host issues one when omitted.            |
+| `mode`        | `steer` \| `follow_up` | no       | Defaults to `steer`.                                               |
+| `content`     | string                 | yes      | User message to steer with or use as the next run goal.            |
+| `input.parts` | array                  | no       | Additional content parts; shape matches `run.start` `input.parts`. |
+| `metadata`    | object                 | no       | Free-form source/routing metadata for the trace.                   |
 
-**Response result:** empty object. The core run emits normal
-`run.command.enqueued` / `run.command.applied` events through
-`run.event`; there is no separate host event for injection.
+**Response result:** `{ commandId, mode, status }`, where an accepted request
+returns `status: "queued"` (or `"applied"` for an already-applied idempotent
+steer). Core steering lifecycle remains observable as
+`run.command.enqueued` / `run.command.applied` / `run.command.rejected` through
+`run.event`.
+
+A queued follow-up emits `run.follow_up.updated` with `status: "started"` and
+its new `runId`, or `status: "rejected"` plus a message if it could not start.
+Follow-up admission reuses the bounded, per-session Host execution lane and
+inherits the active run's effective model, access mode, background-task policy,
+and trace level. This queue is process-local: it is not a durable restart or
+reconnect guarantee.
+
+Steering is cooperative rather than interruptive. A model request or concurrent
+tool batch already in flight finishes first; the command is consumed before the
+next model turn. If it reaches the natural final-answer boundary first, Core
+uses a bounded interaction continuation so an accepted command is not lost in
+that race.
 
 If the run is unknown or already terminal, the host responds with
 `run_not_found`.
@@ -502,6 +529,40 @@ List recent sessions on disk.
 }
 ```
 
+### `session.fork`
+
+Create a new, self-contained session snapshot. The fork point is a stable run
+boundary, not a trace-event sequence; omitting it clones the complete source
+session. `position: "before"` supports edit-and-resend, while `"after"` keeps
+the selected turn. For a main-agent turn, the Host also retains child runs
+owned by that turn before the next main turn begins.
+
+**Payload**
+
+| Field             | Type                  | Required | Notes                                                                        |
+| ----------------- | --------------------- | -------- | ---------------------------------------------------------------------------- |
+| `sourceSessionId` | string                | yes      | Existing source session.                                                     |
+| `forkPoint`       | `{ runId, position }` | no       | `position` is `before` or `after`; omit for a full clone.                    |
+| `forkAtSequence`  | positive integer      | no       | Deprecated protocol-v2 compatibility field; do not combine with `forkPoint`. |
+
+**Response result**
+
+```json
+{
+  "forkedSessionId": "session_branch",
+  "copiedRunCount": 2,
+  "forkPoint": { "runId": "run_002", "position": "after" },
+  "copiedEventCount": 2,
+  "truncatedAtSequence": null
+}
+```
+
+`copiedEventCount` and `truncatedAtSequence` remain only for protocol-v2
+compatibility. New clients use `copiedRunCount` and `forkPoint`. File-backed
+forks copy retained run state, trace/transcript rows, referenced blobs and
+artifacts, rewrite session identity, and record structured lineage in
+`session.json` plus a `session.forked` event.
+
 ### `session.inspect`
 
 Return diagnostics for one persisted session. Hosts derive the response from
@@ -747,6 +808,189 @@ promoted ticket; otherwise the task is marked awaited and the response reports
 `{ "taskId": string, "promoted": boolean, "awaited": boolean, "status": string }`.
 Unknown ids return `task_not_found`.
 
+### `provider.list`
+
+Return the Host-resolved provider/model catalog and non-secret credential
+profile summaries for the current workspace. Clients use this response for
+model selection and auth status; they must not scan config files or environment
+variables to reconstruct it.
+
+**Payload**
+
+| Field        | Type                                | Required | Notes                                                                |
+| ------------ | ----------------------------------- | -------- | -------------------------------------------------------------------- |
+| `model`      | string                              | no       | Optional request-scoped model to mark as the selection.              |
+| `projection` | `all` \| `connected` \| `available` | no       | Explicit catalog projection; omission preserves the configured view. |
+
+**Response result:** `ProviderCatalogSnapshot`. `catalogVersion` identifies the
+active metadata snapshot. `catalogState` reports the non-secret cache
+generation, source (`bundled`, `signed`, or authenticated `discovery`), TTL,
+and stale state. An omitted projection preserves the compatibility
+view of configured providers. `all` includes bundled and configured providers,
+`connected` includes providers with an active credential source, and
+`available` further requires at least one connected model admitted by config
+policy. A stored connection can make a bundled provider available without a
+provider YAML entry. Provider entries expose `configured`, `connected`,
+and `available` booleans; model entries expose their own `available` result.
+
+Model enumeration comes from the Host-composed `ProviderRegistry`. A non-empty
+legacy `models` map remains an allowlist. New config separates
+`modelPolicy.allow|deny` from `modelOverrides`; overrides can change cost or
+provider options but cannot widen an allowlist. Otherwise catalog models and a
+valid explicitly typed model can participate. Official bundled metadata is
+not projected onto a provider whose configured package or endpoint changes its
+driver binding. Each provider contains a compatibility credential profile plus
+non-secret connection summaries. A summary can expose opaque id, status,
+source category, exact driver/endpoint/method binding, selection, grant scope,
+generation, and timestamps, but never credential material. `revision` is the
+monotonic connection-metadata revision clients can poll for cross-process
+changes.
+
+### `provider.catalog.refresh`
+
+Refresh the Host-owned model metadata cache. The optional payload
+`{ "providerId": string }` targets one code-owned authenticated discovery
+driver; omission refreshes every currently available code-owned source. The
+request requires `provider_connection.manage` on a trusted local transport.
+Remote transports are rejected even when they advertise that authority.
+
+Signed artifacts are verified against code-owned trusted keys before strict,
+bounded metadata validation. Authenticated discovery uses only a selected or
+ambient credential whose exact official driver/endpoint binding applies; the
+credential and request headers never appear in the result. Publication uses a
+generation compare-and-swap. An invalid, slow, failed, or oversized refresh
+cannot replace the bundled or last-known-good catalog.
+
+**Response result:**
+`{ status: "updated" | "unchanged" | "superseded", refreshedProviders: string[], catalogState: ProviderCatalogStateSummary }`.
+
+### Provider authentication methods and attempts
+
+`provider.auth.methods` accepts `{ "providerId": string, "endpoint"?: string }`
+and returns the auth methods plus the exact normalized non-secret binding that
+will be used. Omitting `endpoint` selects the code-owned official endpoint. If
+an ambient config/environment endpoint differs, the response also includes it
+as `configuredBinding`; clients must present it as a separate explicit choice,
+not silently replace the official default. A client-supplied custom endpoint is
+validated and normalized by Host before secret entry. OAuth methods remain
+available only for their code-owned official binding and may declare a bounded
+flow of `browser`, `device`, or `code`; config and catalog data cannot inject
+issuer, client behavior, or token exchange.
+
+OAuth uses four local-only requests guarded by `provider_connection.manage`:
+
+| Request                  | Payload                                                | Result        |
+| ------------------------ | ------------------------------------------------------ | ------------- |
+| `provider.auth.begin`    | `{ providerId, methodId, promptValues?, grantScope? }` | `{ attempt }` |
+| `provider.auth.status`   | `{ attemptId }`                                        | `{ attempt }` |
+| `provider.auth.complete` | `{ attemptId, code, state?, nonce? }`                  | `{ attempt }` |
+| `provider.auth.cancel`   | `{ attemptId }`                                        | `{ attempt }` |
+
+An attempt is bound to the initiating Host principal and client connection,
+expires after ten minutes by default, and can be consumed only once. Host
+validates the method binding, TTL, state/nonce where applicable, and PKCE proof
+before persisting a credential. Browser callbacks and device polling finish in
+Host; a client-submitted code is only proof input and cannot assert success.
+Terminal attempt summaries expose status, bounded presentation instructions,
+and an optional non-secret connection summary. They never expose an access or
+refresh token, authorization code, verifier, or nonce. Pending authorization
+URLs are returned only to the initiating trusted local connection and are
+removed from terminal summaries. Closing that connection cancels its pending
+attempts.
+
+`provider.auth.submit_secret` remains the dedicated API-key path and creates a
+stored connection and grant:
+
+| Field        | Type                  | Required | Notes                                                      |
+| ------------ | --------------------- | -------- | ---------------------------------------------------------- |
+| `providerId` | string                | yes      | Provider catalog id.                                       |
+| `methodId`   | string                | yes      | Method returned by `provider.auth.methods`.                |
+| `endpoint`   | string                | no       | Exact confirmed endpoint; omission means the official URL. |
+| `secret`     | string                | yes      | Dedicated request field; never returned.                   |
+| `grantScope` | `workspace` \| `user` | no       | Defaults to `workspace`.                                   |
+
+Secret submission requires `provider_secret.submit` and a local or trusted
+embedded transport. Remote transport is rejected even when an authority is
+misconfigured onto the connection. The response contains only
+`{ connection, revision }`. A provider with no safe validation strategy is
+reported as `unverified`, not `ready`. The same rule applies to discovered
+environment/config credentials: presence makes the binding usable, but does
+not by itself prove that the credential is valid.
+
+### `provider.connection.select`, `disconnect`, `logout`, `remove`, `refresh`
+
+These requests require `provider_connection.manage`. Each accepts an opaque
+`connectionId`; `select` also accepts optional `grantScope`. `disconnect`
+removes selection/workspace access without deleting a stored credential.
+`logout` and `remove` delete stored credential material and metadata. For an
+environment/config source, disconnect/logout records an exact-binding
+suppression and does not claim to remove the external value. `refresh`
+revalidates API-key connections or refreshes OAuth. OAuth refresh is
+single-flight per connection across processes and publishes one monotonic
+generation. A failed OAuth refresh marks the selected connection
+`needs_refresh`; it never falls back to an ambient API key.
+
+Stored connections are bound to provider id, code-owned driver identity,
+normalized endpoint, and auth method. Once selected, that immutable stored
+endpoint overrides project `baseURL` for runtime construction, so config cannot
+redirect the credential. Choosing a changed endpoint creates/selects a
+different connection and cannot reuse the old key. A missing/failed selected
+stored connection never falls back to an environment or config key.
+
+### `provider.auth.login`, `provider.auth.logout`, `provider.auth.refresh`
+
+Change the activation state or generation of a Host-issued credential profile.
+`login` and `refresh` require a credential already available through the
+existing private config/environment sources; credential material is never sent
+through this protocol. `logout` disables that profile for subsequent model
+construction.
+
+These compatibility mutation requests accept the legacy
+`provider_auth.manage` umbrella or `provider_connection.manage`. Ordinary
+WebSocket bearer clients receive neither and are rejected with `unauthorized`.
+
+**Payload**
+
+| Field       | Type   | Required | Notes                                                |
+| ----------- | ------ | -------- | ---------------------------------------------------- |
+| `profileId` | string | yes      | Opaque id returned by `provider.list`; not a secret. |
+
+**Response result:** `{ "profile": ProviderCredentialProfileSummary }`.
+
+An interactive local client may advertise `provider.auth.interactive` during
+handshake. For those clients only, a provider authentication failure can wait
+for a profile generation change and retry with a newly constructed adapter.
+Other clients retain fail-fast behavior.
+
+### `project.trust.inspect`, `project.trust.grant`, `project.trust.revoke`
+
+Inspect or mutate the Host-owned trust pins for executable project sources in
+the connection's workspace. The snapshot exposes the canonical workspace id,
+whole-manifest hash, and per-scope status/effects/counts. It never includes file
+bodies or credential material.
+
+Scopes are `config`, `commands`, `skills`, `agents`, and `workflows`. Status is
+`not_present`, `untrusted`, `trusted`, `changed`, or `invalid` per scope and
+`not_required`, `untrusted`, `trusted`, `changed`, or `invalid` for the whole
+workspace. Symlinks or bounded-scan failures make a scope `invalid`.
+
+`project.trust.inspect` has an empty payload and is read-only. Grant pins the
+manifest that the user actually reviewed:
+
+| Field                  | Type     | Required | Notes                                                        |
+| ---------------------- | -------- | -------- | ------------------------------------------------------------ |
+| `expectedManifestHash` | string   | yes      | Hash returned by inspect; stale values fail with `conflict`. |
+| `scopes`               | string[] | no       | Omit to grant every currently present scope.                 |
+
+`project.trust.revoke` accepts optional `scopes`; omission revokes all scopes.
+All three responses return `ProjectTrustSnapshot`. Mutations require the
+explicit connection authority `project_trust.manage`; inspection does not.
+`host.ready.capabilities` always advertises `project.trust.inspect` and only
+advertises grant/revoke when that connection holds the mutation authority.
+
+Trust is admission, not permission. A trusted project source still uses the
+same access, approval, sandbox, confidentiality, tool, and write controls.
+
 ### `capability.inspect`
 
 Return the host-authored capability snapshot known to this connection. This is
@@ -755,6 +999,13 @@ does not replace run trace.
 
 The host is the source of truth. Clients should not reconstruct this response by
 scanning files or interpreting local config.
+
+When a trusted embedder registered in-process extensions, the response may
+include `extensions`. Each entry reports its stable id/version, described
+context sources, and declared tool names. This is registration inventory;
+`tools` remains the effective catalog after access rules and selectors such as
+`extensions` or `extension:<id>` are applied. Capability inspection calls
+extension discovery but does not load run context.
 
 **Payload**
 
@@ -1060,11 +1311,17 @@ Clients use `failure` for both `run.completed{state:"failed"}` and
 | Code                        | When                                                          |
 | --------------------------- | ------------------------------------------------------------- |
 | `protocol_version_mismatch` | Handshake major version differs, or request before handshake. |
-| `unknown_kind`              | Request or event kind not in the v1.0 enum.                   |
+| `unknown_kind`              | Request or event kind is not in the current enum.             |
 | `invalid_payload`           | Payload fails schema validation.                              |
 | `run_not_found`             | `runId` is unknown or already terminal.                       |
 | `approval_not_found`        | `approvalId` is unknown or already resolved.                  |
 | `session_not_found`         | `sessionId` does not exist on disk.                           |
+| `task_not_found`            | `taskId` does not exist or cannot be addressed.               |
+| `project_trust_required`    | A selected project capability scope is not trusted.           |
+| `project_trust_changed`     | A previously trusted project capability manifest changed.     |
+| `unauthorized`              | The connection lacks explicit authority for a mutation.       |
+| `conflict`                  | Expected manifest/state no longer matches current state.      |
+| `capacity`                  | A bounded Host resource cannot admit more work.               |
 | `internal_error`            | Anything else. Host should log details to `host.log`.         |
 
 ---
@@ -1073,11 +1330,11 @@ Clients use `failure` for both `run.completed{state:"failed"}` and
 
 - The protocol is `MAJOR.MINOR`, declared in `handshake.protocolVersion`
   and `host.ready.protocolVersion`. Patch versions are not used.
-- **Within a major (v1.x)**: fields may be **added** to existing
+- **Within a major (v2.x)**: fields may be **added** to existing
   payloads; new kinds may be added. Fields are never renamed, removed,
   or repurposed. Enums are only extended. Clients ignore unknown fields
   and enum values they do not understand.
-- **Across a major (v1 → v2)**: any breaking change. Hosts and clients
+- **Across a major (for example v2 → v3)**: any breaking change. Hosts and clients
   on different majors refuse to connect.
 - Every change to the protocol must:
   1. Update [`schemas/host-message.schema.json`](../../schemas/host-message.schema.json).

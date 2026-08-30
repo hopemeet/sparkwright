@@ -17,6 +17,7 @@ export {
 export type {
   Connection,
   HostConnectionAuthContext,
+  HostConnectionAuthority,
   HostConnectionPrincipalKind,
 } from "./connection.js";
 export { createStdioConnection } from "./transport-stdio.js";
@@ -27,6 +28,89 @@ export { installCrashLog } from "./crash-log.js";
 export { runHostMain } from "./main.js";
 export { buildConfiguredAdapter } from "./model-builder.js";
 export type { BuildAdapterInput } from "./model-builder.js";
+export {
+  CHATGPT_APP_SERVER_RUNTIME_ID,
+  ChatGptAppServerError,
+  createChatGptAppServerSession,
+  createChatGptModelAdapter,
+  listChatGptModels,
+  logoutChatGptAccount,
+  readChatGptAccount,
+} from "./chatgpt-app-server.js";
+export type {
+  ChatGptAppServerFactory,
+  ChatGptAppServerNotification,
+  ChatGptAppServerRequest,
+  ChatGptAppServerSession,
+  ChatGptModelInfo,
+} from "./chatgpt-app-server.js";
+export {
+  ProviderAuthManager,
+  normalizeProviderEndpoint,
+  providerAuthStatePath,
+} from "./provider-auth.js";
+export type {
+  ProviderAuthAction,
+  ProviderAuthContext,
+  ProviderAuthAttemptContext,
+  ProviderAuthManagerOptions,
+  ProviderCredentialLease,
+  ProviderRuntimeCredential,
+} from "./provider-auth.js";
+export type {
+  ProviderOAuthBeginResult,
+  ProviderOAuthCredential,
+  ProviderOAuthDriver,
+  ProviderOAuthFlow,
+  ProviderOAuthPresentation,
+  ProviderOAuthProof,
+} from "./provider-oauth.js";
+export {
+  FileProviderCredentialStore,
+  MacOsKeychainCredentialStore,
+  MemoryProviderCredentialStore,
+  createProviderCredentialStore,
+  providerCredentialFilePath,
+} from "./provider-credential-store.js";
+export type {
+  ProviderCredentialStore,
+  ProviderCredentialStoreOptions,
+} from "./provider-credential-store.js";
+export {
+  ProviderCatalogStore,
+  providerCatalogDigest,
+  providerCatalogStatePath,
+  verifySignedProviderCatalogArtifact,
+} from "./provider-catalog-store.js";
+export type {
+  ProviderCatalogStateSnapshot,
+  ProviderCatalogStoreOptions,
+  ProviderDiscoveryStateSnapshot,
+  SignedProviderCatalogArtifact,
+  SignedProviderCatalogPayload,
+} from "./provider-catalog-store.js";
+export {
+  createHttpSignedProviderCatalogSource,
+  normalizeSignedProviderCatalogSourceResult,
+  readSignedProviderCatalogSource,
+} from "./provider-catalog-source.js";
+export type {
+  SignedProviderCatalogSource,
+  SignedProviderCatalogSourceLike,
+  SignedProviderCatalogSourceRequest,
+  SignedProviderCatalogSourceResult,
+} from "./provider-catalog-source.js";
+export {
+  PROJECT_TRUST_SCOPES,
+  ProjectTrustManager,
+  isProjectScopeTrusted,
+  projectTrustStatePath,
+  summarizeProjectTrust,
+} from "./project-trust.js";
+export type {
+  ProjectTrustManagerOptions,
+  ProjectTrustMutationResult,
+} from "./project-trust.js";
 export { runConfiguredDelegate } from "./delegate-runner.js";
 export type {
   RunConfiguredDelegateInput,
@@ -60,6 +144,7 @@ export {
   assertCodingToolsCoveredByWorkspaceSelectors,
   formatToolUseSelectorList,
   intersectToolUseSelectors,
+  isExtensionSelector,
   isToolUseSelector,
   resolveSelectorAllowlist,
   shouldAppendDiscoveryTool,
@@ -227,6 +312,7 @@ export {
   configResolutionOrder,
   projectConfigCandidatePaths,
   readConfigFileObject,
+  removeLegacyProviderApiKey,
   resolveConfigWriteTarget,
   serializeConfigFileObject,
   userConfigCandidatePaths,

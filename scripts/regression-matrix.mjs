@@ -17,6 +17,7 @@ import {
   ndJsonStream,
 } from "@agentclientprotocol/sdk";
 import { createSparkwrightAcpAgentFactory } from "@sparkwright/acp-adapter";
+import { ProjectTrustManager } from "@sparkwright/host";
 
 const CLI = ["node", "packages/cli/dist/index.js"];
 const cases = [];
@@ -203,6 +204,7 @@ async function invalidConfigCase() {
     "{ bad json",
     "utf8",
   );
+  await trustProjectCapabilities(workspace);
   const result = await runCli([
     "capabilities",
     "inspect",
@@ -310,6 +312,7 @@ async function skillLoadingCase() {
     ].join("\n"),
     "utf8",
   );
+  await trustProjectCapabilities(workspace);
   const prompt = "review code with reviewer skill; do not modify files";
   const result = await runCli([
     "run",
@@ -371,6 +374,7 @@ async function mcpFailureCase() {
     }),
     "utf8",
   );
+  await trustProjectCapabilities(workspace);
   const idlePrompt =
     "inspect README and tolerate configured but unused MCP; do not modify files";
   const idleResult = await runCli([
@@ -1318,6 +1322,24 @@ async function writeProjectConfig(workspace, config) {
     JSON.stringify(config),
     "utf8",
   );
+  await trustProjectCapabilities(workspace);
+}
+
+async function trustProjectCapabilities(workspaceRoot) {
+  const manager = new ProjectTrustManager({ env: childEnv });
+  const snapshot = await manager.inspect(workspaceRoot);
+  const scopes = snapshot.scopes
+    .filter(
+      (scope) => scope.status === "untrusted" || scope.status === "changed",
+    )
+    .map((scope) => scope.scope);
+  if (scopes.length === 0) return;
+  const granted = await manager.grant({
+    workspaceRoot,
+    expectedManifestHash: snapshot.manifestHash,
+    scopes,
+  });
+  if (!granted.ok) throw new Error(granted.message);
 }
 
 async function prepareDirectCoreWorkspace(workspace) {

@@ -1,24 +1,31 @@
 import { describe, expect, it } from "vitest";
 import React from "react";
 import { render } from "ink";
-import {
-  ForkDialog,
-  extractTurns,
-  optionWindow,
-} from "../src/components/fork-dialog.js";
+import { ForkDialog, extractTurns } from "../src/components/fork-dialog.js";
 import type { RunEvent } from "../src/lib/event-type.js";
+import { windowAroundCursor } from "../src/lib/list-window.js";
 
-function ev(type: string, sequence: number, payload?: unknown): RunEvent {
-  return { type, sequence, payload };
+function ev(
+  type: string,
+  sequence: number,
+  payload?: unknown,
+  options: { runId?: string; agentId?: string } = {},
+): RunEvent {
+  return {
+    type,
+    sequence,
+    payload,
+    runId: options.runId ?? `run_${sequence}`,
+    ...(options.agentId ? { metadata: { agentId: options.agentId } } : {}),
+  };
 }
 
 /**
- * The fork picker forks at a host `run.started` sequence but labels the turn
- * with the goal. run.started.payload.goal is empty on some providers, so the
- * goal is paired from the preceding `tui.user` event (synthetic, negative seq).
+ * The fork picker anchors each turn to a stable run id and pairs missing goals
+ * from the preceding synthetic `tui.user` event.
  */
 describe("extractTurns", () => {
-  it("pairs each run.started sequence with the preceding tui.user goal", () => {
+  it("pairs each run id with the preceding tui.user goal", () => {
     const turns = extractTurns([
       ev("tui.user", -1, { goal: "first goal" }),
       ev("run.started", 10, {}),
@@ -26,8 +33,8 @@ describe("extractTurns", () => {
       ev("run.started", 25, {}),
     ]);
     expect(turns).toEqual([
-      { sequence: 10, goal: "first goal" },
-      { sequence: 25, goal: "second goal" },
+      { runId: "run_10", goal: "first goal" },
+      { runId: "run_25", goal: "second goal" },
     ]);
   });
 
@@ -41,7 +48,7 @@ describe("extractTurns", () => {
 
   it("falls back to (run) when no goal is available", () => {
     const turns = extractTurns([ev("run.started", 5, {})]);
-    expect(turns).toEqual([{ sequence: 5, goal: "(run)" }]);
+    expect(turns).toEqual([{ runId: "run_5", goal: "(run)" }]);
   });
 
   it("does not reuse a goal across two runs", () => {
@@ -53,12 +60,20 @@ describe("extractTurns", () => {
     expect(turns[0].goal).toBe("only goal");
     expect(turns[1].goal).toBe("(run)");
   });
+
+  it("excludes child-agent runs from the conversation turn picker", () => {
+    const turns = extractTurns([
+      ev("run.started", 1, { goal: "main" }, { agentId: "main" }),
+      ev("run.started", 2, { goal: "child" }, { agentId: "researcher" }),
+    ]);
+    expect(turns).toEqual([{ runId: "run_1", goal: "main" }]);
+  });
 });
 
 describe("ForkDialog windowing", () => {
   it("centers the visible option window around the cursor", () => {
     const items = Array.from({ length: 20 }, (_, index) => index);
-    expect(optionWindow(items, 10, 5)).toEqual({
+    expect(windowAroundCursor(items, 10, 5)).toEqual({
       start: 8,
       visible: [8, 9, 10, 11, 12],
     });

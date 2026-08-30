@@ -1,0 +1,23 @@
+{
+  "canonicalWorkspaceRoot": "/workspace/project",
+  "workspaceId": "workspace_00000000000000000000",
+  "status": "untrusted",
+  "manifestHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "scopes": [
+    {
+      "scope": "commands",
+      "status": "untrusted",
+      "effects": ["process"],
+      "fileCount": 1,
+      "byteCount": 42,
+      "manifestHash": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "scope": "skills",
+      "status": "not_present",
+      "effects": ["process"],
+      "fileCount": 0,
+      "byteCount": 0
+    }
+  ]
+}

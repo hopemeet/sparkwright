@@ -10,6 +10,32 @@ canonical trace or a session consistency report.
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-08-18
+- Scope: ChatGPT discovery failures now stay inside the `/connect` dialog and
+  can be retried there. Transcript export and canonical trace diagnostics are
+  unchanged and receive no credential or account data.
+- Read: TUI connect refresh/error flow and existing export ownership boundary.
+- Tests: ConnectDialog 6/6 and the full release gate passed; export contracts
+  are unchanged.
+
+- Status: Read-only
+- Date: 2026-08-09
+- Scope: P7.0 adds local connection-management presentation only. Transcript
+  export and canonical trace diagnostics remain unchanged and secret-free.
+- Read: CLI/TUI connection output and export/diagnostic boundary.
+- Tests: focused connection checks and the full release gate passed; export
+  contracts are unchanged.
+
+- Status: Read-only
+- Date: 2026-08-08
+- Scope: TUI adds a Project Trust dialog and command admission check.
+  Transcript export, raw trace diagnostics, and session-consistency ownership
+  are unchanged; trust uses its dedicated panel and protocol snapshot.
+- Read: TUI app/layer routing, trust dialog, RunController, and existing export
+  projection.
+- Tests: focused TUI trust/command/registry coverage passed 4/4.
+
+- Status: Read-only
 - Date: 2026-08-02
 - Scope: removed Skill proposal/learning presentation and pending human-action
   state from TUI. Canonical transcript export, Activity events, and raw trace
@@ -212,6 +238,13 @@ session trace.jsonl
 - Structured tool outputs are summarized for readability; use `/events`, trace commands, or session diagnostics for full payload inspection.
 
 ## Last Verified
+
+- Status: Read-only
+- Date: 2026-08-09
+- Scope: P6.4 provider management emits non-secret CLI/TUI results and does not
+  alter transcript export or trace diagnostic projections.
+- Read: provider response DTOs, CLI/TUI rendering, and export boundary.
+- Tests: secret-sentinel, affected UI tests, and the full release gate passed.
 
 - Status: Verified
 - Date: 2026-07-19

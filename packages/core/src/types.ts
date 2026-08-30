@@ -248,7 +248,7 @@ export interface RunRecord {
   metadata: Record<string, unknown>;
 }
 
-export type ForcedContinuationSource = "revival" | "workflow";
+export type ForcedContinuationSource = "interaction" | "revival" | "workflow";
 
 export interface ForcedContinuationBudgetExceeded {
   source: ForcedContinuationSource;
@@ -420,6 +420,12 @@ export type {
   ContextExtensionDescriptor,
   ContextExtensionLoadInput,
   ToolExtension,
+  ExtensionLimits,
+  ExtensionRegistration,
+  ExtensionSummary,
+  InspectedExtensions,
+  PreparedExtensions,
+  ExtensionPreparationErrorCode,
 } from "./extensions.js";
 
 export interface ModelInput {
@@ -668,12 +674,16 @@ export interface ModelAdapter {
 export type RunCommand =
   | {
       type: "user_message";
+      /** Stable caller- or runtime-issued identity used for live idempotency. */
+      commandId?: string;
       content: string;
       parts?: ContentPart[];
       metadata?: Record<string, unknown>;
     }
   | {
       type: "cancel";
+      /** Stable caller- or runtime-issued identity used for live idempotency. */
+      commandId?: string;
       reason?: string;
       metadata?: Record<string, unknown>;
     };

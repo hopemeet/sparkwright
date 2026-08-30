@@ -22,12 +22,25 @@ import {
   type RunResumeRequestPayload,
   type RunStartRequestPayload,
   type SessionCompactRequestPayload,
+  type SessionForkRequestPayload,
   type SessionInspectRequestPayload,
   type WorkflowListRequestPayload,
   type WorkflowResumeRequestPayload,
   type WorkflowControlRequestPayload,
   type WorkflowControlProcessRequestPayload,
   type CapabilityInspectRequestPayload,
+  type ProviderAuthActionRequestPayload,
+  type ProviderAuthMethodsRequestPayload,
+  type ProviderAuthBeginRequestPayload,
+  type ProviderAuthAttemptRequestPayload,
+  type ProviderAuthCompleteRequestPayload,
+  type ProviderSecretSubmitRequestPayload,
+  type ProviderConnectionActionRequestPayload,
+  type ProviderConnectionSelectRequestPayload,
+  type ProviderCatalogRefreshRequestPayload,
+  type ProviderListRequestPayload,
+  type ProjectTrustGrantRequestPayload,
+  type ProjectTrustRevokeRequestPayload,
   type TaskGetRequestPayload,
   type TaskJoinRequestPayload,
   type TaskListRequestPayload,
@@ -67,6 +80,8 @@ export type ClientEventMap = {
   /** @reserved Public SDK event key consumed through typed client listeners. */
   "task.updated": [HostEvent & { kind: "task.updated" }];
   "approval.requested": [HostEvent & { kind: "approval.requested" }];
+  /** @reserved Public SDK event key consumed by follow-up-aware clients. */
+  "run.follow_up.updated": [HostEvent & { kind: "run.follow_up.updated" }];
   "run.continuation": [HostEvent & { kind: "run.continuation" }];
   "run.completed": [HostEvent & { kind: "run.completed" }];
   "run.failed": [HostEvent & { kind: "run.failed" }];
@@ -359,6 +374,8 @@ export class Client extends TypedEmitter<ClientEventMap> {
 
   injectRunMessage(payload: {
     runId: string;
+    commandId?: string;
+    mode?: "steer" | "follow_up";
     content: string;
     input?: RunInputPayload;
     metadata?: Record<string, unknown>;
@@ -459,13 +476,13 @@ export class Client extends TypedEmitter<ClientEventMap> {
     ) as Promise<ResponseResults["session.inspect"]>;
   }
 
-  forkSession(payload: {
-    sourceSessionId: string;
-    forkAtSequence?: number;
-  }): Promise<ResponseResults["session.fork"]> {
-    return this.request("session.fork", payload) as Promise<
-      ResponseResults["session.fork"]
-    >;
+  forkSession(
+    payload: SessionForkRequestPayload,
+  ): Promise<ResponseResults["session.fork"]> {
+    return this.request(
+      "session.fork",
+      payload as unknown as Record<string, unknown>,
+    ) as Promise<ResponseResults["session.fork"]>;
   }
 
   compactSession(
@@ -529,6 +546,174 @@ export class Client extends TypedEmitter<ClientEventMap> {
       "task.promote",
       payload as unknown as Record<string, unknown>,
     ) as Promise<ResponseResults["task.promote"]>;
+  }
+
+  listProviders(
+    payload: ProviderListRequestPayload = {},
+  ): Promise<ResponseResults["provider.list"]> {
+    return this.request(
+      "provider.list",
+      payload as unknown as Record<string, unknown>,
+    ) as unknown as Promise<ResponseResults["provider.list"]>;
+  }
+
+  listProviderAuthMethods(
+    payload: ProviderAuthMethodsRequestPayload,
+  ): Promise<ResponseResults["provider.auth.methods"]> {
+    return this.request(
+      "provider.auth.methods",
+      payload as unknown as Record<string, unknown>,
+    ) as unknown as Promise<ResponseResults["provider.auth.methods"]>;
+  }
+
+  beginProviderOAuth(
+    payload: ProviderAuthBeginRequestPayload,
+  ): Promise<ResponseResults["provider.auth.begin"]> {
+    return this.request(
+      "provider.auth.begin",
+      payload as unknown as Record<string, unknown>,
+    ) as unknown as Promise<ResponseResults["provider.auth.begin"]>;
+  }
+
+  inspectProviderOAuth(
+    payload: ProviderAuthAttemptRequestPayload,
+  ): Promise<ResponseResults["provider.auth.status"]> {
+    return this.request(
+      "provider.auth.status",
+      payload as unknown as Record<string, unknown>,
+    ) as unknown as Promise<ResponseResults["provider.auth.status"]>;
+  }
+
+  completeProviderOAuth(
+    payload: ProviderAuthCompleteRequestPayload,
+  ): Promise<ResponseResults["provider.auth.complete"]> {
+    return this.request(
+      "provider.auth.complete",
+      payload as unknown as Record<string, unknown>,
+    ) as unknown as Promise<ResponseResults["provider.auth.complete"]>;
+  }
+
+  cancelProviderOAuth(
+    payload: ProviderAuthAttemptRequestPayload,
+  ): Promise<ResponseResults["provider.auth.cancel"]> {
+    return this.request(
+      "provider.auth.cancel",
+      payload as unknown as Record<string, unknown>,
+    ) as unknown as Promise<ResponseResults["provider.auth.cancel"]>;
+  }
+
+  submitProviderSecret(
+    payload: ProviderSecretSubmitRequestPayload,
+  ): Promise<ResponseResults["provider.auth.submit_secret"]> {
+    return this.request(
+      "provider.auth.submit_secret",
+      payload as unknown as Record<string, unknown>,
+    ) as unknown as Promise<ResponseResults["provider.auth.submit_secret"]>;
+  }
+
+  selectProviderConnection(
+    payload: ProviderConnectionSelectRequestPayload,
+  ): Promise<ResponseResults["provider.connection.select"]> {
+    return this.request(
+      "provider.connection.select",
+      payload as unknown as Record<string, unknown>,
+    ) as unknown as Promise<ResponseResults["provider.connection.select"]>;
+  }
+
+  disconnectProviderConnection(
+    payload: ProviderConnectionActionRequestPayload,
+  ): Promise<ResponseResults["provider.connection.disconnect"]> {
+    return this.request(
+      "provider.connection.disconnect",
+      payload as unknown as Record<string, unknown>,
+    ) as unknown as Promise<ResponseResults["provider.connection.disconnect"]>;
+  }
+
+  logoutProviderConnection(
+    payload: ProviderConnectionActionRequestPayload,
+  ): Promise<ResponseResults["provider.connection.logout"]> {
+    return this.request(
+      "provider.connection.logout",
+      payload as unknown as Record<string, unknown>,
+    ) as unknown as Promise<ResponseResults["provider.connection.logout"]>;
+  }
+
+  removeProviderConnection(
+    payload: ProviderConnectionActionRequestPayload,
+  ): Promise<ResponseResults["provider.connection.remove"]> {
+    return this.request(
+      "provider.connection.remove",
+      payload as unknown as Record<string, unknown>,
+    ) as unknown as Promise<ResponseResults["provider.connection.remove"]>;
+  }
+
+  refreshProviderConnection(
+    payload: ProviderConnectionActionRequestPayload,
+  ): Promise<ResponseResults["provider.connection.refresh"]> {
+    return this.request(
+      "provider.connection.refresh",
+      payload as unknown as Record<string, unknown>,
+    ) as unknown as Promise<ResponseResults["provider.connection.refresh"]>;
+  }
+
+  refreshProviderCatalog(
+    payload: ProviderCatalogRefreshRequestPayload = {},
+  ): Promise<ResponseResults["provider.catalog.refresh"]> {
+    return this.request(
+      "provider.catalog.refresh",
+      payload as unknown as Record<string, unknown>,
+    ) as unknown as Promise<ResponseResults["provider.catalog.refresh"]>;
+  }
+
+  loginProvider(
+    payload: ProviderAuthActionRequestPayload,
+  ): Promise<ResponseResults["provider.auth.login"]> {
+    return this.request(
+      "provider.auth.login",
+      payload as unknown as Record<string, unknown>,
+    ) as unknown as Promise<ResponseResults["provider.auth.login"]>;
+  }
+
+  logoutProvider(
+    payload: ProviderAuthActionRequestPayload,
+  ): Promise<ResponseResults["provider.auth.logout"]> {
+    return this.request(
+      "provider.auth.logout",
+      payload as unknown as Record<string, unknown>,
+    ) as unknown as Promise<ResponseResults["provider.auth.logout"]>;
+  }
+
+  refreshProvider(
+    payload: ProviderAuthActionRequestPayload,
+  ): Promise<ResponseResults["provider.auth.refresh"]> {
+    return this.request(
+      "provider.auth.refresh",
+      payload as unknown as Record<string, unknown>,
+    ) as unknown as Promise<ResponseResults["provider.auth.refresh"]>;
+  }
+
+  inspectProjectTrust(): Promise<ResponseResults["project.trust.inspect"]> {
+    return this.request("project.trust.inspect", {}) as unknown as Promise<
+      ResponseResults["project.trust.inspect"]
+    >;
+  }
+
+  grantProjectTrust(
+    payload: ProjectTrustGrantRequestPayload,
+  ): Promise<ResponseResults["project.trust.grant"]> {
+    return this.request(
+      "project.trust.grant",
+      payload as unknown as Record<string, unknown>,
+    ) as unknown as Promise<ResponseResults["project.trust.grant"]>;
+  }
+
+  revokeProjectTrust(
+    payload: ProjectTrustRevokeRequestPayload = {},
+  ): Promise<ResponseResults["project.trust.revoke"]> {
+    return this.request(
+      "project.trust.revoke",
+      payload as unknown as Record<string, unknown>,
+    ) as unknown as Promise<ResponseResults["project.trust.revoke"]>;
   }
 
   inspectCapabilities(

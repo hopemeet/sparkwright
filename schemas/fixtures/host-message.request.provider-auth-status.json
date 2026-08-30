@@ -1,0 +1,9 @@
+{
+  "envelope": "request",
+  "id": "req_provider_auth_status",
+  "kind": "provider.auth.status",
+  "timestamp": "2026-08-09T00:00:01.000Z",
+  "payload": {
+    "attemptId": "oauth_fixture"
+  }
+}

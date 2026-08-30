@@ -48,8 +48,40 @@ npm exec sparkwright -- run "inspect this repo and suggest a README improvement"
 
 ## OpenAI provider runs fail before starting
 
-Provider-backed CLI runs require a configured provider and a model reference in
-`provider/model` form:
+Provider-backed CLI runs require a usable provider connection and a model
+reference in `provider/model` form. Connect without editing config:
+
+```bash
+sparkwright provider connect openai --workspace .
+```
+
+For browser OAuth, use an interactive terminal and keep the command or TUI
+open until the local callback completes:
+
+```bash
+sparkwright provider connect openrouter --auth-method oauth_pkce --workspace .
+```
+
+For ChatGPT subscription login, choose `OpenAI` and then `Continue with
+ChatGPT` in `/connect`. SparkWright opens the browser and runs its bundled,
+version-pinned login runtime; no separate executable or `PATH` setup is
+required. If the browser cannot be opened, the TUI keeps the authorization URL
+visible. For a remote/headless terminal whose callback cannot return to this
+device, choose `Other sign-in options…` and then `Sign in with device code`.
+
+If ChatGPT reports that the bundled runtime is missing, reinstall SparkWright
+so its production dependencies are restored. If login succeeds but model
+discovery fails, press Ctrl+R in the model picker. SparkWright retains the
+connection and retries `model/list`; it does not require another browser login.
+Builds containing the compact-marker fix also recover the exact historical
+macOS Keychain truncation automatically.
+
+If the attempt expires or is cancelled, start `/connect` or the command again.
+If a stored OAuth connection reports `needs_refresh`, run
+`sparkwright provider refresh <connection-id>`; SparkWright will not replace
+that selected connection with an unrelated environment key.
+
+Environment credentials remain supported:
 
 ```bash
 OPENAI_API_KEY=... npm exec sparkwright -- run "inspect this repo" \
@@ -58,11 +90,44 @@ OPENAI_API_KEY=... npm exec sparkwright -- run "inspect this repo" \
   --model openai/<model-name>
 ```
 
-If the selected provider has no API key in config and the corresponding
-environment variable is missing, the CLI exits non-zero with `host_start_failed`
-and records a failed trace. Real provider behavior is intentionally outside the
-deterministic golden path, so v0 release checks use the deterministic model by
-default.
+If the selected provider has no applicable stored connection, config key, or
+environment key, the CLI exits non-zero with `host_start_failed` and records a
+failed trace. Run `sparkwright provider list --workspace .` to inspect
+non-secret status. A stored connection is not reused for a newly chosen
+endpoint. Conversely, changing project `baseURL` does not redirect an already
+selected stored connection: its original endpoint remains authoritative until
+you select or create another connection. A failed selected stored connection
+does not fall back to an ambient key. Real provider behavior is intentionally
+outside the deterministic golden path, so release checks use the deterministic
+model by default.
+
+### Provider catalog refresh fails
+
+A catalog timeout, HTTP failure, invalid signature, invalid JSON, or older
+catalog version does not clear the active model list. SparkWright continues
+with the scoped discovery cache, signed last-known-good base, or bundled
+offline snapshot. Retry explicitly with:
+
+```bash
+sparkwright provider catalog refresh --workspace .
+sparkwright provider catalog refresh openrouter --workspace .
+```
+
+The first command refreshes configured signed metadata and every available
+authenticated discovery source independently. The provider-specific form only
+refreshes that account-visible inventory. If the cache reports `stale`, it is
+still usable; check deployment URL/keyring configuration and network access
+before retrying. Custom providers and explicit user model policies remain
+available without catalog network access.
+
+If the TUI model list is empty after connecting, type the provider-local model
+id directly in `/connect` (for example `anthropic/<model-name>` for OpenRouter),
+or use `/model` with a full `provider/model` reference. This remains subject to
+the provider's configured model allow/deny policy. Use
+`SPARKWRIGHT_OFFLINE=1` when catalog refresh and model discovery must make no
+network request; use
+`SPARKWRIGHT_PROVIDER_CATALOG_AUTO_REFRESH=off` to keep explicit refresh while
+disabling the periodic signed-base check.
 
 OpenAI-compatible providers can be tested with the same CLI path by setting `OPENAI_BASE_URL`. Set the base URL without the trailing `/responses` (the AI SDK appends it):
 

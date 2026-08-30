@@ -99,7 +99,8 @@ Core protocol:
 - `SessionStore`: create/get/append/list
 - `AppendOnlySessionStore`: session-local event stream
 - `replaySessionEventsFromRunStore`: projects run traces into session order
-- `forkSessionFromEvent`: creates a branch for debugging or alternate futures
+- `forkSession`: creates a branch at a stable before/after run boundary;
+  file-backed forks are self-contained snapshots rather than shared run ids
 
 Default implementations:
 
@@ -112,7 +113,14 @@ Default file layout:
 .sparkwright/sessions/<session-id>/
   session.json
   events.jsonl
+  trace.jsonl
+  transcript.jsonl
+  agents/<agent-id>/runs/<run-id>/
 ```
+
+Forked `session.json` metadata carries structured `lineage` with the parent
+session id and semantic fork point. A `session.forked` event records the same
+fact in the append-only session event stream.
 
 `events.jsonl` contains session-local facts such as session creation, run
 membership, replay projections, and host-level session operations. Manual
@@ -155,6 +163,11 @@ telemetry, while the host assigns event ids, sequence, timestamps, and span
 fields. Redaction remains at the trace persistence boundary (`FileRunStore`),
 and large stdout/stderr content should be summarized inline and materialized
 through `artifact.created`.
+
+File-authored project-command interpolation runs before the ordinary run id is
+minted. For a successfully resolved command, the Host buffers its
+`extension.process.*` events and flushes them onto the newly created run before
+model execution; the TUI is never an alternate process or trace owner.
 
 For local integrity checks, `validateSessionTraceConsistency` inspects a
 session directory and verifies that session events, run membership, trace

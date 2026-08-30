@@ -1,17 +1,21 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ProjectTrustManager } from "@sparkwright/host";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadTuiConfig } from "../src/lib/config.js";
 
 describe("loadTuiConfig", () => {
   let tempDirs: string[] = [];
   const originalXdg = process.env.XDG_CONFIG_HOME;
+  const originalState = process.env.XDG_STATE_HOME;
   const originalExplicit = process.env.SPARKWRIGHT_CONFIG;
 
   afterEach(async () => {
     if (originalXdg === undefined) delete process.env.XDG_CONFIG_HOME;
     else process.env.XDG_CONFIG_HOME = originalXdg;
+    if (originalState === undefined) delete process.env.XDG_STATE_HOME;
+    else process.env.XDG_STATE_HOME = originalState;
     if (originalExplicit === undefined) delete process.env.SPARKWRIGHT_CONFIG;
     else process.env.SPARKWRIGHT_CONFIG = originalExplicit;
     await Promise.all(
@@ -25,6 +29,7 @@ describe("loadTuiConfig", () => {
     const xdg = await mkdtemp(join(tmpdir(), "sparkwright-tui-xdg-"));
     tempDirs.push(workspace, xdg);
     process.env.XDG_CONFIG_HOME = xdg;
+    process.env.XDG_STATE_HOME = xdg;
     delete process.env.SPARKWRIGHT_CONFIG;
     await mkdir(join(workspace, ".sparkwright"), { recursive: true });
     await writeFile(
@@ -44,6 +49,7 @@ describe("loadTuiConfig", () => {
       }),
       "utf8",
     );
+    await trustProject(workspace, ["config"]);
 
     const loaded = await loadTuiConfig(workspace);
 
@@ -133,3 +139,17 @@ describe("loadTuiConfig", () => {
     );
   });
 });
+
+async function trustProject(
+  workspaceRoot: string,
+  scopes: Array<"config">,
+): Promise<void> {
+  const manager = new ProjectTrustManager();
+  const snapshot = await manager.inspect(workspaceRoot);
+  const granted = await manager.grant({
+    workspaceRoot,
+    expectedManifestHash: snapshot.manifestHash,
+    scopes,
+  });
+  if (!granted.ok) throw new Error(granted.message);
+}

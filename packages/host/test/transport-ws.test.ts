@@ -62,6 +62,8 @@ describe("transport-ws", () => {
         principalId: "auth:ws-bearer:default",
         principalKind: "gateway",
         authenticatedBy: "ws-bearer",
+        transport: "remote",
+        authorities: [],
       });
       expect(JSON.stringify(contexts[0])).not.toContain("secret-token");
 
@@ -97,6 +99,8 @@ describe("transport-ws", () => {
         expect(authContext).toEqual({
           state: "unauthenticated",
           authenticatedBy: "ws-no-auth",
+          transport: "remote",
+          authorities: [],
         });
       },
     });

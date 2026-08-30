@@ -115,6 +115,18 @@ follow the active maps below for the current contract.
   use raw refs with parent-model inheritance. Logical aliases, model
   allowlists/budgets, and per-logical model usage keying are deferred out of the
   MVP. Active model construction contract: [modules/host.md](modules/host.md).
+- [designs/provider-connections.md](designs/provider-connections.md) — Completed
+  P6 design and implementation history, P6.5a runtime-credential hardening,
+  P6.5b OAuth account-binding hardening,
+  plus active P7.0 connection switching:
+  registry/catalog compatibility, API-key and OAuth connections, signed dynamic
+  catalog refresh, model policy, transactional legacy migration, TUI model
+  preferences, and multi-connection product surfaces. Active contracts remain
+  in the routed Host, Protocol, CLI, TUI, and Edge Package maps.
+- [designs/chatgpt-first-party-connection.md](designs/chatgpt-first-party-connection.md) —
+  Implemented managed ChatGPT connection: bundled package-relative App Server,
+  browser/device login, managed credential marker, account-visible discovery,
+  fail-closed model/tool adapter, and TUI browser launch.
 
 ## Archived Reviews
 
@@ -129,6 +141,7 @@ unsourced [QA convergence stub](../reviews/qa-convergence-plan.md).
 - `packages/core/src/index.ts`, `packages/core/src/internal.ts`, or `scripts/check-internal-imports.mjs`: [modules/core.md](modules/core.md), [modules/edge-packages.md](modules/edge-packages.md), [modules/host.md](modules/host.md), [modules/agent-runtime.md](modules/agent-runtime.md), [modules/cli.md](modules/cli.md)
 - `packages/core/src/trace.ts`, `packages/core/src/trace-codec.ts`, `packages/core/src/trace-diagnostics.ts`, `packages/core/src/run-health.ts`, `packages/core/src/trace-session-consistency.ts`, or `packages/core/src/trace-store.ts`: [modules/core.md](modules/core.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md), [maps/session/session-store.md](maps/session/session-store.md)
 - `packages/core/src/context.ts` or `packages/core/src/path-display.ts`: [modules/core.md](modules/core.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
+- `packages/core/src/extensions.ts`: [modules/core.md](modules/core.md), [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/safety/approvals.md](maps/safety/approvals.md)
 - `packages/core/src/hooks.ts`: [modules/core.md](modules/core.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/core/src/events.ts`, `packages/core/src/user-hooks.ts`, or `packages/core/src/workflow-hooks.ts`: [modules/core.md](modules/core.md), [modules/host.md](modules/host.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
 - `packages/core/src/environment.ts`: [modules/core.md](modules/core.md), [maps/safety/shell.md](maps/safety/shell.md)
@@ -145,7 +158,7 @@ unsourced [QA convergence stub](../reviews/qa-convergence-plan.md).
 - `packages/host/src/config.ts` or `packages/host/src/config-zod-schema.ts`: [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
 - `packages/host/src/config/*`: [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
 - `packages/host/src/tool-identities.ts`, `packages/host/src/tool-catalog.ts`, `packages/host/src/tool-selectors.ts`, or `packages/host/src/tool-surface.ts`: [modules/host.md](modules/host.md), [modules/coding-tools.md](modules/coding-tools.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/capabilities/README.md](maps/capabilities/README.md)
-- `packages/host/src/model-builder.ts` or `packages/host/src/model-factory.ts`: [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md)
+- `packages/host/src/provider-catalog.ts`, `packages/host/src/provider-catalog-store.ts`, `packages/host/src/provider-catalog-source.ts`, `packages/host/src/generated/provider-model-catalog.ts`, `packages/host/src/provider-auth.ts`, `packages/host/src/provider-oauth.ts`, `packages/host/src/provider-credential-store.ts`, `packages/host/src/chatgpt-app-server.ts`, `packages/host/src/model-builder.ts`, `packages/host/src/model-factory.ts`, `scripts/provider-catalog/*`, `packages/tui/src/components/connect-dialog.tsx`, `packages/tui/src/lib/open-external-url.ts`, or `packages/tui/src/lib/model-preferences.ts`: [modules/host.md](modules/host.md), [modules/protocol.md](modules/protocol.md), [modules/cli.md](modules/cli.md), [modules/tui.md](modules/tui.md), [modules/edge-packages.md](modules/edge-packages.md), [designs/provider-connections.md](designs/provider-connections.md), [designs/chatgpt-first-party-connection.md](designs/chatgpt-first-party-connection.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md)
 - `packages/host/src/runtime.ts`, `packages/host/src/run-access.ts`, `packages/host/src/run-security-plan.ts`, or `packages/host/src/run-policy.ts`: [modules/host.md](modules/host.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/host/src/runtime/*`, including interaction/control routing in `execution-interaction-operations.ts`, run preparation in `run-preparation-operations.ts`, Agent/Delegate assembly in `agent-runtime-assembly.ts`, Workflow durable ownership in `workflow-runtime-operations.ts`, and live episode ownership in `workflow-episode-runtime.ts`: [modules/host.md](modules/host.md), [modules/agent-runtime.md](modules/agent-runtime.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/capabilities/agents.md](maps/capabilities/agents.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/approvals.md](maps/safety/approvals.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/safety/shell.md](maps/safety/shell.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/host/src/session-queries.ts` or `packages/host/src/session-compaction.ts`: [modules/host.md](modules/host.md), [maps/session/session-store.md](maps/session/session-store.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
@@ -187,6 +200,7 @@ unsourced [QA convergence stub](../reviews/qa-convergence-plan.md).
 - `packages/shell-sandbox/src/*`: [modules/edge-packages.md](modules/edge-packages.md), [modules/host.md](modules/host.md), [modules/mcp-adapter.md](modules/mcp-adapter.md), [maps/safety/shell.md](maps/safety/shell.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md)
 - `packages/project-context/src/index.ts`: [modules/coding-tools.md](modules/coding-tools.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
 - `packages/project-commands/src/*`: [modules/edge-packages.md](modules/edge-packages.md), [modules/tui.md](modules/tui.md), [maps/safety/shell.md](maps/safety/shell.md)
+- `packages/host/src/project-trust.ts`, `packages/host/src/project-command-resolution.ts`, or project-source trust admission: [modules/host.md](modules/host.md), [modules/protocol.md](modules/protocol.md), [modules/cli.md](modules/cli.md), [modules/tui.md](modules/tui.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/safety/shell.md](maps/safety/shell.md)
 - `packages/skills/src/*` or `packages/host/src/skill-*`: [modules/skills.md](modules/skills.md), [maps/capabilities/skills.md](maps/capabilities/skills.md)
 - `packages/host/src/project-skill-create.ts`, `sparkwright skills create`, or TUI `/create skill`: [modules/skills.md](modules/skills.md), [modules/host.md](modules/host.md), [modules/cli.md](modules/cli.md), [modules/tui.md](modules/tui.md), [maps/capabilities/skills.md](maps/capabilities/skills.md)
 - `packages/skills/src/markdown-folder-asset.ts`: [modules/skills.md](modules/skills.md), [modules/host.md](modules/host.md), [maps/capabilities/README.md](maps/capabilities/README.md)
@@ -203,12 +217,12 @@ unsourced [QA convergence stub](../reviews/qa-convergence-plan.md).
 - `packages/agent-runtime/src/workflows/workers.ts`, `packages/server-runtime/src/workflow-supervisor.ts`, or durable workflow worker ownership: [modules/agent-runtime.md](modules/agent-runtime.md), [modules/host.md](modules/host.md), [modules/edge-packages.md](modules/edge-packages.md), [maps/session/resume-replay.md](maps/session/resume-replay.md)
 - `packages/server-runtime/src/workflow-service.ts`, `sparkwright workflow service *`, or `workflow start --detach`: [modules/edge-packages.md](modules/edge-packages.md), [modules/cli.md](modules/cli.md), [modules/host.md](modules/host.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/session/session-store.md](maps/session/session-store.md)
 - `packages/agent-runtime/src/workflows/channels.ts`, `packages/server-runtime/src/workflow-channel-coordinator.ts`, `workflow.control.process`, or durable workflow channel delivery: [modules/agent-runtime.md](modules/agent-runtime.md), [modules/edge-packages.md](modules/edge-packages.md), [modules/host.md](modules/host.md), [modules/protocol.md](modules/protocol.md), [modules/tui.md](modules/tui.md), [modules/cli.md](modules/cli.md), [maps/session/resume-replay.md](maps/session/resume-replay.md)
-- `packages/provider-ai-sdk/src/*` or `packages/provider-registry/src/*`: [modules/edge-packages.md](modules/edge-packages.md), [modules/host.md](modules/host.md), [designs/multi-model.md](designs/multi-model.md)
+- `packages/provider-ai-sdk/src/*` or `packages/provider-registry/src/*`: [modules/edge-packages.md](modules/edge-packages.md), [modules/host.md](modules/host.md), [designs/multi-model.md](designs/multi-model.md), [designs/provider-connections.md](designs/provider-connections.md)
 - `packages/server-runtime/src/execution-lanes.ts` or Host interactive lane scheduling: [modules/edge-packages.md](modules/edge-packages.md), [modules/host.md](modules/host.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [designs/host-execution-lane-p0-baseline.md](designs/host-execution-lane-p0-baseline.md)
 - Other `packages/server-runtime/src/*`, `packages/streaming-runtime/src/*`, or `packages/memory-file-store/src/*`: [modules/edge-packages.md](modules/edge-packages.md), [modules/core.md](modules/core.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/session/session-store.md](maps/session/session-store.md)
 - `packages/trace-perfetto/src/*`: [modules/edge-packages.md](modules/edge-packages.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/host/src/im-control.ts`, `packages/im-gateway/src/*`, or ordinary IM session control: [modules/edge-packages.md](modules/edge-packages.md), [modules/protocol.md](modules/protocol.md), [modules/host.md](modules/host.md), [maps/safety/approvals.md](maps/safety/approvals.md), [maps/session/session-store.md](maps/session/session-store.md)
-- `packages/host/src/connection.ts`, `packages/host/src/transport-ws.ts`, `packages/host/src/transport-stdio.ts`, `packages/host/src/server.ts`, or Host connection authentication/principal derivation: [modules/host.md](modules/host.md), [modules/protocol.md](modules/protocol.md), [modules/edge-packages.md](modules/edge-packages.md), [maps/safety/approvals.md](maps/safety/approvals.md), [maps/session/resume-replay.md](maps/session/resume-replay.md)
+- `packages/host/src/connection.ts`, `packages/host/src/transport-ws.ts`, `packages/host/src/transport-stdio.ts`, `packages/host/src/server.ts`, or Host connection authentication/principal derivation: [modules/host.md](modules/host.md), [modules/protocol.md](modules/protocol.md), [modules/edge-packages.md](modules/edge-packages.md), [designs/provider-connections.md](designs/provider-connections.md), [maps/safety/approvals.md](maps/safety/approvals.md), [maps/session/resume-replay.md](maps/session/resume-replay.md)
 
 ## Trace / Session / Export Rule
 
@@ -219,6 +233,186 @@ TUI events; it is not a trace diagnostic report and must not replace
 trace/session inspection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-08-22
+- Scope: provider catalogs now combine a maintained offline seed, optional
+  deployment-signed background refresh with LKG/offline fallback, isolated
+  account discovery, user provider/config policy, and manual TUI model entry.
+  Background refresh is credential-free and cross-process coordinated; no
+  Protocol DTO was added.
+- Read: Host lifecycle/catalog/auth/model owners, TUI connect model stage,
+  generator/maintenance boundary, public configuration, and provider test maps.
+- Tests: focused Host catalog/auth/model/generator 61/61, ConnectDialog 12/12,
+  full TUI 568/568, and Host/TUI/test typechecks passed.
+
+- Status: Verified
+- Date: 2026-08-21
+- Scope: provider metadata now has an explicitly maintained offline snapshot,
+  an opt-in signed LKG refresh path, and account/workspace-scoped discovery
+  overlays. User-defined providers and provider options remain independent of
+  catalog membership; build/test remain network-free and startup contacts only
+  an explicitly configured signed endpoint.
+- Read: Host catalog/auth/store/source owners, offline generator/signing tools,
+  user configuration authority, Provider Edge, maintainer runbook, routed
+  Protocol/CLI/TUI maps, and provider test-map coverage.
+- Tests: generator/source/store/auth focused tests, Host/SDK/CLI/TUI routed
+  suites, schema/typecheck/lint/format gates, catalog no-op regeneration,
+  package notice inspection, project-map drift, production audit, regression
+  matrix, and source/release install smokes.
+
+- Status: Verified
+- Date: 2026-08-18
+- Scope: ChatGPT is now a supported bundled provider. Host owns a
+  package-relative App Server process, generic connection transaction, managed
+  marker, model discovery, and fail-closed model/tool projection. TUI opens the
+  browser and retains the URL only as fallback; Protocol/SDK DTOs are unchanged.
+- Read: routed Host/provider/model files, TUI connect/browser files, Protocol,
+  CLI, Edge, capability/context/trace boundaries, design, and test map.
+- Tests: focused Host 43/43, TUI ConnectDialog 5/5, Host/TUI typecheck, real
+  App Server account/model/text/tool smokes, and real TUI login start/cancel
+  passed before the closing repository gate.
+
+- Status: Verified
+- Date: 2026-08-17
+- Scope: the unfinished external-process ChatGPT provider was removed from
+  source, catalog, product tests, and diagnostic routes. Generic OAuth/PKCE,
+  credential storage, complete account binding, refresh locking, and product
+  presentation remain. A first-party design is cataloged but cannot be exposed
+  until its provider-contract, legal, and security gates are satisfied.
+- Read: provider catalog/auth/OAuth/model construction, routed CLI/TUI/SDK
+  tests, provider design, and capability/context/trace boundaries.
+- Tests: focused Host provider/model/Protocol 47/47, SDK Core 15/15, CLI
+  provider 5/5, TUI routed 33/33, Host typecheck/build, and schema validation
+  passed.
+
+- Status: Verified
+- Date: 2026-08-12
+- Scope: P6.5b keeps OAuth account identity inside the existing Host connection
+  owner, includes realm/account/tenant in complete binding fingerprints,
+  rejects completion/refresh identity drift, and migrates legacy credential
+  identity without changing public DTOs or adding another registry. The final
+  review fix routes authenticated catalog discovery through the same credential
+  resolver, keeps public fingerprints endpoint-only, and records refresh
+  success/failure separately from ordinary connection generation.
+- Read: provider connection design, Host auth owner, routed Protocol/CLI/TUI,
+  Edge, capability, trace, and compaction boundaries, plus focused test route.
+- Route review: public request/result shapes, product input flows, provider
+  adapters, capability admission, trace derivation, and context compaction are
+  unchanged.
+- Tests: focused Host provider route 119/119, SDK Core 15/15, CLI provider 5/5,
+  and TUI routed 33/33 passed before the full `npm run release:check`; the
+  closing gate passed Core 688/688, Host 632/632, CLI 177/177, TUI 560/560,
+  the 16-case regression matrix, production audit, and both install smokes.
+
+- Status: Verified
+- Date: 2026-08-11
+- Scope: P6.5a keeps provider runtime credentials typed, automatically refreshes
+  OAuth credentials inside the existing cross-process connection lock before
+  expiry, rejects bearer realms without a code-owned runtime transport, and
+  enforces Core's documented one credential-refresh attempt per run step.
+- Read: Host provider lease/auth/model construction, Core credential resolver,
+  provider connection design, public provider edge, and focused test route.
+- Route review: Protocol, SDK, CLI, TUI, capability, approval, session,
+  compaction, and trace shapes are unchanged; no second provider registry or
+  runtime-driver registry was introduced.
+- Tests: Host provider/model 25/25, broader routed Host 110/110, Core 688/688,
+  schema/typechecks, both project-map drift gates, and the full
+  `npm run release:check` passed, including the 16-case regression matrix and
+  both install smokes.
+
+- Status: Verified
+- Date: 2026-08-09
+- Scope: P7.0 exposes existing Host-owned multi-connection state through CLI
+  inventory/exact-id selection and a TUI connection switcher. A trusted-local
+  management view keeps disconnected stored connections reachable while the
+  default and remote views remain grant-filtered. TUI disconnect is deliberately
+  non-destructive; permanent removal remains an explicit CLI action.
+- Read: Host provider auth/catalog and transport-authority boundary, existing
+  Protocol/SDK connection methods, CLI provider commands, TUI
+  connect/layer/controller flow, public provider docs, and routed capability
+  map.
+- Route review: this is a local pre-run control path. Run-loop/tool authority,
+  approvals, session/resume, compaction, and trace contracts are unchanged.
+- Tests: focused Host manager/protocol, CLI, and TUI regressions cover
+  disconnect, local inventory, remote hiding, reselection, and removal. Full
+  release gate passed with Host 619/619, CLI 177/177, TUI 560/560, Core
+  687/687, 16/16 regressions, production audit, and both install smokes.
+
+- Status: Verified
+- Date: 2026-08-09
+- Scope: P6.4 routes signed/authenticated model metadata refresh, catalog
+  LKG/TTL/generation-CAS storage, model policy compatibility, transactional
+  config-credential migration, and TUI Favorite/Recent ordering through the
+  existing Host provider owner and product surfaces. Dynamic metadata cannot
+  supply packages, endpoints, authentication, or drivers.
+- Read: ProviderCatalogStore/AuthManager, config policy and migration I/O,
+  Host authority/dispatch, Protocol/schema/SDK, CLI/TUI pickers, public docs,
+  provider module maps, and A20-A24 regressions.
+- Route review: Core run-loop/tool orchestration, Agent/MCP capabilities,
+  approvals/workspace/shell, session/resume, compaction, and trace semantics are
+  unchanged; catalog refresh is a local pre-run control path and preferences
+  are presentation-only user state.
+- Tests: full release gate passed, including Host 617/617, CLI 177/177, TUI
+  559/559, project-trust and 16-case regressions, and both install smokes.
+
+- Status: Verified
+- Date: 2026-08-09
+- Scope: P6.3 routes code-owned OAuth declarations and drivers, local
+  principal/client-bound attempts, one-time completion, serialized refresh,
+  protocol/SDK methods, and CLI/TUI progress through the existing provider
+  connection owner. P6.4 catalog refresh and picker preference work remains
+  separate.
+- Read: OAuth driver/attempt implementation, provider catalog/auth/model
+  resolution, Host dispatch/authority, Protocol/schema/SDK, CLI/TUI flows,
+  public references, and all routed module pages.
+- Route review: run-loop/tool orchestration, Agent/MCP capability, Project
+  Trust/workspace/shell approval, session/resume, context-compaction, and trace
+  maps need no semantic update. OAuth is a pre-run local provider-connection
+  control path and changes none of those runtime, persistence, approval, or
+  diagnostic contracts. The capability snapshot shape is also unchanged.
+- Tests: full `npm run release:check` passed, including Host 608/608, CLI
+  176/176, TUI 554/554, Core 687/687, SDK Core 15/15, Protocol 6/6, 16/16
+  regression cases, production audit, Project Trust regression, and both
+  install smokes.
+
+- Status: Verified
+- Date: 2026-08-09
+- Scope: P6.1 routes Host provider catalog composition, Registry-backed model
+  enumeration/adapter resolution, additive provider projections, and direct-Core
+  compatibility through the provider-connections design and Host, Protocol,
+  CLI, and Edge Package maps.
+- Read: new Host provider catalog, provider auth/model construction, Protocol
+  DTO/schema/dispatch, CLI direct-Core caller, SDK forwarding, reference docs,
+  and all routed module pages.
+- Tests: full `npm run release:check` passed, including Core 687/687, Host
+  585/585, CLI 173/173, TUI 552/552, Protocol 6/6, SDK Core 13/13, 16/16
+  regression-matrix cases, production audit, and both install smokes.
+
+- Status: Read-only
+- Date: 2026-08-09
+- Scope: cataloged the P6.0 provider-connection design baseline and routed
+  provider registry, Host model/auth, and connection-authority changes through
+  it. Runtime behavior is unchanged and remains governed by the active module
+  maps.
+- Read: current ProviderRegistry, Host provider auth/model/config/connection
+  boundaries, Protocol provider DTOs, CLI provider commands, TUI model picker,
+  and the new design baseline.
+- Tests: documentation validation only; runtime tests were not run.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: Host-owned Project Trust now admits executable project configuration,
+  commands, Skills, Agent profiles, and Workflows by canonical workspace and
+  per-scope content hash. Untrusted or changed sources stay outside runtime
+  assembly; inspection is read-only and mutation is limited to local trusted
+  connections.
+- Read: trust state/hash boundary, config/source discovery gates, protocol/SDK,
+  CLI/TUI controls, release manifest audit, and real Host regression.
+- Tests: full `npm run release:check` passed: Core 687/687, Host 578/578, CLI
+  173/173, TUI 552/552, SDK Core 13/13, 22 schemas / 19 fixtures, 27 public
+  release manifests, production audit with 0 vulnerabilities, Project Trust
+  lifecycle regression, 16/16 regression-matrix cases, and both install smokes.
 
 - Status: Verified
 - Date: 2026-08-01

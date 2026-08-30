@@ -1,7 +1,13 @@
 import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import {
+  parse as parseYaml,
+  parseDocument as parseYamlDocument,
+  stringify as stringifyYaml,
+} from "yaml";
+import { atomicWriteText } from "@sparkwright/agent-runtime";
+import { withExclusiveFileLock } from "../provider-credential-store.js";
 import {
   CONFIG_ENV_VAR,
   CONFIG_FILE_BASENAMES,
@@ -177,6 +183,85 @@ export async function resolveConfigWriteTarget(
     path: existing[0] ?? defaultJsonPath,
     exists: existing.length === 1,
   };
+}
+
+/**
+ * Remove one explicitly selected legacy provider API key without rewriting
+ * unrelated YAML comments. The exact expected value is checked while holding
+ * a cross-process lock so a concurrent config edit cannot be overwritten.
+ */
+export async function removeLegacyProviderApiKey(input: {
+  path: string;
+  providerId: string;
+  expectedSecret: string;
+}): Promise<{ removed: true; path: string }> {
+  return await withExclusiveFileLock(`${input.path}.lock`, async () => {
+    const raw = await readFile(input.path, "utf8");
+    const info = await stat(input.path);
+    const format = configFileFormatForPath(input.path);
+    let serialized: string;
+    if (format === "yaml") {
+      const document = parseYamlDocument(raw);
+      if (document.errors.length > 0) {
+        throw new Error(`${input.path} is not valid YAML.`);
+      }
+      const canonicalPath = [
+        "identity",
+        "providers",
+        input.providerId,
+        "apiKey",
+      ];
+      const legacyPath = ["providers", input.providerId, "apiKey"];
+      const selectedPath =
+        document.getIn(canonicalPath) !== undefined
+          ? canonicalPath
+          : document.getIn(legacyPath) !== undefined
+            ? legacyPath
+            : undefined;
+      if (!selectedPath) {
+        throw new Error(
+          `Provider "${input.providerId}" no longer has a legacy apiKey in ${input.path}.`,
+        );
+      }
+      if (document.getIn(selectedPath) !== input.expectedSecret) {
+        throw new Error(
+          `Provider "${input.providerId}" apiKey changed during migration; no config was modified.`,
+        );
+      }
+      document.deleteIn(selectedPath);
+      serialized = document.toString({ lineWidth: 0 });
+    } else {
+      const parsed = JSON.parse(raw) as unknown;
+      if (!isRecord(parsed))
+        throw new Error(`${input.path} must contain an object.`);
+      const canonicalProviders = isRecord(parsed.identity)
+        ? parsed.identity.providers
+        : undefined;
+      const providers = isRecord(canonicalProviders)
+        ? canonicalProviders
+        : parsed.providers;
+      const provider = isRecord(providers)
+        ? providers[input.providerId]
+        : undefined;
+      if (!isRecord(provider) || provider.apiKey === undefined) {
+        throw new Error(
+          `Provider "${input.providerId}" no longer has a legacy apiKey in ${input.path}.`,
+        );
+      }
+      if (provider.apiKey !== input.expectedSecret) {
+        throw new Error(
+          `Provider "${input.providerId}" apiKey changed during migration; no config was modified.`,
+        );
+      }
+      delete provider.apiKey;
+      serialized = `${JSON.stringify(parsed, null, 2)}\n`;
+    }
+    await atomicWriteText(input.path, serialized, {
+      mode: info.mode & 0o777,
+      durable: true,
+    });
+    return { removed: true as const, path: input.path };
+  });
 }
 
 function configSiblingCandidatePaths(defaultJsonPath: string): string[] {

@@ -28,6 +28,7 @@ import {
 
 export interface SessionCompactionContext extends SessionQueryContext {
   defaultModel?: string;
+  projectConfigTrusted?: boolean;
 }
 
 export type SessionCompactSuccessResult = {
@@ -74,7 +75,15 @@ export async function compactHostSession(input: {
     safeSessionId,
   );
 
-  const loaded = await loadHostConfig(input.context.workspaceRoot);
+  const loaded = await loadHostConfig(
+    input.context.workspaceRoot,
+    process.env,
+    {
+      projectMode: input.context.projectConfigTrusted
+        ? "trusted"
+        : "restricted",
+    },
+  );
   const prepared = await sessionCompactionOptionsForTask({
     context: input.context,
     reason: input.reason,
@@ -250,6 +259,7 @@ async function sessionCompactionOptionsForTask(input: {
     modelRef: input.taskConfig?.model ?? input.context.defaultModel,
     goal: "Summarize completed session history for future context.",
     workspaceRoot: input.context.workspaceRoot,
+    includeProjectConfig: input.context.projectConfigTrusted === true,
   });
   if (!model.ok) {
     return {

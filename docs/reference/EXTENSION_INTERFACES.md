@@ -93,7 +93,54 @@ interface ContextExtension {
 }
 ```
 
-These interfaces are now exported from `@sparkwright/core` (see `packages/core/src/extensions.ts`). Implementations still feed core through `ContextItem[]` passed to `createRun({ context })` or a custom `ContextAssembler`; the interface is a type-level contract, not a new runtime entry point.
+These interfaces are exported from `@sparkwright/core`. Register adapters with
+`inspectExtensions()` for side-effect-free capability discovery or
+`prepareExtensions()` for one run. Both helpers compile extensions into normal
+`ContextItem[]` and `ToolDefinition[]`; they do not introduce a second run
+loop.
+
+```ts
+const extension: ExtensionRegistration = {
+  id: "workspace.notes",
+  version: "1.0.0",
+  context: {
+    name: "workspace-notes",
+    describe: () => [{ name: "notes", description: "Workspace notes." }],
+    load: ({ goal }) => [
+      {
+        id: createContextItemId(),
+        type: "summary",
+        content: loadRelevantNotes(goal),
+        metadata: { layer: "working", stability: "turn" },
+      },
+    ],
+  },
+};
+
+const prepared = await prepareExtensions([extension], {
+  goal,
+  agentId: "main",
+});
+
+const run = createRun({
+  goal,
+  context: prepared.context,
+  tools: prepared.tools,
+  model,
+});
+```
+
+Registration ids are lowercase audit identities. The preparation boundary
+validates every registration before invoking adapter callbacks, rejects
+duplicate ids/tool names, and applies per-extension limits. Context loading is
+bounded to 32 items and 100,000 serialized characters by default; tool
+discovery is bounded to 64 tools. Override these values with
+`ExtensionRegistration.limits` only when the host has a concrete need.
+
+Prepared context is limited to `system`, `file`, and `summary`. Its source and
+`metadata.extension` identity are host-authored, so an adapter cannot forge a
+user, assistant, or tool-result turn. `inspectExtensions()` calls
+`describe()` and `listTools()` but never `load()`.
 
 ### Project Instruction Files
 
@@ -219,7 +266,7 @@ interface ToolExtension {
 }
 ```
 
-Today, extension authors should normalize external capabilities into `ToolDefinition`:
+Extension authors normalize capabilities into `ToolDefinition`:
 
 ```ts
 const sendMessage = defineTool({
@@ -267,6 +314,21 @@ generic repeated-call nudge. A prior tool failure or explicit no-progress
 result still goes through the generic guard. This hook does not change replay
 risk; `governance.idempotency` remains the sole replay-safety declaration.
 
+Registration adds a stable extension id/version to `governance.origin.metadata`.
+Missing control metadata is normalized conservatively:
+
+- missing side effects become `external`
+- write, network, and external effects become `risk: "risky"` and require
+  approval
+- missing idempotency becomes `non_idempotent`
+- missing delegation becomes `parent_only`
+- missing interrupt behavior becomes `block`
+
+Argument-dependent `policyForArgs()` results are normalized through the same
+rules. Concurrent execution remains disabled unless the extension explicitly
+classifies the call as concurrency-safe and its effective governance is
+read-only and replay-safe.
+
 Tool origin should be carried in metadata where useful:
 
 ```ts
@@ -276,7 +338,45 @@ governance: {
 }
 ```
 
-A future tool-origin field may distinguish `local:function`, `local:script`, `mcp:<server>`, and `hosted:<provider>`.
+The registration identity remains authoritative even when the adapter declares
+a more specific local, script, MCP, or hosted origin.
+
+## Host Integration
+
+Trusted embedders can supply registrations when they create a Host runtime or
+serve a connection:
+
+```ts
+const runtime = hostService.createRuntime({
+  workspaceRoot,
+  extensions: [extension],
+  emit,
+});
+```
+
+The Host prepares extension context once per run, includes governed tools in
+the existing catalog, and records extension identity in run metadata. Use
+`tools.use: ["extensions"]` for all registered extension tools or
+`tools.use: ["extension:workspace.notes"]` for one registration. Extension
+tools still obey the run access ceiling, tool allow/deny filters, approvals,
+workspace mutation leases, child delegation, and trace lifecycle.
+
+`capability.inspect` exposes declared extension surfaces under
+`CapabilitySnapshot.extensions`; the effective, selector-filtered tool set
+remains `CapabilitySnapshot.tools`. This separation lets clients explain both
+what the host registered and what the current run can actually use.
+
+## Trust Boundary
+
+Registration is an in-process embedder API, not a code loader or JavaScript
+sandbox. Registration code already has the authority of the hosting process.
+The governed boundary controls what enters model context and how model-invoked
+tools execute; it cannot make arbitrary code loaded by the embedder safe.
+
+Accordingly, `describe()`, `listTools()`, and `load()` must be deterministic and
+free of writes, process launches, or network side effects. Put side effects
+only in `ToolDefinition.execute()`, where policy, approval, leases, and trace
+can govern them. Load only registrations trusted by the embedding application.
 
 ### Tool Result Presentation
 
@@ -770,8 +870,8 @@ await commands.dispatch("/compact aggressive");
 
 `.sparkwright/command/*.md` files become commands without code via
 [`@sparkwright/project-commands`](../../packages/project-commands). A command that
-should begin a run does **not** start one itself; it yields a
-front-end-agnostic intent that the embedder dispatches:
+should begin a run does **not** start one itself. The package can resolve a
+front-end-agnostic intent for custom embedders:
 
 ```ts
 interface StartRunIntent {
@@ -782,16 +882,24 @@ interface StartRunIntent {
 }
 ```
 
-Embedder responsibilities:
+The canonical Host product path keeps that resolution server-side:
 
-- Pass the rest-of-line to the command so `$ARGUMENTS` / `$1..$9` resolve. (The
-  TUI threads it through `onCommand(cmd, rest)` → `Command.runRaw`.)
-- Supply a **safety-gated** shell runner for `` !`shell` `` segments via
-  `createSafetyGatedShellRunner` — file-command shell rides the same
-  `evaluateShellSafety` floor as model-invoked shell; `deny`/unknown commands are
-  blocked, never executed.
-- Decide how `prompt` / `model` / `subtask` map onto its run-start path. Explicit
-  config-file declarations shadow same-named files (config wins).
+- The TUI discovers descriptors for presentation but sends only
+  `run.start.projectCommand = { name, rest? }`; it never interpolates or runs
+  shell locally.
+- The Host rediscovers the named descriptor from its effective capability roots,
+  so clients cannot substitute a command body or source path.
+- `$ARGUMENTS` / `$1..$9` and fixed `` !`shell` `` segments resolve during Host
+  run preparation. Shell first passes `evaluateShellSafety`, then the shared
+  traced process runner under an enforced no-write sandbox. Denied and
+  approval-required commands fail closed before launch; admitted executions
+  emit `extension.process.*` evidence that is flushed into the new run.
+- The resolved prompt becomes the run goal. `projectCommand` is restricted to
+  ordinary main runs; workflow jobs do not accept it.
+
+Custom embedders that call `buildStartRunIntent` directly remain responsible
+for supplying `createSafetyGatedShellRunner` and mapping `prompt` / `model` /
+`subtask` without widening policy.
 
 ## Sub-agents
 

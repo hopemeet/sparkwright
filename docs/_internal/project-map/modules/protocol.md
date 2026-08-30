@@ -10,6 +10,191 @@ See also [../maps/safety/approvals.md](../maps/safety/approvals.md) and [../maps
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-08-20
+- Scope: `provider.auth.methods` and `provider.auth.submit_secret` add optional
+  exact endpoint input; the methods snapshot adds an optional separately
+  labelled configured binding. Omission means the official endpoint, preserving
+  older client compatibility. No authority or remote-secret boundary changed.
+- Read: provider request/result DTOs, generated Host-message schema, Host
+  validation/dispatch, and SDK/TUI consumers.
+- Tests: Protocol/schema consistency, Host provider Protocol 9/9, SDK Core
+  15/15, and the closing release gate passed.
+
+- Status: Read-only
+- Date: 2026-08-20
+- Scope: ambient config/environment credentials now use the existing
+  `unverified` status until safe validation succeeds. No request, result,
+  authority, transport, or schema shape changed.
+- Read: provider status DTOs, Host catalog/auth projection, CLI provider-list,
+  and TUI connection rendering.
+- Tests: Host provider Protocol 9/9 and routed Host/TUI/CLI provider checks
+  passed; the closing release gate passed Protocol 6/6 and schema consistency.
+
+- Status: Read-only
+- Date: 2026-08-18
+- Scope: ChatGPT reuses generic OAuth attempts, opaque connection summaries,
+  catalog refresh, and model selection. Process identity, managed marker,
+  tokens, account details, and App Server protocol never cross public DTOs.
+- Read: provider request/result families and Host summary projection.
+- Tests: focused Host provider/App Server coverage passed with no schema change.
+
+- Status: Verified
+- Date: 2026-08-17
+- Scope: removing the unfinished ChatGPT provider required no protocol schema
+  change. Generic OAuth attempt DTOs and opaque connection summaries remain;
+  no external-process or managed-marker type crosses the wire.
+- Read: provider auth request/result routing and public connection summaries.
+- Tests: Host provider Protocol passed inside the focused 47/47 route; SDK Core
+  15/15 and schema validation also passed.
+
+- Status: Read-only
+- Date: 2026-08-12
+- Scope: OAuth account and tenant identity remain Host-private binding metadata.
+  Public connection summaries still expose only opaque ids and fingerprints;
+  no request, result, schema, authority, or transport shape changed.
+- Read: provider connection DTOs, OAuth request lifecycle, Host public summary
+  projection, and local/remote authority boundary.
+- Tests: focused Host provider/protocol route 114/114, SDK Core 15/15, and
+  schema validation passed; Protocol contracts are unchanged.
+
+- Status: Read-only
+- Date: 2026-08-10
+- Scope: Keychain prompt isolation is entirely behind Host's existing
+  `provider.secret.submit` boundary. No request, result, authority, transport,
+  or schema shape changed.
+- Read: secret-submit Protocol DTOs, Host dispatch/authority, and credential
+  store implementation.
+- Tests: focused Host protocol/provider checks, Protocol 6/6, and the full
+  release gate passed; the Protocol contract is unchanged.
+
+- Status: Read-only
+- Date: 2026-08-09
+- Scope: P7.0 reuses existing `provider.connection.select` and
+  `provider.connection.disconnect` requests plus provider-list DTOs. No wire
+  shape, schema, authority, or remote-mutation boundary changes. Missing
+  optional `grantScope` already represents a locally manageable but currently
+  disconnected stored connection; Host derives visibility from transport
+  authority rather than accepting a new request field.
+- Read: Protocol connection DTOs, Host authority, SDK forwarding, and CLI/TUI
+  callers.
+- Tests: focused Host local/remote provider-list and product connection checks
+  passed; Protocol 6/6 and the full release gate passed. The Protocol contract
+  is unchanged.
+
+- Status: Verified
+- Date: 2026-08-09
+- Scope: P6.4 adds trusted-local `provider.catalog.refresh`, non-secret catalog
+  cache state/result DTOs, schema fixtures, Host dispatch validation, and SDK
+  forwarding. The remote mutation boundary remains closed.
+- Read: Protocol request/result maps, Host authority/validators, JSON schema,
+  SDK Core, reference protocol, and local/remote provider protocol tests.
+- Tests: focused Protocol/Host/SDK checks, schema generation, and the full
+  release gate passed.
+
+- Status: Verified
+- Date: 2026-08-09
+- Scope: P6.3 adds generic `provider.auth.begin|status|complete|cancel`
+  requests and bounded OAuth attempt/method DTOs. Host dispatch binds attempt
+  ownership to the transport principal and client connection; remote
+  transports cannot use the OAuth mutation surface.
+- Read: Protocol DTO/request maps, Host validators/dispatch/authority, JSON
+  schema fixtures, SDK forwarding, and protocol reference/changelog.
+- Tests: full `npm run release:check` passed, including Protocol 6/6, SDK Core
+  15/15, Host 608/608, 22 schemas / 23 instances plus protocol consistency,
+  16/16 regression cases, and both install smokes.
+
+- Status: Verified
+- Date: 2026-08-09
+- Scope: P6.2 adds auth-method discovery, a trusted-local-only secret-submit
+  request, stored connection summaries, revision/grant/binding metadata, and
+  select/disconnect/logout/remove/refresh mutations. Secret submission and
+  connection mutation use split authorities; remote transport is denied even
+  if a secret authority is injected.
+- Read: Protocol DTOs, schema request mapping, Host connection authority and
+  dispatch, SDK methods, provider protocol tests, and public protocol docs.
+- Tests: full `npm run release:check` passed, including Protocol 6/6, SDK Core
+  14/14, Host 602/602, 22 schemas / 19 instances plus protocol consistency,
+  16/16 regression cases, and both install smokes.
+
+- Status: Verified
+- Date: 2026-08-09
+- Scope: `provider.list` accepts an optional `all`, `connected`, or `available`
+  projection. Responses add a bundled catalog version plus non-secret
+  configured/connected/available metadata while omitted projection preserves
+  the configured-provider compatibility view.
+- Read: Protocol provider DTOs, Host request validation/dispatch, JSON schema,
+  SDK forwarding contract, provider protocol tests, and reference/changelog.
+- Tests: full `npm run release:check` passed, including Protocol 6/6, SDK Core
+  13/13, Host 585/585, schema/protocol consistency validation, 16/16
+  regression-matrix cases, production audit, and both install smokes.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: protocol v2 adds Project Trust inspect/grant/revoke requests, bounded
+  trust snapshots, trust-specific error codes, and a per-connection mutation
+  capability. Schema validation now locks request-kind coverage and the Host
+  protocol version across source, schema, and documentation.
+- Read: protocol DTOs, Host message schema/validator, connection authority,
+  SDK methods, and protocol reference/changelog.
+- Tests: Protocol 6/6, SDK Core 13/13, Host 578/578, 22 schemas / 19 fixtures,
+  real Host trust regression, and full release gates passed.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: `CapabilitySnapshot` may expose a bounded Extension registration
+  inventory with id/version, described context names, and declared tool names.
+  Effective tool availability remains in the existing tool summaries; no new
+  request or run-event family was introduced.
+- Read: Protocol capability types, Host projection, host-message schema,
+  reference docs, and protocol tests.
+- Tests: Protocol 6/6, schema validation, and full `npm run release:check`
+  passed.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: `run.inject_message` now carries optional command identity and
+  steer/follow-up mode, returns an explicit queued/applied result, and exposes
+  follow-up start/rejection as a typed Host event. Core command rejection
+  remains inside the opaque `run.event` stream.
+- Read: protocol DTO/event unions, Host message schema/validation, SDK client,
+  Host handler, and reference protocol documentation.
+- Tests: Protocol 6/6, SDK Core 12/12, schema validation, and full
+  `npm run release:check` passed.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: added `provider.list` and trusted-local provider auth mutations with
+  opaque profile/status/generation responses. The handshake capability
+  `provider.auth.interactive` opts trusted interactive clients into a
+  cancelable refresh wait; no credential material crosses the wire.
+- Read: Protocol request/result types, JSON schema, Host validation and
+  authorization, SDK methods, and reference protocol.
+- Tests: schema validation and full workspace regression passed, including
+  Protocol 6/6, SDK Core 12/12, and Host 561/561; release smokes passed.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: `run.start` accepts an optional Host-resolved
+  `projectCommand = { name, rest? }`. The wire deliberately excludes command
+  body/source fields, validates a bounded command-name alphabet, and keeps
+  project commands out of workflow starts.
+- Read: Protocol type, JSON schema, Host wire validation, client request
+  builder, TUI caller, and protocol regressions.
+- Tests: full `npm run release:check` passed, including Protocol 6/6, Host
+  554/554, schema validation, and install smoke.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: `session.fork` gained stable `{ runId, position }` fork points and
+  run-count response fields. Deprecated sequence/count fields remain only at
+  the protocol-v2 compatibility edge; Core, Host internals, SDK callers, and
+  TUI use semantic run boundaries.
+- Read: Protocol types/schema, Host validation/dispatch, SDK client, and TUI
+  fork caller.
+- Tests: workspace build, repository test typecheck, schema check, and focused
+  Core/TUI fork coverage passed.
+
 - Status: Read-only
 - Date: 2026-08-02
 - Scope: Host capability inspection no longer advertises Skill mutation tools,
@@ -289,6 +474,9 @@ Does not own:
   immutable notices in addition to the accepted final message and assessment.
   Historical unknown recovered/unresolved fields are ignored by current
   clients rather than reintroduced into the typed contract.
+- `CapabilitySnapshot.extensions` is optional declared inventory. Clients must
+  use `CapabilitySnapshot.tools` for the selector-filtered effective tool set
+  and must not treat either diagnostic surface as authority by itself.
 - Request kinds include `run.start`, `run.resume`, `run.inject_message`,
   `run.cancel`, `approval.resolve`, `session.list`, `session.inspect`,
   `session.fork`, `session.compact`, `capability.inspect`, and durable
@@ -314,6 +502,10 @@ Does not own:
   a `SessionCompactionInspectReport` derived from `compact.json` and
   session-local compaction events. The report includes audit metadata and
   event/artifact consistency, not compacted summary content.
+- `session.fork` accepts optional `forkPoint: { runId, position }`; omitted
+  means full clone. `forkAtSequence` is deprecated compatibility input and is
+  mutually exclusive with `forkPoint`. New response consumers use
+  `copiedRunCount` and `forkPoint`.
 - `capability.inspect` payloads may include optional `model` to ask the host to
   resolve capability/model diagnostics for an active runtime model override.
   Omitted means the host default/config model.
@@ -341,6 +533,10 @@ Does not own:
 - `run.start` and `run.inject_message` keep their text fields (`goal` and
   `content`) as required user-turn summaries and may add `input.parts` for
   extensible text/image/file/audio content.
+- `run.inject_message.mode` defaults to `steer`; `follow_up` means bounded
+  same-session Host-lane admission. Its result always carries `commandId`,
+  `mode`, and `status`. `run.follow_up.updated` correlates asynchronous
+  start/rejection without claiming durable delivery.
 - `run.start` may include optional `workflow`, the workflow asset name to
   instantiate for that run. The field is additive and ignored when absent; P1.5
   removes the former experimental host gate.

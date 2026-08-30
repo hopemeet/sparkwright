@@ -25,7 +25,10 @@ describe("HostExecution", () => {
     expect(execution.currentRunId()).toBe(second.record.id);
     expect(execution.ownsRun(first.record.id)).toBe(true);
     expect(
-      execution.tryInject(first.record.id, { content: "handoff message" }),
+      execution.tryInject(first.record.id, {
+        commandId: "command_handoff",
+        content: "handoff message",
+      }),
     ).toBe("accepted");
     expect(
       second.events
@@ -86,7 +89,10 @@ describe("HostExecution", () => {
     expect(execution.abortController.signal.aborted).toBe(true);
     expect(run.record.state).toBe("cancelled");
     expect(
-      execution.tryInject(run.record.id, { content: "after cancel" }),
+      execution.tryInject(run.record.id, {
+        commandId: "command_after_cancel",
+        content: "after cancel",
+      }),
     ).toBe("closed");
     execution.finish("cancelled");
     expect(execution.cancel("duplicate")).toBe(false);

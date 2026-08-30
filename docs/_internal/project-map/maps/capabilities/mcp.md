@@ -9,6 +9,48 @@ See [../../modules/mcp-adapter.md](../../modules/mcp-adapter.md).
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-20
+- Scope: provider endpoint choice changes no MCP discovery, transport, schema,
+  resource, prompt, tool, or execution authority.
+- Read: Host provider dispatch and MCP preparation boundary.
+- Tests: routed provider and release checks passed; MCP contracts are
+  unchanged.
+
+- Status: Read-only
+- Date: 2026-08-09
+- Scope: P7.0 trusted-local connection inventory does not change MCP discovery,
+  transport, schema loading, or execution authority.
+- Read: Host provider dispatch and MCP preparation boundary.
+- Tests: focused Host connection protocol checks passed; MCP contracts are
+  unchanged. The full release gate passed.
+
+- Status: Read-only
+- Date: 2026-08-09
+- Scope: P6.4 provider catalog and local login control paths do not change MCP
+  discovery, schema loading, transport, or tool execution authority.
+- Read: Host provider dispatch and MCP capability boundary.
+- Tests: affected Host/schema checks and the full release gate passed.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: project MCP configuration is excluded from config merge and MCP
+  preparation until its config scope is trusted. Remote connections may
+  inspect the resulting trust snapshot but cannot mutate trust state.
+- Read: restricted project config merge, MCP capability preparation, trust
+  snapshot projection, connection authority, and focused tests.
+- Tests: focused Host capability/config/trust coverage passed within the 77/77
+  P5 suite; schema and real Host regressions passed.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: dependency security refresh only. The MCP client SDK and its locked
+  HTTP/server validation chain resolve patched releases without changing MCP
+  capability selection, transport policy, approval, or trace contracts.
+- Read: MCP adapter manifest, lockfile dependency graph, and capability owner.
+- Tests: MCP adapter 34/34, root/source-install/packed-release production
+  audits with zero vulnerabilities, and full `npm run release:check` passed.
+
 - Status: Verified
 - Date: 2026-07-26
 - Scope: route review for compact in-process Agent results. MCP remains absent

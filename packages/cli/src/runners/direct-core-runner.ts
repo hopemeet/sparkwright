@@ -26,6 +26,8 @@ import {
   loadHostConfig,
   resolveSkillRootsForRuntime,
   resolveModelSelection,
+  isProjectScopeTrusted,
+  ProjectTrustManager,
 } from "@sparkwright/host";
 import { buildAgentPromptBuilder } from "@sparkwright/project-context";
 import { createCliInteractionChannel } from "../cli-approval.js";
@@ -90,6 +92,9 @@ export async function startDirectCoreRun(
   const { permissionMode, shouldWrite } = compileRunAccessMode(
     runAccess.accessMode,
   );
+  const trust = await new ProjectTrustManager({ env }).inspect(workspaceRoot);
+  const configTrusted = isProjectScopeTrusted(trust, "config");
+  const skillsTrusted = isProjectScopeTrusted(trust, "skills");
   const model = await createCliModel({
     modelRef: modelName,
     cwd: workspaceRoot,
@@ -97,6 +102,7 @@ export async function startDirectCoreRun(
     targetPath,
     shouldWrite,
     goal,
+    includeProjectConfig: configTrusted,
   });
 
   if (!model.ok) {
@@ -109,7 +115,9 @@ export async function startDirectCoreRun(
     accessMode: runAccess.accessMode,
     io,
   });
-  const loadedConfig = await loadHostConfig(workspaceRoot, env);
+  const loadedConfig = await loadHostConfig(workspaceRoot, env, {
+    projectMode: configTrusted ? "trusted" : "restricted",
+  });
   const writeGuardrails = loadedConfig.config.write;
   const policy = createHostRunPolicy({
     permissionMode,
@@ -119,11 +127,16 @@ export async function startDirectCoreRun(
     confidentialDefaults,
     confidentialPaths,
   });
-  const tools = await createConfiguredCliTools(workspaceRoot, env);
+  const tools = await createConfiguredCliTools(
+    workspaceRoot,
+    env,
+    configTrusted,
+  );
   const skillRoots = resolveSkillRootsForRuntime(
     workspaceRoot,
     loadedConfig.config.capabilities?.skills?.roots,
     env,
+    { includeProject: skillsTrusted },
   );
   const runRef: { current?: RunHandle } = {};
   const workflowHooks = assembleRuntimeWorkflowHooks({
@@ -270,8 +283,11 @@ export async function startDirectCoreRun(
 export async function createConfiguredCliTools(
   workspaceRoot: string,
   env: Record<string, string | undefined>,
+  includeProjectConfig = true,
 ) {
-  const cfg = await loadHostConfig(workspaceRoot, env);
+  const cfg = await loadHostConfig(workspaceRoot, env, {
+    projectMode: includeProjectConfig ? "trusted" : "restricted",
+  });
   return catalogToolDefinitions(
     createCliDiagnosticToolCatalog({
       workspaceRoot,
@@ -287,6 +303,7 @@ export async function createCliModel(input: {
   targetPath?: string;
   shouldWrite: boolean;
   goal: string;
+  includeProjectConfig?: boolean;
 }): Promise<
   { ok: true; adapter: ModelAdapter } | { ok: false; message: string }
 > {
@@ -302,7 +319,10 @@ export async function createCliModel(input: {
     };
   }
 
-  const cfg = await loadHostConfig(input.cwd, input.env);
+  const cfg = await loadHostConfig(input.cwd, input.env, {
+    projectMode:
+      input.includeProjectConfig === false ? "restricted" : "trusted",
+  });
   const selection = resolveModelSelection(cfg.config, ref);
   if (selection.kind === "deterministic") {
     return {
@@ -322,6 +342,7 @@ export async function createCliModel(input: {
   return buildConfiguredAdapter({
     selection,
     env: input.env,
+    providerConfig: cfg.config.providers?.[selection.providerKey],
     fetch: proxyFetch,
   });
 }

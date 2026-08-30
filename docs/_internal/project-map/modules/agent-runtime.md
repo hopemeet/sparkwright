@@ -8,6 +8,41 @@ See also [../maps/capabilities/agents.md](../maps/capabilities/agents.md), [../m
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-20
+- Scope: provider endpoint choice and stored-binding resolution finish in Host
+  before adapter construction. Agent Runtime task, Workflow, coordination, and
+  child prompt/outcome contracts are unchanged.
+- Read: Host provider runtime handoff and Agent Runtime assembly boundary.
+- Tests: routed provider and release checks passed; no Agent Runtime contract
+  changed.
+
+- Status: Read-only
+- Date: 2026-08-09
+- Scope: P7.0 stored-connection management visibility is resolved by Host
+  before model construction. Task, Workflow, child-agent, and coordination
+  ownership are unchanged.
+- Read: Host provider-list/model-resolution boundary and Agent Runtime assembly.
+- Tests: focused Host provider/auth protocol checks passed; Agent Runtime has no
+  changed contract. The full release gate passed.
+
+- Status: Read-only
+- Date: 2026-08-09
+- Scope: TUI preference persistence reuses Agent Runtime's existing atomic text
+  writer; task, Workflow, child-agent, and coordination ownership are unchanged.
+- Read: atomic document-store export and TUI preference consumer.
+- Tests: TUI preference storage, workspace build, and the full release gate passed.
+
+- Status: Read-only
+- Date: 2026-08-08
+- Scope: Host Project Trust excludes untrusted project Agent profiles and
+  Workflows before Agent Runtime assembly. Task, worktree, workflow persistence,
+  and in-process child execution contracts are unchanged.
+- Read: Host profile/workflow resolvers, configured delegate and workflow
+  assembly, plus Agent Runtime boundaries.
+- Tests: focused Host trust/preparation tests and the Agent Runtime typecheck
+  boundary passed.
+
 - Status: Verified
 - Date: 2026-08-01
 - Scope: bounded terminal Agent action receipts retain the producer-authored

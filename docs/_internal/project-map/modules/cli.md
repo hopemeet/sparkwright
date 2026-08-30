@@ -8,6 +8,145 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-20
+- Scope: direct CLI API-key connect now inherits Host's official-endpoint
+  default when no endpoint is supplied. This change adds no CLI endpoint flag;
+  configured/custom endpoint selection is currently the trusted TUI/Protocol
+  flow, while existing connection selection continues to use the stored exact
+  binding.
+- Read: CLI provider connect/selection handler, SDK request defaults, and Host
+  explicit/stored binding semantics.
+- Tests: CLI provider 5/5 plus routed Host/SDK/schema checks passed; the closing
+  release gate passed with no CLI command-shape change.
+
+- Status: Read-only
+- Date: 2026-08-20
+- Scope: `provider list` now reflects Host's more accurate `unverified` status
+  for ambient config/environment API keys. CLI commands, options, secret input,
+  and output shapes are unchanged.
+- Read: provider list/login flow and Host ambient credential projection.
+- Tests: focused CLI ambient provider-list/login regression passed after the
+  Host/CLI build; the closing release gate passed CLI 177/177.
+
+- Status: Read-only
+- Date: 2026-08-18
+- Scope: generic interactive OAuth polling now presents the bundled ChatGPT
+  browser/device methods from Host. No new CLI option, secret shape, or
+  provider-specific credential owner was added.
+- Read: provider connect method selection/polling and Host catalog projection.
+- Tests: routed Host tests and real App Server lifecycle passed; the closing
+  repository gate owns full CLI regression evidence.
+
+- Status: Verified
+- Date: 2026-08-17
+- Scope: the unfinished ChatGPT provider is no longer advertised by
+  `provider connect`. Existing generic OAuth method selection and polling are
+  unchanged; OpenRouter browser login remains available.
+- Read: provider command method selection/polling and Host catalog projection.
+- Tests: CLI provider 5/5 plus routed Host/SDK/schema checks passed.
+
+- Status: Read-only
+- Date: 2026-08-12
+- Scope: OAuth account binding is finalized and enforced behind existing Host
+  methods. CLI connect, opaque connection inventory, and exact-id selection
+  require no new option or output field.
+- Read: CLI provider commands, SDK forwarding, Host OAuth completion/selection,
+  and public connection projection.
+- Tests: CLI provider 5/5 and the routed Host/SDK/schema checks passed; CLI
+  contracts are unchanged.
+
+- Status: Read-only
+- Date: 2026-08-10
+- Scope: CLI credential input and provider commands are unchanged. Interactive
+  and stdin submissions still cross the Host secret boundary; the Host-owned
+  macOS Keychain writer now uses a private prompt PTY.
+- Read: CLI provider input/handler, Host secret submission, and removal path.
+- Tests: focused Host credential/provider checks and exact disposable
+  connection removal passed; CLI 177/177 and the full release gate passed with
+  no CLI contract change.
+
+- Status: Verified
+- Date: 2026-08-09
+- Scope: P7.0 makes the existing multi-connection state operable from the CLI.
+  `provider list` inventories opaque, non-secret connection ids and
+  `provider select <connection-id>` switches by exact id. Disconnect remains
+  non-destructive and leaves the entry labeled `disconnected`; exact-id select
+  or remove remains available without requiring the secret again.
+- Read: provider parser/handler/help, Host connection owner, Protocol/SDK
+  forwarding, and focused CLI connection tests.
+- Tests: focused inventory/select/disconnect/reselect/remove regression, CLI
+  177/177, and the full release gate passed.
+
+- Status: Verified
+- Date: 2026-08-09
+- Scope: P6.4 adds `provider catalog refresh [provider]` and explicit
+  `provider migrate <provider> [--remove-config]`. Migration reuses an already
+  verified matching stored connection, atomically removes only the exact legacy
+  value when requested, and emits a non-secret receipt.
+- Read: provider parser/handler/help, Host catalog/migration owner, config file
+  publication, and focused CLI sentinel/YAML preservation tests.
+- Tests: focused CLI migration/provider checks, CLI 177/177, and the full
+  release gate passed.
+
+- Status: Verified
+- Date: 2026-08-09
+- Scope: P6.3 adds `--auth-method` selection and interactive OAuth progress to
+  `provider connect`. Browser/device attempts display bounded instructions and
+  poll Host status; code flows use hidden input; errors and interruption cancel
+  the outstanding attempt. Non-interactive OAuth fails closed.
+- Read: CLI parser/provider handler/help, Host OAuth lifecycle, and focused CLI
+  provider tests.
+- Tests: focused provider and endpoint-precedence routes passed; full
+  `npm run release:check` passed with CLI 176/176, Host 608/608, TUI 554/554,
+  16/16 regression cases, and both install smokes.
+
+- Status: Verified
+- Date: 2026-08-09
+- Scope: P6.2 adds `provider connect|disconnect|remove` and connection-aware
+  refresh/logout. Interactive keys use a no-echo prompt; pipelines require
+  `--api-key-stdin`; key values are rejected in argv. A connected bundled
+  provider remains visible without creating or editing YAML.
+- Read: CLI provider parser/handler, secret input adapter, Host provider owner,
+  and CLI connection/sentinel tests.
+- Tests: full `npm run release:check` passed, including CLI 175/175, Host
+  602/602, TUI 553/553, the 16-case regression matrix, production audit, and
+  both install smokes.
+
+- Status: Verified
+- Date: 2026-08-09
+- Scope: direct-Core provider construction now passes the full selected
+  provider config into Host registry composition, preserving catalog inventory,
+  endpoint binding, and legacy allowlist semantics. New user config templates
+  no longer enumerate models, while existing `provider list` output remains the
+  configured-provider compatibility view.
+- Read: direct-Core provider runner, Host model builder/catalog, CLI provider
+  command, and Protocol projection compatibility.
+- Tests: full `npm run release:check` passed, including CLI 173/173, Host
+  585/585, Core 687/687, TUI 552/552, 16/16 regression-matrix cases,
+  production audit, and both install smokes.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: CLI boot now assesses Project Trust before config and source
+  discovery. `trust status|grant|revoke` exposes the Host-owned lifecycle,
+  while Direct Core diagnostics apply the same admission decision.
+- Read: CLI parsing/help/rendering, Host-backed and Direct Core boot paths,
+  config doctor, Skill roots, input validation, and trust manager calls.
+- Tests: full CLI suite passed 7 files / 173 tests together with Host 578/578,
+  schema, manifest, real Host trust, 16-case matrix, and install-smoke gates.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: CLI adds `provider list|login|logout|refresh` over the shared Host
+  provider-auth owner. Text/JSON output contains only model inventory and
+  non-secret profile metadata; ordinary CLI model calls remain fail-fast on
+  authentication failure.
+- Read: CLI parser, provider handler/help, Host provider-auth state, and focused
+  CLI regressions.
+- Tests: full workspace regression passed, including CLI 172/172 and provider
+  command/error coverage; release regression and install smokes passed.
+
 - Status: Verified
 - Date: 2026-08-07
 - Scope: clarified that internal Direct Core diagnostics do not promise Host

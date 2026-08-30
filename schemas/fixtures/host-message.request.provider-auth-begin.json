@@ -1,0 +1,11 @@
+{
+  "envelope": "request",
+  "id": "req_provider_auth_begin",
+  "kind": "provider.auth.begin",
+  "timestamp": "2026-08-09T00:00:00.000Z",
+  "payload": {
+    "providerId": "openrouter",
+    "methodId": "oauth_pkce",
+    "grantScope": "workspace"
+  }
+}

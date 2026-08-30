@@ -79,6 +79,8 @@ export async function discoverProjectCommands(options: {
   userCommandDir?: string;
   /** Command names already declared in config.json; these shadow files. */
   reservedNames?: Iterable<string>;
+  /** Include `<cwd>/.sparkwright/command`. Defaults to true. */
+  includeProject?: boolean;
   onShadowed?: (info: {
     name: string;
     path: string;
@@ -104,7 +106,10 @@ export async function discoverProjectCommands(options: {
     byName.set(desc.name, desc);
   }
 
-  for (const desc of await readCommandDir(projectDir, "project")) {
+  for (const desc of await readCommandDir(
+    options.includeProject === false ? undefined : projectDir,
+    "project",
+  )) {
     if (reserved.has(desc.name)) {
       options.onShadowed?.({
         name: desc.name,

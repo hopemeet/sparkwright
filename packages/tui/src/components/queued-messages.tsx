@@ -1,14 +1,15 @@
 import React from "react";
 import { Box, Text } from "ink";
 import { useTheme } from "../lib/theme-context.js";
+import type { QueuedSubmission } from "../state/queue-store.js";
 
 /**
  * Compact list of prompts waiting to run, shown just above the input while a
- * run is in flight. Each is the user's queued goal, one-lined and truncated;
- * the head (next to run) is marked. Hidden when the queue is empty.
+ * run is in flight. Each structured entry is labeled by scheduling ownership,
+ * one-lined, and truncated; the head is marked. Hidden when the queue is empty.
  */
 export function QueuedMessages(props: {
-  items: readonly string[];
+  items: readonly QueuedSubmission[];
 }): React.ReactElement | null {
   const theme = useTheme();
   if (props.items.length === 0) return null;
@@ -17,17 +18,24 @@ export function QueuedMessages(props: {
   return (
     <Box flexDirection="column" paddingX={1} marginTop={1}>
       <Text color={theme.muted}>
-        queued ({props.items.length}) · each runs when the current goal finishes
+        pending ({props.items.length}) · runs in order after the current goal
       </Text>
-      {visible.map((text, i) => (
-        <Box key={i}>
+      {visible.map((item, i) => (
+        <Box key={item.commandId ?? `${item.goal}:${i}`}>
           <Text color={theme.accent}>{i === 0 ? "→ " : "  "}</Text>
-          <Text dimColor>{oneLine(text)}</Text>
+          <Text color={theme.muted}>{queueKind(item).padEnd(10)} </Text>
+          <Text dimColor>{oneLine(item.goal)}</Text>
         </Box>
       ))}
       {overflow > 0 ? <Text dimColor>{`  … +${overflow} more`}</Text> : null}
     </Box>
   );
+}
+
+function queueKind(item: QueuedSubmission): string {
+  if (item.commandId) return "follow-up";
+  if (item.projectCommand) return "command";
+  return "next";
 }
 
 /** Collapse newlines and clip to a single readable row. */

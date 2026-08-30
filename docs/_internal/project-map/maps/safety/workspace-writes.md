@@ -10,6 +10,43 @@ See [approvals.md](approvals.md) and [../runtime/tool-orchestration.md](../runti
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-08-20
+- Scope: custom endpoint selection writes only Host-owned provider metadata and
+  credential storage. It neither edits project config nor adds a model-facing
+  workspace-write path.
+- Read: provider state/credential stores and workspace-write boundary.
+- Tests: config-unchanged, secret-free metadata, routed provider, and release
+  checks passed; workspace-write contracts are unchanged.
+
+- Status: Read-only
+- Date: 2026-08-09
+- Scope: P7.0 connection disconnect/reselection/removal mutates Host-owned XDG
+  provider state and credential storage, not project files or model-facing
+  workspace-write authority.
+- Read: provider state/credential stores and workspace-write boundary.
+- Tests: focused retention/removal and secret-free metadata checks plus the
+  full release gate passed.
+
+- Status: Read-only
+- Date: 2026-08-09
+- Scope: Explicit legacy credential cleanup targets the resolved config file
+  under an exact-value lock; it is a local management command, not run-time
+  workspace.write authority. Workspace mutation policy is unchanged.
+- Read: config file migration and workspace-write boundary.
+- Tests: YAML preservation/rollback tests and the full release gate passed.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: Extension tools that reach the Host catalog are wrapped by the
+  existing workspace mutation lease path. Extension governance defaults do not
+  create write authority: read-only access still hard-denies mutation, and
+  managed workspace changes still require the canonical workspace APIs.
+- Read: Core Extension tool normalization, Host catalog lease wrapping, run
+  access/policy boundaries, and focused integration coverage.
+- Tests: Core Extension 8/8, Host Extension 4/4, full Host 566/566, and full
+  `npm run release:check` passed.
+
+- Status: Read-only
 - Date: 2026-08-02
 - Scope: existing Skill updates now use ordinary controlled workspace edits;
   removing the proposal service did not change Core workspace revision,

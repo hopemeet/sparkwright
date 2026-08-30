@@ -565,6 +565,32 @@ export class EventStore {
         });
         return;
       }
+      case "run.waiting_credentials": {
+        const category = firstString(rec(event.payload).category);
+        this.openPhase({
+          kind: "model",
+          key: modelPhaseKey(event),
+          message:
+            category === "quota"
+              ? "waiting for provider refresh"
+              : "waiting for provider login",
+          priority: PHASE_PRIORITY.model,
+          depth: 0,
+          startedSeq: eventSequence(event),
+        });
+        return;
+      }
+      case "run.credentials_refreshed": {
+        this.openPhase({
+          kind: "model",
+          key: modelPhaseKey(event),
+          message: "retrying with refreshed credentials",
+          priority: PHASE_PRIORITY.model,
+          depth: 0,
+          startedSeq: eventSequence(event),
+        });
+        return;
+      }
       case "model.turn.completed":
       case "model.completed": {
         // True terminal for the turn — drop the retry tally so the next turn

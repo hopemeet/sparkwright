@@ -2,6 +2,7 @@ import type {
   BackgroundTaskPolicy,
   RunAccessMode,
   TraceLevel,
+  ProjectTrustScope,
 } from "@sparkwright/protocol";
 import type { CliRunAccess } from "../run-access.js";
 
@@ -59,4 +60,8 @@ export interface ParsedArgs {
   compaction: boolean;
   detach: boolean;
   delegateGoal?: string;
+  trustScopes?: ProjectTrustScope[];
+  apiKeyStdin?: boolean;
+  authMethod?: string;
+  removeConfig?: boolean;
 }

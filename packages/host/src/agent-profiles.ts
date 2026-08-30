@@ -144,11 +144,15 @@ export async function discoverLayeredAgentProfiles(
   workspaceRoot: string,
   env: Record<string, string | undefined> = process.env,
   onCollision?: (collision: AgentProfileCollision) => void,
+  options: { includeProject?: boolean } = {},
 ): Promise<AgentProfile[]> {
   const byId = new Map<string, AgentProfile>();
   for (const dir of resolveCapabilityDirs("agents", {
     cwd: workspaceRoot,
     env,
+    ...(options.includeProject !== undefined
+      ? { includeProject: options.includeProject }
+      : {}),
   })) {
     // Same id in different layers is legitimate layering (project overrides
     // user); last layer wins. Same id within one layer is an ambiguous
@@ -294,11 +298,13 @@ export async function resolveAgentProfiles(
   workspaceRoot: string,
   configProfiles: readonly AgentProfile[] | undefined,
   onCollision?: (collision: AgentProfileCollision) => void,
+  options: { includeProject?: boolean } = {},
 ): Promise<AgentProfile[]> {
   const markdown = await discoverLayeredAgentProfiles(
     workspaceRoot,
     process.env,
     onCollision,
+    options,
   );
   return mergeAgentProfilesById(markdown, configProfiles ?? []);
 }

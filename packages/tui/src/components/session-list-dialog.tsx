@@ -3,6 +3,7 @@ import { Box, Text, useInput, useStdout } from "ink";
 import type { SessionDiagnostics, SessionSummary } from "../lib/sessions.js";
 import { displayWidth, toGraphemes } from "../lib/graphemes.js";
 import { isBackInput } from "../lib/input-key.js";
+import { windowAroundCursor } from "../lib/list-window.js";
 import {
   DialogFrame,
   dialogFrameWidth,
@@ -48,7 +49,7 @@ export function SessionListDialog(props: {
 
   const safeCursor = Math.min(cursor, Math.max(0, filtered.length - 1));
   const pageSize = Math.max(4, Math.min(12, (stdout?.rows ?? 24) - 10));
-  const { start: visibleStart, visible } = sessionWindow(
+  const { start: visibleStart, visible } = windowAroundCursor(
     filtered,
     safeCursor,
     pageSize,
@@ -207,23 +208,6 @@ function truncatePlain(text: string, max: number): string {
     width += w;
   }
   return `${out}…`;
-}
-
-export function sessionWindow<T>(
-  items: readonly T[],
-  cursor: number,
-  windowSize: number,
-): { start: number; visible: readonly T[] } {
-  const size = Math.max(1, windowSize);
-  const safeCursor = Math.max(
-    0,
-    Math.min(cursor, Math.max(0, items.length - 1)),
-  );
-  const start = Math.max(
-    0,
-    Math.min(items.length - size, safeCursor - Math.floor(size / 2)),
-  );
-  return { start, visible: items.slice(start, start + size) };
 }
 
 /**

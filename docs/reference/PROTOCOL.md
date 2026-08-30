@@ -191,6 +191,7 @@ Current event types:
 - `run.cancel_requested`
 - `run.command.enqueued`
 - `run.command.applied`
+- `run.command.rejected`
 - `run.notification.injected`: a `NotificationSource` returned items that were appended as user-role context items at the start of a step; metadata: `{ step, sourceIndex, count }`
 - `run.notification.source_failed`: a notification source `drain()` or task-revival readiness check threw; the runtime swallowed the error and continued; metadata: `{ step, sourceIndex, message, phase? }`
 - `run.state_transition.rejected`
@@ -322,6 +323,10 @@ Current event types:
 - `interaction.requested`: the runtime asked the InteractionChannel for an
   approval. Payload: `{ kind: "approval", request }`.
 - `interaction.resolved`: the channel returned an approval response.
+- Governed in-process extensions do not add extension-specific run events.
+  Prepared context carries `metadata.extension`, tool lifecycle events retain
+  `governance.origin.metadata.extensionId`, and Host capability snapshots may
+  expose declared registrations through `extensions`.
 - `context.cache_break.detected`: a context item previously emitted as
   `stability: stable` was observed to have changed between turns. Payload:
   `{ runId, step, prefixIndex, priorHash, currentHash, role }`. Diagnostic
@@ -617,15 +622,27 @@ The run state should not change when this event is emitted.
 
 ### Run Commands And Cancellation
 
-`run.command.enqueued` records an external command accepted by the run handle. `run.command.applied` records that the loop consumed it at a turn boundary. Current command types are `user_message` and `cancel`.
+`run.command.enqueued` records an external command accepted by the run handle.
+`run.command.applied` records that the loop consumed it at a safe turn
+boundary. `run.command.rejected` records a previously queued command that
+could not reach another boundary because the run cancelled, failed, completed,
+or exhausted its interaction-continuation budget. Current command types are
+`user_message` and `cancel`.
 
 ```json
 {
+  "commandId": "command_example",
   "commandType": "user_message",
   "step": 2,
   "metadata": {}
 }
 ```
+
+Command IDs are idempotent for the lifetime of the live run. Steering never
+interrupts an in-flight model request or tool batch; it is applied before the
+next model turn. If steering arrives before a natural final-answer boundary,
+the loop admits a bounded interaction continuation instead of silently
+dropping the accepted command.
 
 `run.cancel_requested` records cancellation intent before the terminal `run.cancelled` event:
 

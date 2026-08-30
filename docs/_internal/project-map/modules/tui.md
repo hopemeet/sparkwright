@@ -11,6 +11,219 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-08-22
+- Scope: `/connect` model selection now keeps the catalog list but also accepts
+  an exact provider-local model id. OpenRouter nested ids are prefixed with the
+  selected provider exactly once, so a missing/stale catalog no longer blocks
+  setup. Host remains the admission and allow/deny-policy authority.
+- Read: ConnectDialog model-stage input routing, provider-local normalization,
+  catalog selection/Tab fill, and App model commit handoff.
+- Tests: ConnectDialog 12/12, full TUI 568/568, and TUI typecheck passed.
+
+- Status: Verified
+- Date: 2026-08-21
+- Scope: `/connect` presents the code-owned `chatgpt` and `openai` providers as
+  one OpenAI product group without merging credentials, bindings, catalogs, or
+  runtime adapters. Existing connections are aggregated and source-labelled;
+  new connections prefer `Continue with ChatGPT`, retain `Use OpenAI API key`,
+  and place device-code login under `Other sign-in options…` for callback-
+  constrained terminals.
+- Read: ConnectDialog provider grouping, exact-provider method choices,
+  connection/model routing, endpoint stages, and focused Ink regressions.
+- Tests: ConnectDialog 11/11, full TUI 567/567, typecheck/build, and a real PTY
+  walk through the grouped provider, both connection identities, primary and
+  secondary sign-in menus, and OpenAI endpoint selector passed. The closing
+  release gate passed all workspace suites, the 16-case regression matrix,
+  production audit, and both install smokes.
+
+- Status: Verified
+- Date: 2026-08-20
+- Scope: API-key setup now presents official, configured-custom, and editable
+  custom endpoint choices. Official is the default; custom text is validated by
+  Host before the masked key stage, which shows the exact normalized endpoint
+  and destination hostname. Back navigation clears endpoint state, while OAuth
+  bypasses the selector and remains official-only.
+- Read: ConnectDialog endpoint/input/secret stages, RunController/App/layer
+  forwarding, Host methods snapshot, and focused Ink interaction tests.
+- Tests: ConnectDialog 8/8, TUI sdk-cutover 22/22, build/typecheck, and real PTY
+  official/configured/custom endpoint flows passed; the closing release gate
+  passed TUI 564/564.
+
+- Status: Verified
+- Date: 2026-08-20
+- Scope: `/connect` now scopes endpoint presentation to method/credential
+  stages, clears the method binding when returning to the provider picker,
+  labels legacy config credentials as `configured · unverified`, and names the
+  destination hostname before accepting an API key.
+- Read: ConnectDialog stage/back state, connection labels, secret prompt, Host
+  catalog projection, and focused Ink regressions.
+- Tests: ConnectDialog 7/7, TUI build, and real PTY checks for configured
+  status, Zen endpoint lifecycle, stale-endpoint removal, and the API-key
+  destination warning passed; the closing release gate passed TUI 563/563.
+
+- Status: Verified
+- Date: 2026-08-18
+- Scope: `/connect` advertises `ChatGPT`, starts browser/device login through
+  existing DTOs, opens browser URLs without a shell, hides the long URL after a
+  successful desktop launch, and retains it when launch is unavailable. Model
+  discovery failure remains visible instead of becoming a false-success empty
+  picker, and Ctrl+R retries discovery from the model stage.
+- Read: ConnectDialog, `open-external-url.ts`, RunController provider methods,
+  and routed render tests.
+- Tests: ConnectDialog 6/6, TUI typecheck/build, and real TUI ChatGPT browser
+  start/cancel plus seven-model picker passed; the closing release gate passed
+  TUI 562/562.
+
+- Status: Verified
+- Date: 2026-08-17
+- Scope: `/connect` no longer advertises an unfinished ChatGPT method that can
+  fail before producing an authorization URL. Generic OAuth presentation,
+  copyable browser URLs, status polling, and model-picker handoff are unchanged.
+- Read: ConnectDialog, provider catalog projection, and model-picker handoff.
+- Tests: TUI routed 33/33 plus Host/SDK/schema checks passed.
+
+- Status: Read-only
+- Date: 2026-08-12
+- Scope: `/connect` continues to select opaque existing connections or start
+  the existing OAuth flow. Account/tenant identity is enforced by Host and is
+  not added to TUI state, prompts, or rendered output.
+- Read: ConnectDialog/RunController flow, provider DTOs, and Host OAuth account
+  binding projection.
+- Tests: routed TUI 33/33 plus Host/SDK/schema checks passed; TUI contracts are
+  unchanged.
+
+- Status: Read-only
+- Date: 2026-08-10
+- Scope: the `/connect` component and input router are unchanged. Host now
+  isolates macOS Keychain password prompts, so API-key submission no longer
+  steals the Ink terminal while the dialog is `working…`.
+- Read: ConnectDialog secret lifecycle, App/RunController Host bridge, and Host
+  credential-store process boundary.
+- Tests: isolated real OpenRouter TUI progressed from masked input to the model
+  picker, accepted a subsequent direction key, and emitted no system password
+  prompts on the product PTY; TUI 560/560 and the full release gate passed.
+
+- Status: Verified
+- Date: 2026-08-09
+- Scope: P7.0 makes `/connect` an existing-connection switcher before starting
+  a new login. Enter selects through the Host, `d` disconnects without deleting
+  credentials, the retained entry remains visible as `disconnected` and can be
+  selected again, and `+ add connection` reuses the API-key/OAuth path.
+  Permanent removal is not exposed as a one-key TUI action.
+- Read: ConnectDialog, App/layer wiring, RunController SDK bridge, provider
+  catalog DTOs, and focused Ink tests.
+- Tests: focused ConnectDialog disconnect/reselect regression, TUI 560/560,
+  and the full release gate passed.
+
+- Status: Verified
+- Date: 2026-08-09
+- Scope: P6.4 groups `/model` by provider, orders Favorite and Recent models,
+  persists presentation-only preference state, exposes `Ctrl+F`, and routes
+  explicit catalog refresh through the SDK. `/connect` refreshes after login
+  and opens only the connected provider's policy-filtered models.
+- Read: App preference/catalog state, ModelDialog, ConnectDialog, LayerRenderer,
+  RunController, and focused Ink/state tests.
+- Tests: focused TUI preference/model/connect checks, TUI 559/559, and the full
+  release gate passed.
+
+- Status: Verified
+- Date: 2026-08-09
+- Scope: P6.3 extends `/connect` with generic OAuth presentation, browser/code
+  progress, status polling, cancellation on Escape, and post-completion catalog
+  refresh/model selection. TUI never owns provider-specific endpoints or
+  stores attempt secrets.
+- Read: ConnectDialog, App/layer wiring, RunController SDK bridge, Host OAuth
+  lifecycle, and focused Ink tests.
+- Tests: focused ConnectDialog/SDK routes passed; full `npm run release:check`
+  passed with TUI 554/554, Host 608/608, CLI 176/176, 16/16 regression cases,
+  and both install smokes.
+
+- Status: Verified
+- Date: 2026-08-09
+- Scope: P6.2 adds `/connect` with provider, auth-method, masked credential,
+  and post-connect model stages. It consumes Host catalog/method DTOs, clears
+  component secret state before submission, polls catalog revisions while the
+  connection/model dialogs are open, and keeps `/model` limited to available
+  connections.
+- Read: ConnectDialog, layer stack/renderer, command registry, App catalog
+  polling, RunController SDK bridge, and focused Ink/SDK tests.
+- Tests: focused connect/model/command/SDK coverage passed 28/28; full
+  `npm run release:check` passed with TUI 553/553, Host 602/602, CLI 175/175,
+  16/16 regression cases, and both install smokes.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: TUI adds `/trust` as an explicit two-step local decision surface and
+  rechecks command trust before dispatch. Untrusted project command bodies are
+  not parsed into the TUI registry, and granting trust never auto-runs the
+  pending command.
+- Read: trust dialog/layer, command registry, app dispatch, RunController SDK
+  bridge, config boot, and project-command discovery.
+- Tests: full TUI suite passed 85 files / 552 tests together with focused trust
+  UI coverage, SDK, Host protocol, schema, real Host trust, and release gates.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: P4 interaction polish keeps `/model` selection anchored by stable
+  model ref while the asynchronous Host catalog replaces/reorders fallback
+  candidates, windows long catalogs around the active model, expands provider
+  auth shortcut labels, and keeps candidates visible during catalog loading.
+  Pending-run presentation now consumes the existing structured QueueStore
+  snapshot and labels Host follow-ups, project commands, and local next goals
+  instead of flattening them into indistinguishable strings. Fork, session,
+  slash-command, and model lists share one cursor-window helper.
+- Read: ModelDialog, QueueStore/QueuedMessages/LiveFrame, shared list-window
+  helper and consumers, focused Ink tests, and real PTY/provider traces.
+- Tests: focused interaction/render tests 44/44; full TUI 550/550; TUI
+  typecheck/build/format; real 80-column `/model`; real 110-column steering and
+  follow-up; trace verification for `session_tui_msketbne` reported 0 findings;
+  full `npm run release:check` passed, including the 16-case regression matrix
+  and source/release install smokes.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: while a main run is active, plain prompt submission steers through
+  the Host instead of silently becoming another run. `/followup <goal>` queues
+  an explicit same-session next run; the existing QueueStore is retained as
+  presentation/fallback state and never double-starts Host-owned entries.
+- Read: App submission routing, RunController interaction methods/events,
+  QueueStore, command registry, composer copy, and focused tests.
+- Tests: focused controller/queue/registry coverage, TUI typecheck, the full TUI
+  suite (547/547), and full `npm run release:check` passed.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: `/model` now consumes the Host provider catalog, marks selected models
+  and credential readiness, and dispatches login/logout/refresh through SDK
+  methods. TUI Host connections explicitly opt into cancelable interactive
+  credential refresh.
+- Read: App layer state, ModelDialog, LayerRenderer, RunController SDK client,
+  and focused render/protocol tests.
+- Tests: full workspace regression passed, including TUI 544/544 and the
+  ModelDialog/auth-phase coverage; release regression and install smokes passed.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: TUI project commands are presentation and dispatch only. The TUI no
+  longer imports `node:child_process`, interpolates command bodies, or executes
+  shell; it queues `{ goal, projectCommand }` and sends only command identity
+  plus the rest-of-line to Host.
+- Read: project-command adapter, App dispatch/queue bridge, QueueStore, and
+  RunController protocol request.
+- Tests: full `npm run release:check` passed, including TUI 541/541 and the real
+  TUI -> SDK -> Host project-command regression.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: the fork dialog now lists main-agent conversation turns and sends
+  stable run boundaries. Enter forks after the selected turn; `e` forks before
+  it and prefills the selected goal. Full clone remains available.
+- Read: fork dialog, session actions, RunController/SDK flow, persisted replay,
+  and Host fork continuation.
+- Tests: fork dialog extraction/windowing, active-session mutation guards, and
+  real Host fork/switch/continue regression passed.
+
+- Status: Verified
 - Date: 2026-08-07
 - Scope: committed assistant Markdown now retains blank separator lines while
   crossing the presentation-to-document boundary, so paragraphs, emphasized
@@ -455,6 +668,10 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 
 - `packages/tui/src/app.tsx`
 - `packages/tui/src/components/input-box.tsx`
+- `packages/tui/src/components/model-dialog.tsx`
+- `packages/tui/src/components/queued-messages.tsx`
+- `packages/tui/src/components/fork-dialog.tsx`
+- `packages/tui/src/components/session-list-dialog.tsx`
 - `packages/tui/src/components/use-input-buffer.ts`
 - `packages/tui/src/components/use-input-history.ts`
 - `packages/tui/src/components/live-frame.tsx`
@@ -470,12 +687,14 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 - `packages/tui/src/state/approval-coordinator.ts`
 - `packages/tui/src/state/notification-store.ts`
 - `packages/tui/src/state/event-store.ts`
+- `packages/tui/src/state/queue-store.ts`
 - `packages/tui/src/state/layer-stack.ts`
 - `packages/tui/src/state/transcript-viewport-state.ts`
 - `packages/tui/src/lib/approval-view-model.ts`
 - `packages/tui/src/lib/ui-signal.ts`
 - `packages/tui/src/lib/interaction-router.ts`
 - `packages/tui/src/lib/commands.ts`
+- `packages/tui/src/lib/list-window.ts`
 - `packages/tui/src/lib/task-activity.ts`
 - `packages/tui/src/lib/tool-display.ts`
 - `packages/tui/src/lib/transcript-presentation.ts`
@@ -547,6 +766,16 @@ Does not own:
   and is not canonical waiting state.
 
 - `RunController` sends `run.start` with the current `sessionId`.
+- During an active main run, App sends ordinary composer submissions through
+  `RunController.steer()`. `/followup` uses `RunController.followUp()` and keeps
+  the Host command visible until `run.follow_up.updated`; QueueStore drains only
+  TUI-owned fallback/project-command entries. Its presentation snapshot keeps
+  the same structured identity, so the live frame labels `follow-up`,
+  `command`, and `next` without inventing a second queue model.
+- Model selection is keyed by the stable model ref rather than the provider
+  catalog array index. Asynchronous catalog refresh may reorder candidates but
+  must not move the visual/auth target away from the active model. All bounded
+  cursor lists use `windowAroundCursor()` so the active item remains visible.
 - Todo-supervisor continuation notices are transcript-native and label the
   preceding assistant answer as provisional before showing the continuation
   count; committed assistant blocks remain stable and are not rewritten.
@@ -618,6 +847,9 @@ Does not own:
   client input helpers own image MIME detection, size limits, base64 part
   construction, and attachment metadata shared with CLI.
 - `switchSession()` reloads persisted events from session trace and replays them into TUI state.
+- Fork turn selection ignores child-agent `run.started` events. It sends
+  `{ runId, position: "after" }` for Enter and `position: "before"` for
+  fork-and-edit; it never treats `RunEvent.sequence` as a session boundary.
 - `/compact` calls host `session.compact`; success toasts use
   `compactedRunCount`/char savings, while skipped outcomes surface
   `skippedReason` and the first warning message instead of assuming zero runs

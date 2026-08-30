@@ -11,6 +11,34 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-08-20
+- Scope: endpoint choice remains outside run-event tracing. Only normalized
+  non-secret bindings are projected; API keys do not enter trace events or
+  diagnostics.
+- Read: provider secret boundary, catalog projection, and raw-trace ownership.
+- Tests: secret-sentinel, routed provider, and release checks passed; raw-trace
+  schemas are unchanged.
+
+- Status: Read-only
+- Date: 2026-08-09
+- Scope: P7.0 connection management remains outside run-event tracing. Catalog
+  and CLI/TUI output expose only opaque ids and non-secret metadata; raw trace
+  event ownership and schemas are unchanged.
+- Read: provider state/output path and raw-trace boundary.
+- Tests: focused secret-sentinel and local/remote catalog regressions plus the
+  full release gate passed.
+
+- Status: Read-only
+- Date: 2026-08-08
+- Scope: Project Trust denial happens before executable project sources enter
+  run assembly. Existing run-event serialization is unchanged; trust details
+  use protocol errors, capability snapshots, and bounded run metadata.
+- Read: Host run/session preparation, trust snapshot projection, Core events,
+  and raw-trace consumers.
+- Tests: focused Host trust/protocol coverage, schema validation, and the real
+  no-process regression passed.
+
+- Status: Read-only
 - Date: 2026-08-02
 - Scope: Skill Stats no longer reads proposal/history metadata; it remains a
   consumer of canonical session and child-agent traces. Shell guidance changed
@@ -547,6 +575,14 @@ EventLog emits full event
   double-spilling tool-owned artifacts and honor `resultSize.neverPersist`.
 
 ## Last Verified
+
+- Status: Read-only
+- Date: 2026-08-09
+- Scope: Catalog artifacts, discovery headers, credentials, and preference
+  state do not enter raw run events or trace payloads; raw-trace contracts are
+  unchanged.
+- Read: Host provider control path, Protocol DTOs, and trace boundary.
+- Tests: secret-sentinel/provider protocol tests and the full release gate passed.
 
 - Status: Verified
 - Date: 2026-07-16T10:44:25+0800

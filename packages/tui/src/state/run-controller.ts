@@ -22,7 +22,18 @@ import type {
   RunAccessMode,
   RunInputPayload,
   RunInputPart,
+  ProjectCommandReference,
+  ProviderCatalogSnapshot,
+  ProviderCatalogProjection,
+  ProviderCatalogRefreshResult,
+  ProviderAuthMethodsSnapshot,
+  ProviderAuthAttemptSummary,
+  ProviderConnectionSummary,
+  ProviderCredentialProfileSummary,
+  ProjectTrustScope,
+  ProjectTrustSnapshot,
   SessionCompactionMeasurement,
+  SessionForkPoint,
   TaskListRequestPayload,
   TaskOutputChunkSnapshot,
   TaskRecordSnapshot,
@@ -86,6 +97,10 @@ export interface WorkflowJobHandle extends WorkflowJobExecutionContext {
 }
 
 export type HostTaskUpdatedEvent = Extract<HostEvent, { kind: "task.updated" }>;
+export type HostFollowUpUpdatedEvent = Extract<
+  HostEvent,
+  { kind: "run.follow_up.updated" }
+>;
 export type TaskHostConnectionState = "connected" | "disconnected";
 
 /**
@@ -118,9 +133,13 @@ export class RunController {
   // it. Workflow continuation episodes are driven by the host/replay path, not
   // start(), so no filtering is needed.
   private lastGoal: string | null = null;
+  private lastProjectCommand: ProjectCommandReference | null = null;
   private pendingInputParts: RunInputPart[] = [];
   private taskUpdateListeners = new Set<
     (event: HostTaskUpdatedEvent) => void
+  >();
+  private followUpUpdateListeners = new Set<
+    (event: HostFollowUpUpdatedEvent) => void
   >();
   private taskConnectionListeners = new Set<
     (state: TaskHostConnectionState) => void
@@ -165,11 +184,19 @@ export class RunController {
     return () => this.taskConnectionListeners.delete(listener);
   }
 
+  subscribeFollowUpUpdates(
+    listener: (event: HostFollowUpUpdatedEvent) => void,
+  ): () => void {
+    this.followUpUpdateListeners.add(listener);
+    return () => this.followUpUpdateListeners.delete(listener);
+  }
+
   newSession(): string | null {
     if (!this.allowSessionMutation("start a new session")) return null;
     this.sessionId = `session_tui_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
     this.currentSessionEvents = [];
     this.lastGoal = null;
+    this.lastProjectCommand = null;
     this.store.reset();
     this.store.setSessionId(this.sessionId);
     return this.sessionId;
@@ -180,6 +207,7 @@ export class RunController {
     this.sessionId = validateSessionId(id);
     this.currentSessionEvents = [];
     this.lastGoal = null;
+    this.lastProjectCommand = null;
     this.store.reset();
     this.store.setSessionId(this.sessionId);
     return true;
@@ -207,6 +235,7 @@ export class RunController {
     // Point /retry at the resumed session's most recent goal (not the goal
     // from whatever session we switched away from).
     this.lastGoal = lastGoalFromEvents(events);
+    this.lastProjectCommand = null;
     return true;
   }
 
@@ -335,14 +364,25 @@ export class RunController {
    */
   async retry(): Promise<boolean> {
     if (this.activeRunId || !this.lastGoal) return false;
-    await this.start(this.lastGoal);
+    await this.start(
+      this.lastGoal,
+      this.lastProjectCommand
+        ? { projectCommand: this.lastProjectCommand }
+        : undefined,
+    );
     return true;
   }
 
-  async start(goal: string): Promise<void> {
+  async start(
+    goal: string,
+    options?: { projectCommand?: ProjectCommandReference },
+  ): Promise<void> {
     if (this.activeRunId || this.startingMainRun) return;
     this.startingMainRun = true;
     this.lastGoal = goal;
+    this.lastProjectCommand = options?.projectCommand
+      ? { ...options.projectCommand }
+      : null;
     this.store.appendUserMessage(goal);
     this.store.setStatus("running");
     this.store.setStopReason(null);
@@ -370,6 +410,9 @@ export class RunController {
       const { runId } = await client.startRun(
         createHostStartRunRequest({
           goal,
+          ...(options?.projectCommand
+            ? { projectCommand: options.projectCommand }
+            : {}),
           input,
           sessionId: this.sessionId,
           modelName: this.opts.modelName,
@@ -393,6 +436,50 @@ export class RunController {
       this.cleanupExecution(client);
     } finally {
       this.startingMainRun = false;
+    }
+  }
+
+  async steer(content: string): Promise<string | null> {
+    return this.submitRunMessage(content, "steer");
+  }
+
+  async followUp(content: string): Promise<string | null> {
+    return this.submitRunMessage(content, "follow_up");
+  }
+
+  private async submitRunMessage(
+    content: string,
+    mode: "steer" | "follow_up",
+  ): Promise<string | null> {
+    const trimmed = content.trim();
+    const runId = this.activeRunId;
+    const client = this.client;
+    if (!trimmed || !runId || !client) return null;
+    const commandId = `command_tui_${randomUUID().replaceAll("-", "")}`;
+    const input = this.pendingRunInput();
+    try {
+      const result = await client.injectRunMessage({
+        runId,
+        commandId,
+        mode,
+        content: trimmed,
+        ...(input ? { input } : {}),
+        metadata: {
+          source: "tui",
+          sessionId: this.sessionId,
+          interactionMode: mode,
+        },
+      });
+      this.store.appendUserMessage(trimmed);
+      if (input) this.clearPendingAttachments();
+      return result.commandId;
+    } catch (err) {
+      this.reportFailure(
+        "ActionFailure",
+        mode === "steer" ? "steering failed" : "follow-up queue failed",
+        err,
+      );
+      return null;
     }
   }
 
@@ -435,23 +522,24 @@ export class RunController {
     }
   }
 
-  /**
-   * Fork the given session at an optional event sequence. Returns the new
-   * session id (and copy stats) or null on failure. Does NOT switch to it —
-   * the caller decides whether to setSession(forkedId).
-   */
+  /** Fork a session at a stable run boundary without switching to it. */
   async forkSession(
     sourceSessionId: string,
-    forkAtSequence?: number,
+    forkPoint?: SessionForkPoint,
   ): Promise<{
     forkedSessionId: string;
+    copiedRunCount: number;
+    forkPoint: SessionForkPoint | null;
     copiedEventCount: number;
     truncatedAtSequence: number | null;
   } | null> {
     if (!this.allowSessionMutation("fork and switch sessions")) return null;
     try {
       const client = await this.ensureClient();
-      return await client.forkSession({ sourceSessionId, forkAtSequence });
+      return await client.forkSession({
+        sourceSessionId,
+        ...(forkPoint ? { forkPoint } : {}),
+      });
     } catch (err) {
       this.reportFailure("ActionFailure", "session fork failed", err);
       return null;
@@ -518,6 +606,230 @@ export class RunController {
     }
   }
 
+  async listProviders(
+    model?: string,
+    projection: ProviderCatalogProjection = "available",
+  ): Promise<ProviderCatalogSnapshot | null> {
+    try {
+      const client = await this.ensureClient();
+      return await client.listProviders({
+        ...(model ? { model } : {}),
+        projection,
+      });
+    } catch (err) {
+      this.reportFailure("PanelLoadFailure", "provider list failed", err);
+      return null;
+    }
+  }
+
+  async refreshProviderCatalog(
+    providerId?: string,
+  ): Promise<ProviderCatalogRefreshResult | null> {
+    try {
+      const client = await this.ensureClient();
+      return await client.refreshProviderCatalog({
+        ...(providerId ? { providerId } : {}),
+      });
+    } catch (err) {
+      this.reportFailure(
+        "ActionFailure",
+        "provider catalog refresh failed",
+        err,
+      );
+      return null;
+    }
+  }
+
+  async listProviderAuthMethods(
+    providerId: string,
+    endpoint?: string,
+  ): Promise<ProviderAuthMethodsSnapshot | null> {
+    try {
+      const client = await this.ensureClient();
+      return await client.listProviderAuthMethods({
+        providerId,
+        ...(endpoint ? { endpoint } : {}),
+      });
+    } catch (err) {
+      this.reportFailure(
+        "PanelLoadFailure",
+        "provider auth methods failed",
+        err,
+      );
+      return null;
+    }
+  }
+
+  async beginProviderOAuth(
+    providerId: string,
+    methodId: string,
+    promptValues?: Record<string, string>,
+  ): Promise<ProviderAuthAttemptSummary | null> {
+    try {
+      const client = await this.ensureClient();
+      const result = await client.beginProviderOAuth({
+        providerId,
+        methodId,
+        ...(promptValues ? { promptValues } : {}),
+      });
+      return result.attempt;
+    } catch (err) {
+      this.reportFailure("ActionFailure", "provider OAuth start failed", err);
+      return null;
+    }
+  }
+
+  async inspectProviderOAuth(
+    attemptId: string,
+  ): Promise<ProviderAuthAttemptSummary | null> {
+    try {
+      const client = await this.ensureClient();
+      return (await client.inspectProviderOAuth({ attemptId })).attempt;
+    } catch (err) {
+      this.reportFailure(
+        "PanelLoadFailure",
+        "provider OAuth status failed",
+        err,
+      );
+      return null;
+    }
+  }
+
+  async completeProviderOAuth(
+    attemptId: string,
+    code: string,
+  ): Promise<ProviderAuthAttemptSummary | null> {
+    try {
+      const client = await this.ensureClient();
+      return (await client.completeProviderOAuth({ attemptId, code })).attempt;
+    } catch (err) {
+      this.reportFailure(
+        "ActionFailure",
+        "provider OAuth completion failed",
+        err,
+      );
+      return null;
+    }
+  }
+
+  async cancelProviderOAuth(attemptId: string): Promise<void> {
+    try {
+      const client = await this.ensureClient();
+      await client.cancelProviderOAuth({ attemptId });
+    } catch (err) {
+      this.reportFailure(
+        "ActionFailure",
+        "provider OAuth cancellation failed",
+        err,
+      );
+    }
+  }
+
+  async submitProviderSecret(
+    providerId: string,
+    methodId: string,
+    endpoint: string,
+    secret: string,
+  ): Promise<ProviderConnectionSummary | null> {
+    try {
+      const client = await this.ensureClient();
+      const result = await client.submitProviderSecret({
+        providerId,
+        methodId,
+        endpoint,
+        secret,
+      });
+      return result.connection;
+    } catch (err) {
+      this.reportFailure("ActionFailure", "provider connect failed", err);
+      return null;
+    }
+  }
+
+  async manageProviderConnection(
+    action: "select" | "disconnect",
+    connectionId: string,
+  ): Promise<ProviderConnectionSummary | null> {
+    try {
+      const client = await this.ensureClient();
+      const result =
+        action === "select"
+          ? await client.selectProviderConnection({ connectionId })
+          : await client.disconnectProviderConnection({ connectionId });
+      return result.connection;
+    } catch (err) {
+      this.reportFailure(
+        "ActionFailure",
+        `provider connection ${action} failed`,
+        err,
+      );
+      return null;
+    }
+  }
+
+  async updateProviderAuth(
+    action: "login" | "logout" | "refresh",
+    profileId: string,
+  ): Promise<ProviderCredentialProfileSummary | null> {
+    try {
+      const client = await this.ensureClient();
+      const result =
+        action === "login"
+          ? await client.loginProvider({ profileId })
+          : action === "logout"
+            ? await client.logoutProvider({ profileId })
+            : await client.refreshProvider({ profileId });
+      return result.profile;
+    } catch (err) {
+      this.reportFailure("ActionFailure", `provider ${action} failed`, err);
+      return null;
+    }
+  }
+
+  async inspectProjectTrust(): Promise<ProjectTrustSnapshot | null> {
+    try {
+      const client = await this.ensureClient();
+      return await client.inspectProjectTrust();
+    } catch (err) {
+      this.reportFailure(
+        "PanelLoadFailure",
+        "project trust inspect failed",
+        err,
+      );
+      return null;
+    }
+  }
+
+  async grantProjectTrust(
+    expectedManifestHash: string,
+    scopes?: readonly ProjectTrustScope[],
+  ): Promise<ProjectTrustSnapshot | null> {
+    try {
+      const client = await this.ensureClient();
+      return await client.grantProjectTrust({
+        expectedManifestHash,
+        ...(scopes ? { scopes: [...scopes] } : {}),
+      });
+    } catch (err) {
+      this.reportFailure("ActionFailure", "project trust grant failed", err);
+      return null;
+    }
+  }
+
+  async revokeProjectTrust(
+    scopes?: readonly ProjectTrustScope[],
+  ): Promise<ProjectTrustSnapshot | null> {
+    try {
+      const client = await this.ensureClient();
+      return await client.revokeProjectTrust(
+        scopes ? { scopes: [...scopes] } : {},
+      );
+    } catch (err) {
+      this.reportFailure("ActionFailure", "project trust revoke failed", err);
+      return null;
+    }
+  }
+
   async listTasks(
     payload: TaskListRequestPayload = { limit: 50 },
   ): Promise<TaskRecordSnapshot[]> {
@@ -557,6 +869,7 @@ export class RunController {
           accessMode: this.tuiPermissionMode(),
         }),
         client: { name: "sparkwright-tui-workflow", version: "0.1.0" },
+        capabilities: ["provider.auth.interactive"],
       });
     } catch (err) {
       this.reportFailure("ActionFailure", "workflow start failed", err);
@@ -650,6 +963,7 @@ export class RunController {
           accessMode: authorization.accessMode,
         }),
         client: { name: "sparkwright-tui-workflow", version: "0.1.0" },
+        capabilities: ["provider.auth.interactive"],
       });
     } catch (err) {
       this.reportFailure("ActionFailure", "workflow resume failed", err);
@@ -870,6 +1184,7 @@ export class RunController {
     this.clientPromise = createClient({
       spawn,
       client: { name: "sparkwright-tui", version: "0.1.0" },
+      capabilities: ["provider.auth.interactive"],
     })
       .then((c) => {
         this.attachListeners(c);
@@ -1010,6 +1325,27 @@ export class RunController {
         msg,
       ),
     );
+
+    client.on("run.follow_up.updated", (msg) => {
+      if (msg.payload.status === "started" && msg.payload.runId) {
+        this.activeRunId = msg.payload.runId;
+        this.cancelRequested = false;
+        this.store.setStatus("running");
+        this.approvalCoordinator.registerExecution({
+          client,
+          sessionId: msg.payload.sessionId,
+          accessMode: this.tuiPermissionMode(),
+          kind: "main",
+        });
+      }
+      for (const listener of this.followUpUpdateListeners) {
+        try {
+          listener(msg);
+        } catch {
+          // Presentation listeners cannot break host event dispatch.
+        }
+      }
+    });
 
     client.on("run.continuation", (msg) => {
       // A durable Workflow started a fresh Core episode; the logical execution

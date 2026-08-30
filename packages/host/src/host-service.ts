@@ -16,11 +16,14 @@ import type {
 import {
   ExecutionLaneCoordinator,
   type ExecutionDriver,
+  type ExecutionSubmission,
 } from "@sparkwright/server-runtime";
 import { HostRuntime } from "./runtime/host-runtime.js";
 import type {
   HostExecutionCoordinatorPort,
+  HostInjectMessageOutcome,
   HostExecutionMessage,
+  HostExecutionMessageInput,
   HostExecutionCoordinatorRuntime,
   HostResumeRunOutcome,
   HostStartRunOutcome,
@@ -44,6 +47,16 @@ import {
   type HostImControlPolicy,
   type HostImPrincipal,
 } from "./im-control.js";
+import {
+  ProviderAuthManager,
+  type ProviderAuthManagerOptions,
+} from "./provider-auth.js";
+import {
+  ProjectTrustManager,
+  type ProjectTrustManagerOptions,
+} from "./project-trust.js";
+
+const PROVIDER_CATALOG_REFRESH_POLL_MS = 6 * 60 * 60 * 1_000;
 
 export type HostRuntimeFacadeOptions = RuntimeOptions;
 
@@ -61,6 +74,7 @@ export class HostService {
   >();
   private readonly runtimeContextKeys = new Map<HostRuntime, string>();
   private readonly taskRunRoutes = new Map<string, HostTaskEventRoute>();
+  private readonly observedFollowUps = new Set<string>();
   private draining = false;
   private readonly startOutcomes = new Map<string, HostLaneOutcome>();
   private readonly coordinator: ExecutionLaneCoordinator<
@@ -70,9 +84,31 @@ export class HostService {
   >;
   private readonly coordinatorPort: HostExecutionCoordinatorPort;
   private readonly imControl;
+  private readonly providerAuth: ProviderAuthManager;
+  private readonly providerCatalogRefreshTimer: ReturnType<typeof setInterval>;
+  private readonly projectTrust: ProjectTrustManager;
 
-  constructor(options: { imControl?: Partial<HostImControlPolicy> } = {}) {
+  constructor(
+    options: {
+      imControl?: Partial<HostImControlPolicy>;
+      providerAuth?: ProviderAuthManager;
+      providerAuthOptions?: ProviderAuthManagerOptions;
+      projectTrust?: ProjectTrustManager;
+      projectTrustOptions?: ProjectTrustManagerOptions;
+    } = {},
+  ) {
     this.imControl = createHostImControlState(options.imControl);
+    this.providerAuth =
+      options.providerAuth ??
+      new ProviderAuthManager(options.providerAuthOptions);
+    void this.providerAuth.refreshSignedCatalogIfDue().catch(() => {});
+    this.providerCatalogRefreshTimer = setInterval(() => {
+      void this.providerAuth.refreshSignedCatalogIfDue().catch(() => {});
+    }, PROVIDER_CATALOG_REFRESH_POLL_MS);
+    this.providerCatalogRefreshTimer.unref?.();
+    this.projectTrust =
+      options.projectTrust ??
+      new ProjectTrustManager(options.projectTrustOptions);
     const driver: ExecutionDriver<
       HostLaneInput,
       HostExecutionMessage,
@@ -104,12 +140,24 @@ export class HostService {
       resumeRun: (runtime, payload) => this.coordinateResume(runtime, payload),
       injectRunMessage: (runtime, runId, input) => {
         const identity = runtime.executionIdentity();
-        if (!identity?.sessionId) return runNotFound(runId);
+        if (!identity?.sessionId || !identity.runIds.includes(runId)) {
+          return runNotFound(runId);
+        }
+        if (input.mode === "follow_up") {
+          return this.queueFollowUp(runtime, runId, identity.sessionId, input);
+        }
         const accepted = this.coordinator.tryInject({
           laneKey: runtime.executionLaneKey(identity.sessionId),
           message: { runId, ...input },
         });
-        return accepted === "accepted" ? { ok: true } : runNotFound(runId);
+        return accepted === "accepted"
+          ? {
+              ok: true,
+              commandId: input.commandId,
+              mode: input.mode,
+              status: "queued",
+            }
+          : runNotFound(runId);
       },
       cancelRun: (runtime, runId, reason) => {
         const identity = runtime.executionIdentity();
@@ -149,6 +197,8 @@ export class HostService {
       workspaceContext: context,
       workspaceLeaseCoordinator: lease,
       executionCoordinator: this.coordinatorPort,
+      providerAuth: this.providerAuth,
+      projectTrust: this.projectTrust,
       emit: (event) => {
         recordHostImEvent(this.imControl, runtime, event);
         downstreamEmit(event);
@@ -201,6 +251,8 @@ export class HostService {
     const activeIdentity = active?.executionIdentity();
     if (active && activeIdentity?.currentRunId) {
       const injected = active.injectRunMessage(activeIdentity.currentRunId, {
+        commandId: createId("command") as string,
+        mode: "steer",
         content: payload.text,
         metadata: {
           ...(payload.metadata ?? {}),
@@ -344,11 +396,13 @@ export class HostService {
 
   async shutdown(): Promise<void> {
     this.draining = true;
+    clearInterval(this.providerCatalogRefreshTimer);
     await Promise.all([...this.runtimes].map((runtime) => runtime.drain()));
     this.runtimes.clear();
     this.runtimeEmits.clear();
     this.runtimeContextKeys.clear();
     this.taskRunRoutes.clear();
+    this.observedFollowUps.clear();
   }
 
   private async coordinateStart(
@@ -383,6 +437,109 @@ export class HostService {
       this.rememberTaskRunRoute(runtime, outcome.runId, resolved.sessionId);
     }
     return outcome;
+  }
+
+  private queueFollowUp(
+    runtime: HostExecutionCoordinatorRuntime,
+    previousRunId: string,
+    sessionId: string,
+    input: HostExecutionMessageInput,
+  ): HostInjectMessageOutcome {
+    const payload: RunStartRequestPayload = {
+      ...runtime.followUpDefaults(previousRunId),
+      goal: input.content,
+      sessionId,
+      ...(input.parts && input.parts.length > 0
+        ? { input: { parts: [...input.parts] } }
+        : {}),
+      metadata: {
+        ...(input.metadata ?? {}),
+        interactionCommandId: input.commandId,
+        interactionMode: "follow_up",
+        previousRunId,
+      },
+    };
+    const submission = this.coordinator.submit({
+      laneKey: runtime.executionLaneKey(sessionId),
+      sessionId,
+      commandId: input.commandId,
+      idempotencyKey: input.commandId,
+      digest: JSON.stringify({ kind: "follow_up", payload }),
+      input: { kind: "start", runtime, payload },
+    });
+    if (submission.status !== "accepted") {
+      return {
+        ok: false as const,
+        error: {
+          code: submission.status === "conflict" ? "conflict" : "capacity",
+          message: submission.message,
+        },
+      };
+    }
+    this.observeFollowUpStart(runtime, previousRunId, sessionId, submission);
+    return {
+      ok: true as const,
+      commandId: submission.commandId,
+      mode: "follow_up" as const,
+      status: "queued" as const,
+    };
+  }
+
+  private observeFollowUpStart(
+    runtime: HostExecutionCoordinatorRuntime,
+    previousRunId: string,
+    sessionId: string,
+    submission: Extract<ExecutionSubmission, { status: "accepted" }>,
+  ): void {
+    if (this.observedFollowUps.has(submission.commandId)) return;
+    this.observedFollowUps.add(submission.commandId);
+    void submission.result.then((result) => {
+      const outcome = this.startOutcomes.get(submission.executionId);
+      this.startOutcomes.delete(submission.executionId);
+      const started = result.status === "started" && outcome?.ok;
+      const startFailureMessage =
+        result.status === "started" ? undefined : result.message;
+      if (started && runtime instanceof HostRuntime) {
+        this.rememberTaskRunRoute(runtime, outcome.runId, sessionId);
+      }
+      this.publishFollowUpUpdate(runtime, {
+        commandId: submission.commandId,
+        previousRunId,
+        sessionId,
+        status: started ? "started" : "rejected",
+        ...(started ? { runId: outcome.runId } : {}),
+        ...(!started
+          ? {
+              message:
+                (outcome && !outcome.ok
+                  ? outcome.error.message
+                  : startFailureMessage) ?? "follow-up run failed to start",
+            }
+          : {}),
+      });
+    });
+  }
+
+  private publishFollowUpUpdate(
+    runtime: HostExecutionCoordinatorRuntime,
+    payload: Extract<HostEvent, { kind: "run.follow_up.updated" }>["payload"],
+  ): void {
+    if (!(runtime instanceof HostRuntime)) return;
+    const emit = this.runtimeEmits.get(runtime);
+    if (!emit) return;
+    const event: Extract<HostEvent, { kind: "run.follow_up.updated" }> = {
+      envelope: "event",
+      id: createId("evt"),
+      kind: "run.follow_up.updated",
+      timestamp: new Date().toISOString(),
+      payload,
+    };
+    recordHostImEvent(this.imControl, runtime, event);
+    try {
+      emit(event);
+    } catch {
+      // The queued run remains authoritative even if live delivery is gone.
+    }
   }
 
   private publishTaskLifecycleUpdate(
@@ -505,7 +662,13 @@ function runNotFound(
 }
 
 export function createHostService(
-  options: { imControl?: Partial<HostImControlPolicy> } = {},
+  options: {
+    imControl?: Partial<HostImControlPolicy>;
+    providerAuth?: ProviderAuthManager;
+    providerAuthOptions?: ProviderAuthManagerOptions;
+    projectTrust?: ProjectTrustManager;
+    projectTrustOptions?: ProjectTrustManagerOptions;
+  } = {},
 ): HostService {
   return new HostService(options);
 }

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -10,6 +10,7 @@ import {
 import type { HostEvent } from "@sparkwright/protocol";
 import type { SparkwrightEvent } from "@sparkwright/core";
 import { CapabilityRuntimeOperations } from "../src/runtime/capability-runtime-operations.js";
+import { ProjectTrustManager } from "../src/project-trust.js";
 
 describe("CapabilityRuntimeOperations", () => {
   it("owns configured inspection, automation roots, and last-run snapshot merging", async () => {
@@ -27,6 +28,7 @@ describe("CapabilityRuntimeOperations", () => {
         }),
         taskRootDir,
         defaultModel: "deterministic",
+        projectTrust: trustManager(workspaceRoot),
         emit: () => {},
         prepareMcp: async () => ({
           servers: [
@@ -98,6 +100,7 @@ describe("CapabilityRuntimeOperations", () => {
         }),
         taskRootDir,
         defaultModel: "deterministic",
+        projectTrust: trustManager(workspaceRoot),
         emit: (event) => emitted.push(event),
         prepareMcp: async () => ({ servers: [], prepared: null }),
       });
@@ -155,4 +158,64 @@ describe("CapabilityRuntimeOperations", () => {
       await rm(workspaceRoot, { recursive: true, force: true });
     }
   });
+
+  it("does not pass untrusted project MCP configuration to preparation", async () => {
+    const workspaceRoot = await mkdtemp(
+      join(tmpdir(), "sparkwright-capability-trust-"),
+    );
+    const taskRootDir = join(workspaceRoot, ".sparkwright", "tasks");
+    const configDir = join(workspaceRoot, ".sparkwright");
+    const prepareMcp = vi.fn(async () => ({ servers: [], prepared: null }));
+    try {
+      await mkdir(configDir, { recursive: true });
+      await writeFile(
+        join(configDir, "config.json"),
+        JSON.stringify({
+          capabilities: {
+            mcp: {
+              servers: [
+                { id: "untrusted", type: "stdio", command: "must-not-run" },
+              ],
+            },
+          },
+        }),
+        "utf8",
+      );
+      const operations = new CapabilityRuntimeOperations({
+        workspaceRoot,
+        sessionRootDir: join(workspaceRoot, ".sparkwright", "sessions"),
+        taskManager: new TaskManager({
+          store: new FileTaskStore({ rootDir: taskRootDir }),
+        }),
+        taskRootDir,
+        defaultModel: "deterministic",
+        projectTrust: trustManager(workspaceRoot),
+        emit: () => {},
+        prepareMcp,
+      });
+
+      const inspected = await operations.inspect();
+
+      expect(inspected.ok).toBe(true);
+      expect(prepareMcp).toHaveBeenCalledWith(
+        expect.objectContaining({ config: undefined }),
+      );
+      if (inspected.ok) {
+        expect(inspected.snapshot.projectTrust).toMatchObject({
+          status: "untrusted",
+          scopes: expect.arrayContaining([
+            expect.objectContaining({ scope: "config", status: "untrusted" }),
+          ]),
+        });
+      }
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
 });
+
+function trustManager(workspaceRoot: string): ProjectTrustManager {
+  return new ProjectTrustManager({
+    statePath: join(workspaceRoot, ".test-state", "project-trust.json"),
+  });
+}

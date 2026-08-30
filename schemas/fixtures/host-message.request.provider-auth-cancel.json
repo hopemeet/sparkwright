@@ -1,0 +1,9 @@
+{
+  "envelope": "request",
+  "id": "req_provider_auth_cancel",
+  "kind": "provider.auth.cancel",
+  "timestamp": "2026-08-09T00:00:03.000Z",
+  "payload": {
+    "attemptId": "oauth_fixture"
+  }
+}

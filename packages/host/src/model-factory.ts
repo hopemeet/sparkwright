@@ -1,8 +1,13 @@
 import { readFile } from "node:fs/promises";
-import type { ModelAdapter } from "@sparkwright/core";
+import type { CredentialResolver, ModelAdapter } from "@sparkwright/core";
+import {
+  createChatGptModelAdapter,
+  type ChatGptAppServerFactory,
+} from "./chatgpt-app-server.js";
 import { DETERMINISTIC_PROVIDER } from "./config/contracts.js";
 import {
   loadHostConfig,
+  parseModelRef,
   resolveModelSelection,
 } from "./config/config-implementation.js";
 import {
@@ -10,6 +15,11 @@ import {
   resolveConfiguredModelPricing,
   type ProviderRuntimeSources,
 } from "./model-builder.js";
+import type {
+  ProviderAuthManager,
+  ProviderCredentialLease,
+} from "./provider-auth.js";
+import { getProviderConnectionDescriptor } from "./provider-catalog.js";
 
 const SCRIPTED_PROVIDER = "scripted";
 const SCRIPTED_MODEL_JSON_ENV = "SPARKWRIGHT_SCRIPTED_MODEL_JSON";
@@ -24,6 +34,13 @@ export interface ModelFactoryInput {
   /** Workspace-relative target path for deterministic/local smoke models. */
   targetPath?: string;
   env?: Record<string, string | undefined>;
+  providerAuth?: ProviderAuthManager;
+  /** Wait for an interactive client to rotate credentials after an auth failure. */
+  waitForCredentialRefresh?: boolean;
+  /** Whether the pinned project config scope may participate in resolution. */
+  includeProjectConfig?: boolean;
+  /** Test/embedding seam for the bundled ChatGPT App Server transport. */
+  chatGptAppServerFactory?: ChatGptAppServerFactory;
 }
 
 export interface ConfigSourceRef {
@@ -58,18 +75,25 @@ export interface ResolvedModelPricing {
 /**
  * Build the model adapter for a run. The host is the config authority: it
  * loads the merged shared config (user → project → env) and resolves the
- * "provider/model" ref against the providers map, so the parent process need
- * not bridge credentials through env. Provider credentials come from config,
- * with the provider's standard env var as a fallback/override.
+ * "provider/model" ref through the Host provider owner, so the parent process
+ * need not bridge credentials through env. A selected stored connection is
+ * resolved before legacy config/environment candidates and never falls back
+ * to an ambient key after selection.
  */
-export async function createModel(
-  input: ModelFactoryInput,
-): Promise<
-  | { ok: true; adapter: ModelAdapter; resolved: ResolvedModelConfig }
+export async function createModel(input: ModelFactoryInput): Promise<
+  | {
+      ok: true;
+      adapter: ModelAdapter;
+      resolved: ResolvedModelConfig;
+      credentialResolver?: CredentialResolver;
+    }
   | { ok: false; message: string }
 > {
   const env = input.env ?? process.env;
-  const loaded = await loadHostConfig(input.workspaceRoot, env);
+  const loaded = await loadHostConfig(input.workspaceRoot, env, {
+    projectMode:
+      input.includeProjectConfig === false ? "restricted" : "trusted",
+  });
   const ref = input.modelRef ?? loaded.config.model ?? DETERMINISTIC_PROVIDER;
   const modelSource = input.modelRef
     ? ({ layer: "request" } as const)
@@ -104,7 +128,22 @@ export async function createModel(
     };
   }
 
-  const selection = resolveModelSelection(loaded.config, ref);
+  const parsedRef = parseModelRef(ref);
+  const providerAuthManagesRef =
+    getProviderConnectionDescriptor(parsedRef.providerKey) !== undefined;
+  const managedConnection =
+    input.providerAuth && providerAuthManagesRef
+      ? await input.providerAuth.resolveModelConnection({
+          workspaceRoot: input.workspaceRoot,
+          modelRef: ref,
+          env,
+          includeProjectConfig: input.includeProjectConfig !== false,
+        })
+      : undefined;
+  if (managedConnection && !managedConnection.ok) return managedConnection;
+  const selection = managedConnection?.ok
+    ? managedConnection.resolved.selection
+    : resolveModelSelection(loaded.config, ref);
   if (selection.kind === "deterministic") {
     return {
       ok: true,
@@ -115,11 +154,93 @@ export async function createModel(
   if (selection.kind === "error") {
     return { ok: false, message: selection.message };
   }
-  const built = await buildConfiguredAdapter({ selection, env });
+  const credential = managedConnection?.ok
+    ? { ok: true as const, lease: managedConnection.resolved.lease }
+    : input.providerAuth && providerAuthManagesRef
+      ? await input.providerAuth.resolveCredential({
+          workspaceRoot: input.workspaceRoot,
+          selection,
+          env,
+          includeProjectConfig: input.includeProjectConfig !== false,
+        })
+      : undefined;
+  if (credential && !credential.ok) return credential;
+  if (selection.npm === "@openai/codex") {
+    if (
+      !credential?.ok ||
+      credential.lease.credential.kind !== "chatgpt_app_server"
+    ) {
+      return {
+        ok: false,
+        message:
+          'ChatGPT is not connected. Use /connect and choose "ChatGPT" first.',
+      };
+    }
+    const pricing = resolveConfiguredModelPricing(selection);
+    return {
+      ok: true,
+      adapter: createChatGptModelAdapter({
+        modelId: selection.modelId,
+        ...(input.chatGptAppServerFactory
+          ? { factory: input.chatGptAppServerFactory }
+          : {}),
+      }),
+      resolved: configuredResolvedModel({
+        modelRef: ref,
+        providerKey: selection.providerKey,
+        modelId: selection.modelId,
+        modelSource,
+        providerSource: sourceRef(
+          loaded.sources.providers?.[selection.providerKey],
+        ),
+        runtimeSources: {
+          apiKey: credential.lease.profile.sourceLabel ?? "managed_chatgpt",
+          pricing: pricing.source,
+          ...(pricing.costUnavailableReason
+            ? { costUnavailableReason: pricing.costUnavailableReason }
+            : {}),
+          ...(pricing.warning ? { pricingWarning: pricing.warning } : {}),
+        },
+      }),
+    };
+  }
+  const built = await buildConfiguredAdapter({
+    selection,
+    env,
+    providerConfig: managedConnection?.ok
+      ? managedConnection.resolved.providerConfig
+      : loaded.config.providers?.[selection.providerKey],
+    ...(credential?.ok
+      ? {
+          credential: {
+            runtime: credential.lease.credential,
+            source:
+              credential.lease.profile.sourceLabel ?? "credential_profile",
+            exactEndpointBinding: credential.lease.connection !== undefined,
+          },
+        }
+      : {}),
+  });
   if (!built.ok) return built;
+  const managed =
+    input.providerAuth &&
+    credential?.ok &&
+    (input.waitForCredentialRefresh ||
+      credential.lease.credential.kind === "bearer")
+      ? createManagedConfiguredAdapter({
+          adapter: built.adapter,
+          lease: credential.lease,
+          providerAuth: input.providerAuth,
+          modelRef: ref,
+          workspaceRoot: input.workspaceRoot,
+          env,
+          includeProjectConfig: input.includeProjectConfig !== false,
+          waitForExternalRefresh: input.waitForCredentialRefresh === true,
+        })
+      : undefined;
   return {
     ok: true,
-    adapter: built.adapter,
+    adapter: managed?.adapter ?? built.adapter,
     resolved: configuredResolvedModel({
       modelRef: ref,
       providerKey: selection.providerKey,
@@ -130,7 +251,122 @@ export async function createModel(
       ),
       runtimeSources: built.sources,
     }),
+    ...(managed ? { credentialResolver: managed.credentialResolver } : {}),
   };
+}
+
+function createManagedConfiguredAdapter(input: {
+  adapter: ModelAdapter;
+  lease: ProviderCredentialLease;
+  providerAuth: ProviderAuthManager;
+  modelRef: string;
+  workspaceRoot: string;
+  env: Record<string, string | undefined>;
+  includeProjectConfig: boolean;
+  waitForExternalRefresh: boolean;
+}): { adapter: ModelAdapter; credentialResolver: CredentialResolver } {
+  let delegate = input.adapter;
+  let generation = input.lease.profile.generation;
+  let runtimeCredential = input.lease.credential;
+  let connectionId = input.lease.connection?.id;
+  let profileId = input.lease.profile.id;
+  let credentialSource = input.lease.profile.source;
+  const adapter: ModelAdapter = {
+    get id() {
+      return delegate.id;
+    },
+    get contextHints() {
+      return delegate.contextHints;
+    },
+    complete(modelInput) {
+      return delegate.complete(modelInput);
+    },
+  };
+  if (delegate.stream) {
+    adapter.stream = (modelInput) => {
+      const stream = delegate.stream;
+      if (!stream) {
+        throw new Error(
+          "Refreshed provider adapter no longer supports streaming.",
+        );
+      }
+      return stream.call(delegate, modelInput);
+    };
+  }
+
+  const rebuild = async () => {
+    const resolved = await input.providerAuth.resolveModelConnection({
+      workspaceRoot: input.workspaceRoot,
+      modelRef: input.modelRef,
+      env: input.env,
+      includeProjectConfig: input.includeProjectConfig,
+    });
+    if (!resolved.ok) return false;
+    const selection = resolved.resolved.selection;
+    const credential = resolved.resolved.lease;
+    const rebuilt = await buildConfiguredAdapter({
+      selection,
+      env: input.env,
+      providerConfig: resolved.resolved.providerConfig,
+      credential: {
+        runtime: credential.credential,
+        source: credential.profile.sourceLabel ?? "credential_profile",
+        exactEndpointBinding: credential.connection !== undefined,
+      },
+    });
+    if (!rebuilt.ok) return false;
+    delegate = rebuilt.adapter;
+    generation = credential.profile.generation;
+    runtimeCredential = credential.credential;
+    connectionId = credential.connection?.id;
+    profileId = credential.profile.id;
+    credentialSource = credential.profile.source;
+    return true;
+  };
+
+  const credentialResolver: CredentialResolver = async (request) => {
+    if (
+      request.category === "auth" &&
+      runtimeCredential.kind === "bearer" &&
+      connectionId
+    ) {
+      const refreshed = await input.providerAuth.manageConnection({
+        action: "refresh",
+        connectionId,
+        context: {
+          workspaceRoot: input.workspaceRoot,
+          env: input.env,
+          includeProjectConfig: input.includeProjectConfig,
+        },
+      });
+      if (!refreshed.ok || !(await rebuild())) return { refreshed: false };
+      return {
+        refreshed: true,
+        metadata: {
+          credentialProfileId: connectionId,
+          credentialGeneration: generation,
+          credentialSource: "stored",
+          method: "oauth_refresh",
+        },
+      };
+    }
+    if (!input.waitForExternalRefresh) return { refreshed: false };
+    const changed = await input.providerAuth.waitForGenerationChange({
+      profileId,
+      generation,
+      signal: request.signal,
+    });
+    if (!changed || !(await rebuild())) return { refreshed: false };
+    return {
+      refreshed: true,
+      metadata: {
+        credentialProfileId: profileId,
+        credentialGeneration: generation,
+        credentialSource,
+      },
+    };
+  };
+  return { adapter, credentialResolver };
 }
 
 /**
@@ -181,11 +417,15 @@ export async function inspectResolvedModelConfig(input: {
   modelRef?: string;
   workspaceRoot: string;
   env?: Record<string, string | undefined>;
+  includeProjectConfig?: boolean;
 }): Promise<
   { ok: true; resolved: ResolvedModelConfig } | { ok: false; message: string }
 > {
   const env = input.env ?? process.env;
-  const loaded = await loadHostConfig(input.workspaceRoot, env);
+  const loaded = await loadHostConfig(input.workspaceRoot, env, {
+    projectMode:
+      input.includeProjectConfig === false ? "restricted" : "trusted",
+  });
   const ref = input.modelRef ?? loaded.config.model ?? DETERMINISTIC_PROVIDER;
   const modelSource = input.modelRef
     ? ({ layer: "request" } as const)
@@ -215,7 +455,19 @@ export async function inspectResolvedModelConfig(input: {
     };
   }
 
-  const selection = resolveModelSelection(loaded.config, ref);
+  const parsedRef = parseModelRef(ref);
+  const descriptor = getProviderConnectionDescriptor(parsedRef.providerKey);
+  const selectionConfig =
+    descriptor && !loaded.config.providers?.[parsedRef.providerKey]
+      ? {
+          ...loaded.config,
+          providers: {
+            ...loaded.config.providers,
+            [parsedRef.providerKey]: { npm: descriptor.npm },
+          },
+        }
+      : loaded.config;
+  const selection = resolveModelSelection(selectionConfig, ref);
   if (selection.kind === "deterministic") {
     return {
       ok: true,

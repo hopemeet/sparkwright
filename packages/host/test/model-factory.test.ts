@@ -8,8 +8,82 @@ import {
   inspectResolvedModelConfig,
   resolveProfileModelAdapters,
 } from "../src/model-factory.js";
+import { ProviderAuthManager } from "../src/provider-auth.js";
 
 describe("model factory pricing diagnostics", () => {
+  it("keeps a configured custom provider runnable when ProviderAuthManager is present", async () => {
+    const workspace = await configuredWorkspace({
+      identity: {
+        model: "private_gateway/private-model",
+        providers: {
+          private_gateway: {
+            npm: "@ai-sdk/openai",
+            baseURL: "https://gateway.example.test/v1",
+            apiKey: "private-sentinel-key",
+          },
+        },
+      },
+    });
+    try {
+      const created = await createModel({
+        workspaceRoot: workspace,
+        goal: "use configured private gateway",
+        providerAuth: new ProviderAuthManager({
+          statePath: join(workspace, "provider-auth.json"),
+        }),
+      });
+
+      expect(created).toMatchObject({
+        ok: true,
+        resolved: {
+          modelRef: "private_gateway/private-model",
+          providerKey: "private_gateway",
+          modelId: "private-model",
+          authSource: "config",
+          baseURLSource: "config",
+        },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps non-interactive model resolution independent from catalog picker state", async () => {
+    const workspace = await configuredWorkspace({
+      identity: {
+        model: "openai/gpt-4o-mini",
+        providers: { openai: { apiKey: "sk-test" } },
+      },
+    });
+    try {
+      const env = {
+        ...process.env,
+        XDG_CONFIG_HOME: join(workspace, "xdg-config"),
+      };
+      const manager = new ProviderAuthManager({
+        statePath: join(workspace, "provider-auth.json"),
+      });
+      await manager.catalog({
+        workspaceRoot: workspace,
+        model: "openai/gpt-5.4-mini",
+        env,
+      });
+
+      await expect(
+        createModel({
+          workspaceRoot: workspace,
+          goal: "stable default",
+          env,
+        }),
+      ).resolves.toMatchObject({
+        ok: true,
+        resolved: { modelRef: "openai/gpt-4o-mini" },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("surfaces missing pricing before and after adapter construction", async () => {
     const workspace = await configuredWorkspace({
       identity: {
@@ -89,6 +163,33 @@ describe("model factory pricing diagnostics", () => {
             source: "configured",
             costStatus: "estimated",
           },
+        },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("inspects an explicit bundled model without trusting project provider config", async () => {
+    const workspace = await configuredWorkspace({
+      identity: {
+        model: "openai/gpt-5.4-nano",
+        providers: { openai: {} },
+      },
+    });
+    try {
+      await expect(
+        inspectResolvedModelConfig({
+          workspaceRoot: workspace,
+          modelRef: "openai/gpt-5.4-mini",
+          includeProjectConfig: false,
+        }),
+      ).resolves.toMatchObject({
+        ok: true,
+        resolved: {
+          modelRef: "openai/gpt-5.4-mini",
+          providerKey: "openai",
+          modelId: "gpt-5.4-mini",
         },
       });
     } finally {

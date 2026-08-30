@@ -202,6 +202,7 @@ export class ExecutionInteractionOperations {
   private acceptExecutionMessage(
     runId: string,
     input: {
+      commandId: string;
       content: string;
       parts?: readonly RunInputPart[];
       metadata?: Record<string, unknown>;
@@ -227,6 +228,7 @@ export class ExecutionInteractionOperations {
       };
     }
     const acceptance = execution.tryInject(runId, {
+      commandId: input.commandId,
       content: input.content,
       parts: contentPartsFromRunInput(input.parts),
       metadata: input.metadata,

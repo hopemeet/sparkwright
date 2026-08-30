@@ -169,6 +169,8 @@ export type ProtocolErrorCode =
   | "approval_not_found"
   | "session_not_found"
   | "task_not_found"
+  | "project_trust_required"
+  | "project_trust_changed"
   | "unauthorized"
   | "conflict"
   | "capacity"
@@ -182,6 +184,8 @@ const PROTOCOL_ERROR_CODES: readonly ProtocolErrorCode[] = [
   "approval_not_found",
   "session_not_found",
   "task_not_found",
+  "project_trust_required",
+  "project_trust_changed",
   "unauthorized",
   "conflict",
   "capacity",
@@ -280,6 +284,25 @@ export type RequestKind =
   | "workflow.resume"
   | "workflow.control"
   | "workflow.control.process"
+  | "provider.list"
+  | "provider.auth.methods"
+  | "provider.auth.begin"
+  | "provider.auth.status"
+  | "provider.auth.complete"
+  | "provider.auth.cancel"
+  | "provider.auth.submit_secret"
+  | "provider.auth.login"
+  | "provider.auth.logout"
+  | "provider.auth.refresh"
+  | "provider.connection.select"
+  | "provider.connection.disconnect"
+  | "provider.connection.logout"
+  | "provider.connection.remove"
+  | "provider.connection.refresh"
+  | "provider.catalog.refresh"
+  | "project.trust.inspect"
+  | "project.trust.grant"
+  | "project.trust.revoke"
   | "capability.inspect";
 
 export interface HostRequestBase<TKind extends RequestKind, TPayload> {
@@ -399,8 +422,22 @@ export interface RunInputPayload {
   metadata?: Record<string, unknown>;
 }
 
+/**
+ * Reference to a file-authored project command resolved by the Host.
+ *
+ * Clients intentionally send only the command identity and user-entered
+ * remainder. The Host rediscovers the command body from its governed
+ * capability roots so a client cannot substitute untrusted command content.
+ */
+export interface ProjectCommandReference {
+  name: string;
+  rest?: string;
+}
+
 export interface RunStartRequestPayload {
   goal: string;
+  /** Host-resolved file command. When present, its resolved prompt replaces `goal`. */
+  projectCommand?: ProjectCommandReference;
   input?: RunInputPayload;
   sessionId?: string;
   /** Parent/control session attribution for a newly instantiated workflow job. */
@@ -502,8 +539,15 @@ export interface RunCancelRequestPayload {
   reason?: string;
 }
 
+export type RunMessageMode = "steer" | "follow_up";
+export type RunMessageStatus = "queued" | "applied" | "rejected";
+
 export interface RunInjectMessageRequestPayload {
   runId: string;
+  /** Caller-issued idempotency identity. Host generates one when omitted. */
+  commandId?: string;
+  /** `steer` joins the live run; `follow_up` queues a new run in its session. */
+  mode?: RunMessageMode;
   content: string;
   input?: RunInputPayload;
   metadata?: Record<string, unknown>;
@@ -582,12 +626,23 @@ export interface SessionCompactionInspectReport {
   };
 }
 
+export interface SessionForkPoint {
+  /** Stable run identity that anchors the branch. */
+  runId: string;
+  /** Whether the anchored run is excluded or included. */
+  position: "before" | "after";
+}
+
 export interface SessionForkRequestPayload {
   /** Source session to fork from. */
   sourceSessionId: string;
   /**
-   * Last event sequence (inclusive) to retain in the fork. Omit to clone the
-   * full source history.
+   * Stable semantic fork point. Omit to clone the full source history.
+   */
+  forkPoint?: SessionForkPoint;
+  /**
+   * @deprecated Use `forkPoint`. Kept at the wire edge for protocol-v2
+   * compatibility and interpreted as a session-event sequence.
    */
   forkAtSequence?: number;
 }
@@ -708,6 +763,305 @@ export interface CapabilityInspectRequestPayload {
   backgroundTasks?: BackgroundTaskPolicy;
 }
 
+export type ProviderConnectionStatus =
+  | "unconfigured"
+  | "ready"
+  | "unverified"
+  | "needs_refresh"
+  | "failed"
+  | "suppressed";
+
+export type ProviderAuthStatus =
+  | ProviderConnectionStatus
+  | "missing"
+  | "logged_out";
+
+export type ProviderCatalogProjection = "all" | "connected" | "available";
+
+/** Non-secret credential identity exposed to clients. */
+export interface ProviderCredentialProfileSummary {
+  id: string;
+  providerId: string;
+  status: ProviderAuthStatus;
+  source?: "stored" | "environment" | "config";
+  sourceLabel?: string;
+  generation: number;
+  updatedAt?: string;
+}
+
+export type ProviderConnectionGrantScope = "workspace" | "user";
+
+export interface ProviderConnectionBindingSummary {
+  providerId: string;
+  driverId: string;
+  endpoint: string;
+  endpointFingerprint: string;
+  authMethodId: string;
+}
+
+/** Non-secret stored or ambient connection state. */
+export interface ProviderConnectionSummary {
+  id: string;
+  providerId: string;
+  status: ProviderConnectionStatus;
+  source: "stored" | "environment" | "config";
+  sourceLabel: string;
+  binding: ProviderConnectionBindingSummary;
+  selected: boolean;
+  grantScope?: ProviderConnectionGrantScope;
+  generation: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ProviderAuthMethodSummary {
+  id: string;
+  type: "api_key" | "environment" | "oauth";
+  label: string;
+  environmentVariables?: string[];
+  flow?: ProviderOAuthFlow;
+  prompts?: ProviderAuthPromptSummary[];
+}
+
+export type ProviderOAuthFlow = "browser" | "device" | "code";
+
+export type ProviderAuthPromptSummary =
+  | {
+      id: string;
+      kind: "text" | "secret";
+      label: string;
+      required?: boolean;
+    }
+  | {
+      id: string;
+      kind: "select";
+      label: string;
+      required?: boolean;
+      options: Array<{ value: string; label: string }>;
+    };
+
+export type ProviderAuthAttemptStatus =
+  | "pending"
+  | "completed"
+  | "failed"
+  | "expired"
+  | "cancelled";
+
+/** Bounded OAuth progress projection. Contains no code, token, verifier, or nonce. */
+export interface ProviderAuthAttemptSummary {
+  id: string;
+  providerId: string;
+  methodId: string;
+  flow: ProviderOAuthFlow;
+  status: ProviderAuthAttemptStatus;
+  createdAt: string;
+  expiresAt: string;
+  authorizationUrl?: string;
+  verificationUrl?: string;
+  userCode?: string;
+  instructions?: string;
+  connection?: ProviderConnectionSummary;
+  message?: string;
+}
+
+export interface ProviderCatalogModel {
+  ref: string;
+  providerId: string;
+  modelId: string;
+  selected: boolean;
+  displayName?: string;
+  /** True when the provider is connected and config policy admits this model. */
+  available?: boolean;
+}
+
+export interface ProviderCatalogEntry {
+  id: string;
+  npm: string;
+  displayName?: string;
+  /** Whether a config layer explicitly declares this provider. */
+  configured?: boolean;
+  /** Whether an active credential source is currently available. */
+  connected?: boolean;
+  /** Whether at least one model can be used under current config policy. */
+  available?: boolean;
+  /** Code-owned authentication methods; contains no secret or executable data. */
+  authMethods?: ProviderAuthMethodSummary[];
+  /** Non-secret candidates applicable to the current workspace. */
+  connections?: ProviderConnectionSummary[];
+  models: ProviderCatalogModel[];
+  credential: ProviderCredentialProfileSummary;
+}
+
+export interface ProviderCatalogSnapshot {
+  /** @reserved Public picker selection consumed structurally by protocol clients. */
+  selectedModel?: string;
+  /** @reserved Bundled metadata version consumed by catalog cache and refresh clients. */
+  catalogVersion?: number;
+  /** Monotonic Host connection-state revision. */
+  revision?: number;
+  /** Non-secret active catalog cache state. */
+  catalogState?: ProviderCatalogStateSummary;
+  /** Explicit projection requested by the client; omitted for legacy behavior. */
+  projection?: ProviderCatalogProjection;
+  providers: ProviderCatalogEntry[];
+}
+
+export interface ProviderCatalogStateSummary {
+  generation: number;
+  source: "bundled" | "signed" | "discovery";
+  stale: boolean;
+  fetchedAt?: string;
+  expiresAt?: string;
+}
+
+export interface ProviderCatalogRefreshRequestPayload {
+  /** Omit to refresh every code-owned source currently available. */
+  providerId?: string;
+}
+
+export interface ProviderCatalogRefreshResult {
+  status: "updated" | "unchanged" | "superseded";
+  refreshedProviders: string[];
+  catalogState: ProviderCatalogStateSummary;
+}
+
+export interface ProviderListRequestPayload {
+  /** Optional request-scoped selection shown by model pickers. */
+  model?: string;
+  /** Optional provider/model projection. Omitted preserves legacy configured-provider listing. */
+  projection?: ProviderCatalogProjection;
+}
+
+export interface ProviderAuthActionRequestPayload {
+  /** Host-issued opaque credential profile id. Never a secret. */
+  profileId: string;
+}
+
+export interface ProviderAuthMethodsRequestPayload {
+  providerId: string;
+  /**
+   * Explicit API endpoint to bind before credential entry. Omit for the
+   * provider's code-owned official endpoint.
+   */
+  endpoint?: string;
+}
+
+export interface ProviderAuthMethodsSnapshot {
+  providerId: string;
+  displayName?: string;
+  /** Exact binding requested by the client; official when endpoint is omitted. */
+  binding: ProviderConnectionBindingSummary;
+  /**
+   * Effective config/environment binding, when it differs from the official
+   * binding. Presentation only; clients must submit its endpoint explicitly.
+   */
+  configuredBinding?: ProviderConnectionBindingSummary;
+  methods: ProviderAuthMethodSummary[];
+}
+
+export interface ProviderAuthBeginRequestPayload {
+  providerId: string;
+  methodId: string;
+  promptValues?: Record<string, string>;
+  grantScope?: ProviderConnectionGrantScope;
+}
+
+export interface ProviderAuthAttemptRequestPayload {
+  /** Host-issued opaque attempt id. Never an authorization code or token. */
+  attemptId: string;
+}
+
+export interface ProviderAuthCompleteRequestPayload {
+  attemptId: string;
+  /** Method-specific user-visible authorization code. */
+  code: string;
+  /** Returned OAuth state when a manual callback/code flow exposes it. */
+  state?: string;
+  /** Returned OIDC nonce when required by the selected implementation. */
+  nonce?: string;
+}
+
+export interface ProviderSecretSubmitRequestPayload {
+  providerId: string;
+  methodId: string;
+  /** Exact endpoint confirmed before secret entry. Omit for official. */
+  endpoint?: string;
+  /** Raw secret accepted only by the trusted-local dedicated request path. */
+  secret: string;
+  grantScope?: ProviderConnectionGrantScope;
+}
+
+export interface ProviderConnectionActionRequestPayload {
+  connectionId: string;
+}
+
+export interface ProviderConnectionSelectRequestPayload {
+  connectionId: string;
+  grantScope?: ProviderConnectionGrantScope;
+}
+
+export const PROJECT_TRUST_SCOPES = [
+  "config",
+  "commands",
+  "skills",
+  "agents",
+  "workflows",
+] as const;
+
+export type ProjectTrustScope = (typeof PROJECT_TRUST_SCOPES)[number];
+export type ProjectTrustEffect =
+  | "runtime_configuration"
+  | "process"
+  | "network";
+export type ProjectTrustStatus =
+  | "not_required"
+  | "untrusted"
+  | "trusted"
+  | "changed"
+  | "invalid";
+export type ProjectTrustScopeStatus =
+  | "not_present"
+  | "untrusted"
+  | "trusted"
+  | "changed"
+  | "invalid";
+
+export interface ProjectTrustScopeSnapshot {
+  scope: ProjectTrustScope;
+  status: ProjectTrustScopeStatus;
+  effects: ProjectTrustEffect[];
+  fileCount: number;
+  byteCount: number;
+  manifestHash?: string;
+  /** @reserved Wire snapshot field consumed by trust inspection clients. */
+  trustedManifestHash?: string;
+  grantedAt?: string;
+  reason?: "symlink_not_allowed" | "limit_exceeded" | "read_failed";
+}
+
+/** Non-secret, Host-derived project capability trust projection. */
+export interface ProjectTrustSnapshot {
+  canonicalWorkspaceRoot: string;
+  workspaceId: string;
+  status: ProjectTrustStatus;
+  manifestHash: string;
+  scopes: ProjectTrustScopeSnapshot[];
+}
+
+export type ProjectTrustInspectRequestPayload = Record<string, never>;
+
+export interface ProjectTrustGrantRequestPayload {
+  /** Manifest observed before the user made the trust decision. */
+  expectedManifestHash: string;
+  /** Omit to grant every currently present scope. */
+  scopes?: ProjectTrustScope[];
+}
+
+export interface ProjectTrustRevokeRequestPayload {
+  /** Omit to revoke every scope for the workspace. */
+  scopes?: ProjectTrustScope[];
+}
+
 export type HostRequest =
   | HostRequestBase<"handshake", HandshakeRequestPayload>
   | HostRequestBase<"run.start", RunStartRequestPayload>
@@ -739,6 +1093,49 @@ export type HostRequest =
       "workflow.control.process",
       WorkflowControlProcessRequestPayload
     >
+  | HostRequestBase<"provider.list", ProviderListRequestPayload>
+  | HostRequestBase<"provider.auth.methods", ProviderAuthMethodsRequestPayload>
+  | HostRequestBase<"provider.auth.begin", ProviderAuthBeginRequestPayload>
+  | HostRequestBase<"provider.auth.status", ProviderAuthAttemptRequestPayload>
+  | HostRequestBase<
+      "provider.auth.complete",
+      ProviderAuthCompleteRequestPayload
+    >
+  | HostRequestBase<"provider.auth.cancel", ProviderAuthAttemptRequestPayload>
+  | HostRequestBase<
+      "provider.auth.submit_secret",
+      ProviderSecretSubmitRequestPayload
+    >
+  | HostRequestBase<"provider.auth.login", ProviderAuthActionRequestPayload>
+  | HostRequestBase<"provider.auth.logout", ProviderAuthActionRequestPayload>
+  | HostRequestBase<"provider.auth.refresh", ProviderAuthActionRequestPayload>
+  | HostRequestBase<
+      "provider.connection.select",
+      ProviderConnectionSelectRequestPayload
+    >
+  | HostRequestBase<
+      "provider.connection.disconnect",
+      ProviderConnectionActionRequestPayload
+    >
+  | HostRequestBase<
+      "provider.connection.logout",
+      ProviderConnectionActionRequestPayload
+    >
+  | HostRequestBase<
+      "provider.connection.remove",
+      ProviderConnectionActionRequestPayload
+    >
+  | HostRequestBase<
+      "provider.connection.refresh",
+      ProviderConnectionActionRequestPayload
+    >
+  | HostRequestBase<
+      "provider.catalog.refresh",
+      ProviderCatalogRefreshRequestPayload
+    >
+  | HostRequestBase<"project.trust.inspect", ProjectTrustInspectRequestPayload>
+  | HostRequestBase<"project.trust.grant", ProjectTrustGrantRequestPayload>
+  | HostRequestBase<"project.trust.revoke", ProjectTrustRevokeRequestPayload>
   | HostRequestBase<"capability.inspect", CapabilityInspectRequestPayload>;
 
 // ---------------------------------------------------------------------------
@@ -797,7 +1194,11 @@ export interface ResponseResults {
     code?: string;
     runId?: string;
   };
-  "run.inject_message": Record<string, never>;
+  "run.inject_message": {
+    commandId: string;
+    mode: RunMessageMode;
+    status: Extract<RunMessageStatus, "queued" | "applied">;
+  };
   "run.cancel": Record<string, never>;
   "approval.resolve": Record<string, never>;
   "im.bind": {
@@ -834,7 +1235,11 @@ export interface ResponseResults {
   };
   "session.fork": {
     forkedSessionId: string;
+    copiedRunCount: number;
+    forkPoint: SessionForkPoint | null;
+    /** @deprecated Use `copiedRunCount`. */
     copiedEventCount: number;
+    /** @deprecated Present only for protocol-v2 compatibility. */
     truncatedAtSequence: number | null;
   };
   "session.compact": {
@@ -878,6 +1283,49 @@ export interface ResponseResults {
     awaited: boolean;
     status: TaskStatus;
   };
+  "provider.list": ProviderCatalogSnapshot;
+  "provider.auth.methods": ProviderAuthMethodsSnapshot;
+  "provider.auth.begin": { attempt: ProviderAuthAttemptSummary };
+  "provider.auth.status": { attempt: ProviderAuthAttemptSummary };
+  "provider.auth.complete": { attempt: ProviderAuthAttemptSummary };
+  "provider.auth.cancel": { attempt: ProviderAuthAttemptSummary };
+  "provider.auth.submit_secret": {
+    connection: ProviderConnectionSummary;
+    revision: number;
+  };
+  "provider.auth.login": {
+    profile: ProviderCredentialProfileSummary;
+  };
+  "provider.auth.logout": {
+    profile: ProviderCredentialProfileSummary;
+  };
+  "provider.auth.refresh": {
+    profile: ProviderCredentialProfileSummary;
+  };
+  "provider.connection.select": {
+    connection: ProviderConnectionSummary;
+    revision: number;
+  };
+  "provider.connection.disconnect": {
+    connection: ProviderConnectionSummary;
+    revision: number;
+  };
+  "provider.connection.logout": {
+    connection: ProviderConnectionSummary;
+    revision: number;
+  };
+  "provider.connection.remove": {
+    connectionId: string;
+    revision: number;
+  };
+  "provider.connection.refresh": {
+    connection: ProviderConnectionSummary;
+    revision: number;
+  };
+  "provider.catalog.refresh": ProviderCatalogRefreshResult;
+  "project.trust.inspect": ProjectTrustSnapshot;
+  "project.trust.grant": ProjectTrustSnapshot;
+  "project.trust.revoke": ProjectTrustSnapshot;
   "capability.inspect": CapabilitySnapshot;
 }
 
@@ -1153,10 +1601,23 @@ export interface CapabilityWorkflowAssetErrorSummary {
   message: string;
 }
 
+export interface CapabilityExtensionSummary {
+  id: string;
+  version?: string;
+  description?: string;
+  context: Array<{
+    name: string;
+    description?: string;
+  }>;
+  tools: string[];
+}
+
 export interface CapabilitySnapshot {
   access?: CapabilityRunAccessSummary;
   model?: CapabilityModelSummary;
   tools: CapabilityToolSummary[];
+  /** @reserved Public extension inventory consumed by capability clients. */
+  extensions?: CapabilityExtensionSummary[];
   skills: {
     indexed: CapabilitySkillSummary[];
     loaded: CapabilitySkillSummary[];
@@ -1183,6 +1644,8 @@ export interface CapabilitySnapshot {
     errors?: CapabilityWorkflowAssetErrorSummary[];
   };
   automation?: CapabilityAutomationSummary;
+  /** Host-owned trust state for repository-authored executable capabilities. */
+  projectTrust?: ProjectTrustSnapshot;
 }
 
 export interface CapabilityRunAccessSummary {
@@ -1223,6 +1686,7 @@ export type EventKind =
   | "run.event"
   | "task.updated"
   | "approval.requested"
+  | "run.follow_up.updated"
   | "run.continuation"
   | "run.completed"
   | "run.failed";
@@ -1359,6 +1823,15 @@ export interface RunContinuationEventPayload {
   reason: "workflow_record_active";
 }
 
+export interface RunFollowUpUpdatedEventPayload {
+  commandId: string;
+  previousRunId: string;
+  sessionId: string;
+  status: "started" | "rejected";
+  runId?: string;
+  message?: string;
+}
+
 export interface AssessmentIssuePayload {
   code: string;
   kind: string;
@@ -1451,6 +1924,7 @@ export type HostEvent =
   | HostEventBase<"run.event", RunEventPayload>
   | HostEventBase<"task.updated", TaskUpdatedEventPayload>
   | HostEventBase<"approval.requested", ApprovalRequestedEventPayload>
+  | HostEventBase<"run.follow_up.updated", RunFollowUpUpdatedEventPayload>
   | HostEventBase<"run.continuation", RunContinuationEventPayload>
   | HostEventBase<"run.completed", RunCompletedEventPayload>
   | HostEventBase<"run.failed", RunFailedEventPayload>;

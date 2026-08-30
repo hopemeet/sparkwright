@@ -31,6 +31,12 @@
 
 ## Covered
 
+- 2026-08-30 the ACP session-scoped MCP fixture keeps external dependency read
+  grants in isolated trusted user config. This preserves untrusted-project
+  restrictions and makes Linux bind-allowlist behavior part of the release
+  matrix instead of weakening production sandbox policy. See
+  [acp-mcp-untrusted-project-sandbox-grant.md](../failures/acp-mcp-untrusted-project-sandbox-grant.md).
+
 - 2026-07-15 real Sonnet same-session resume started `npm run dev` exactly once
   as an explicit background service, observed `READY inventory-heartbeat`, and
   stopped the same `task_mrlks7qe33taeoxt`. Trace recorded `task.cancelled`

@@ -64,6 +64,7 @@ export function hostEventToSessionUpdates(
         ),
       ];
     case "run.continuation":
+    case "run.follow_up.updated":
       return [];
     case "task.updated":
       return [];

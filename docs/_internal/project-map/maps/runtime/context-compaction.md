@@ -9,6 +9,53 @@ See [../session/resume-replay.md](../session/resume-replay.md).
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-08-18
+- Scope: ChatGPT consumes the ordinary assembled `PromptMessage[]`; it adds no
+  ContextItem, compaction artifact, replay field, or summarizer contract.
+- Read: App Server prompt projection and Core compaction boundary.
+- Tests: focused adapter tests passed; compaction contracts are unchanged.
+
+- Status: Read-only
+- Date: 2026-08-17
+- Scope: removing the unfinished ChatGPT adapter changes no ContextItem,
+  compaction artifact, replay field, or summarizer contract.
+- Read: provider/model construction and Core compaction boundary.
+- Tests: no compaction-specific test was run; focused Host tests passed.
+
+- Status: Read-only
+- Date: 2026-08-12
+- Scope: OAuth account binding is pre-run Host connection state and does not
+  enter context items, compaction input, follow-up evidence, or replay fields.
+- Read: provider resolution and context-compaction ownership boundary.
+- Tests: focused routed provider checks passed; compaction contracts are
+  unchanged.
+
+- Status: Read-only
+- Date: 2026-08-09
+- Scope: P7.0 connection selection is pre-run control state. It adds no context
+  item, compaction input, follow-up evidence, or replay field.
+- Read: CLI/TUI connection controls and compaction boundary.
+- Tests: focused connection checks and the full release gate passed; compaction
+  contracts are unchanged.
+
+- Status: Read-only
+- Date: 2026-08-09
+- Scope: P6.4 pre-run catalog refresh and presentation-only model preferences
+  do not enter context items, compaction, follow-up evidence, or replay.
+- Read: provider control path, TUI preferences, and compaction boundary.
+- Tests: affected Host/TUI checks and the full release gate passed.
+
+- Status: Verified
+- Date: 2026-08-08
+- Scope: compaction resolves model/provider configuration through the same
+  Project Trust decision as ordinary runs. Untrusted project config cannot
+  change compaction execution; persisted summaries and budgeting are unchanged.
+- Read: Host session compaction, model/provider resolution, Project Trust
+  config admission, and the existing Core compaction boundary.
+- Tests: Host build/typecheck, focused trust/config coverage, and schema/real
+  Host regressions passed.
+
 - Status: Verified
 - Date: 2026-07-30
 - Scope: Agent observation and session compaction retain only blocker

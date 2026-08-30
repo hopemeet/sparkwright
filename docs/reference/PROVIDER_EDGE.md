@@ -6,11 +6,12 @@ The first provider edge is `@sparkwright/provider-ai-sdk`, a thin bridge over
 the Vercel AI SDK. Provider/model selection for product shells lives in the
 optional `@sparkwright/provider-registry` package.
 
-Provider selection is config-driven. A run references a model as
+Provider selection is Host-resolved. A run references a model as
 `"<provider>/<model>"`, and the `<provider>` key is looked up in the
-`identity.providers` map of the merged shared config (user → project → env). Each
-provider entry names the AI SDK npm package that implements it, plus the
-endpoint and credentials:
+bundled/provider catalog plus the optional `identity.providers` map of the
+merged shared config (user → project → env). Config can select a custom AI SDK
+package/endpoint and model policy, while interactive credentials normally come
+from `provider connect` or TUI `/connect`:
 
 ```jsonc
 {
@@ -19,7 +20,6 @@ endpoint and credentials:
     "providers": {
       "openai": {
         "baseURL": "https://api.openai.com/v1",
-        "apiKey": "sk-...",
       },
     },
   },
@@ -29,6 +29,44 @@ endpoint and credentials:
 `npm` defaults to `@ai-sdk/openai` when omitted. The reserved provider key
 `deterministic` selects the built-in offline model used for stable demos and
 tests, and is also the default when no `identity.model` is configured.
+
+The Host projects configured and catalog providers through `provider.list`.
+Credential and connection ids are opaque; responses expose status, exact
+non-secret binding, grants, and source categories but never credential values.
+Stored credentials live behind the Host credential-store boundary; private
+config/environment keys remain compatibility sources. Connection and catalog
+metadata are separate mode-`0600` state under the XDG state directory.
+The catalog base is a bundled snapshot optionally replaced by a newer signed
+last-known-good artifact. Account-visible discovery is a separate overlay
+scoped by workspace and exact connection, so one account cannot replace
+another workspace's inventory. Remote catalog metadata cannot add provider
+packages, endpoints, auth methods, drivers, or adapter factories. Explicit
+refresh failures retain the active scoped overlay/LKG/bundled fallback and do
+not affect user-defined provider entries.
+On macOS, Host answers the system Keychain command's bounded password prompts
+on a private PTY so they never compete with CLI/TUI raw input; the secret is not
+placed in argv or environment values, and unexpected prompts fail closed.
+
+A provider may have multiple connections. Product surfaces select one by its
+exact opaque connection id and the Host revalidates the provider, driver,
+authentication method, and stored immutable endpoint before changing the
+workspace grant. Project `baseURL` cannot replace that selected endpoint; a
+different endpoint requires a different connection and never inherits the old
+secret. Disconnecting clears the selection/grant but keeps a stored credential
+available for later reselection;
+the trusted local management view keeps its opaque, non-secret entry visible
+while ordinary and remote catalogs remain grant-filtered. Permanent credential
+removal is a separate explicit action.
+
+Provider credentials stay typed inside the Host model-construction boundary.
+API keys, including durable keys issued by an authorization flow, use the
+existing AI SDK adapter path. Short-lived bearer credentials retain their
+authentication realm and expiration instead of being passed as API keys.
+When an OAuth credential enters its expiration safety window, the Host refreshes
+it through the existing cross-process connection lock and atomically publishes
+the rotated credential generation. A bearer realm without a code-owned runtime
+transport is rejected before adapter construction; the Host does not send it to
+a generic endpoint or fall back to an ambient credential.
 
 If `HTTPS_PROXY`, `https_proxy`, `HTTP_PROXY`, or `http_proxy` is set, the CLI
 passes that proxy explicitly into the provider's `fetch`. This matters because
@@ -129,7 +167,8 @@ Responsibilities:
 
 Non-goals for provider packages:
 
-- auth store beyond reading provider environment variables at the CLI edge
+- credential persistence, catalog refresh, or protocol auth policy; the Host
+  owns these boundaries
 - dynamic npm install
 - model metadata sync
 - production provider routing service

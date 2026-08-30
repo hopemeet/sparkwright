@@ -37,12 +37,16 @@ npm run format:check
 npm run schema:check
 npm run check:internal-imports
 npm run check:reserved:strict
+npm run security:audit:production
 ```
 
 Expected result:
 
 - TypeScript, Vitest, ESLint, Prettier, schema, internal-import, and reserved
   field checks all exit 0.
+- The production dependency audit reports no high or critical findings. For
+  release changes, also run the source and packed-release install smokes; they
+  repeat this audit against a fresh consumer graph.
 - `check:reserved:strict` reports `Possibly unused (0)`. If it finds public
   fields that are intentionally retained for embedders, add a concise
   `@reserved` comment explaining the consumer.
@@ -638,33 +642,35 @@ Expected result:
 
 ### Session Fork
 
-`forkSessionFromEvent` underpins "branch from any point in a session"
-flows. Smoke after any session-store or fork-protocol change.
+`forkSession` underpins "branch from any conversation turn" flows. Fork
+points use stable run identity; file-backed stores additionally materialize a
+self-contained history snapshot. Smoke after any session-store or
+fork-protocol change.
 
 ```bash
 node --input-type=module <<'NODE'
 import {
   InMemorySessionStore,
-  forkSessionFromEvent,
+  createRunId,
+  forkSession,
 } from './packages/core/dist/index.js';
 
 const store = new InMemorySessionStore();
 const original = await store.create({});
+const runs = [];
 for (let i = 1; i <= 4; i++) {
-  await store.appendEvent(original.id, {
-    type: 'session.note',
-    payload: { i },
-    metadata: { idx: i },
-  });
+  const runId = createRunId();
+  runs.push(runId);
+  await store.append(original.id, runId);
 }
 
-const fork = await forkSessionFromEvent({
+const fork = await forkSession({
   sourceSessionId: original.id,
-  forkAtSequence: 2,
+  forkPoint: { runId: runs[1], position: 'after' },
   store,
   metadata: { reason: 'smoke-fork' },
 });
-const clone = await forkSessionFromEvent({
+const clone = await forkSession({
   sourceSessionId: original.id,
   store,
   metadata: { reason: 'smoke-clone' },
@@ -678,10 +684,10 @@ for await (const ev of store.loadEvents(fork.forked.id)) {
 console.log(JSON.stringify({
   originalSessionId: original.id,
   forkedSessionId: fork.forked.id,
-  copiedEventCount: fork.copiedEventCount,
-  truncatedAtSequence: fork.truncatedAtSequence,
+  copiedRunCount: fork.copiedRunCount,
+  forkPoint: fork.forkPoint,
   forkedEventTypes: forkedEvents,
-  cloneCopiedCount: clone.copiedEventCount,
+  cloneCopiedCount: clone.copiedRunCount,
 }, null, 2));
 NODE
 ```
@@ -689,10 +695,10 @@ NODE
 Expected result:
 
 - `forkedSessionId` differs from `originalSessionId`.
-- `truncatedAtSequence` echoes the requested `forkAtSequence` (`2`).
-- `copiedEventCount` is strictly less than `cloneCopiedCount` (truncated
-  fork drops the tail).
-- `cloneCopiedCount` equals the total appended events (`4`).
+- `forkPoint` echoes the requested `{ runId, position: "after" }` boundary.
+- `copiedRunCount` is `2` and is strictly less than `cloneCopiedCount`.
+- `cloneCopiedCount` equals the total appended runs (`4`).
+- `forkedEventTypes` begins with `session.created`, then `session.forked`.
 
 ## Runtimes
 

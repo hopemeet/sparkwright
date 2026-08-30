@@ -7,6 +7,8 @@ import type { AnySchema, ErrorObject, ValidateFunction } from "ajv";
 import {
   configResolutionOrder,
   loadHostConfig,
+  projectTrustStatePath,
+  providerAuthStatePath,
   readConfigFileObject,
   resolveCapabilityDirs,
 } from "@sparkwright/host";
@@ -111,6 +113,8 @@ interface DoctorPathsReport {
   state: {
     user: string;
     hostCrashes: string;
+    providerAuth: string;
+    projectTrust: string;
     cron: { root: string };
     imGateway: {
       config: string;
@@ -207,6 +211,8 @@ function buildDoctorPathsReport(
     state: {
       user: userStateRoot,
       hostCrashes: join(userStateRoot, "sparkwright", "host-crashes"),
+      providerAuth: providerAuthStatePath(env),
+      projectTrust: projectTrustStatePath(env),
       cron: {
         root: defaultCronRoot(env),
       },
@@ -266,6 +272,8 @@ function formatDoctorPathsReport(report: DoctorPathsReport): string {
     `acp source: ${report.capabilities.acp.source} (${report.capabilities.acp.delegateConfig})`,
     `user state: ${report.state.user}`,
     `host crash state: ${report.state.hostCrashes}`,
+    `provider auth state: ${report.state.providerAuth}`,
+    `project trust state: ${report.state.projectTrust}`,
     `cron state: ${report.state.cron.root}`,
     `im gateway config: ${report.state.imGateway.config}`,
     `im gateway state: ${report.state.imGateway.dataDir}`,
